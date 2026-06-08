@@ -37,10 +37,13 @@ const personStructuredData = {
         '立体造形',
         'コンセプト設計'
     ],
-    // TODO(林さん): YouTube・各SNS・他媒体の「正式なURL」をここに追加してください。
-    // 例: 'https://www.youtube.com/@artoone'
-    // 確実なURLが分からない値は、私(Claude)が勝手に入れていません。
-    sameAs: []
+    // 同一人物の別アカウント(本人提供の正式URL)。
+    // 新しい媒体が増えたらここに追記してください。
+    sameAs: [
+        'https://www.youtube.com/@artoonech',
+        'https://x.com/woodwood_s',
+        'https://www.instagram.com/soki_hayashi'
+    ]
 };
 
 $w.onReady(async function () {
