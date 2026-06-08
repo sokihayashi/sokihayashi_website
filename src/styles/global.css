@@ -1,0 +1,44 @@
+/* =========================================================================
+   global.css — サイト全体に効くCSS
+   -------------------------------------------------------------------------
+   ここに書いたスタイルはサイト全ページに適用されます。
+   特定の要素IDに依存しない「安全で標準的な」改善のみを入れています。
+   （Wixのレイアウト/ブレークポイントごとの配置はビジュアルエディタ専用で、
+    CSSからは触れません。ここはあくまで全体の底上げです。）
+
+   ※反映の確認は `wix dev`（Local Editor）で行ってください。
+   ========================================================================= */
+
+/* 1) 文字を少しなめらかに描画する（Mac/高精細ディスプレイで効きます） */
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* 2) キーボード操作（Tabキー）で要素を移動したとき、
+      今どこを選んでいるかを分かりやすく表示する。
+      マウス操作時には出ないので、デザインの邪魔をしません。
+      → アクセシビリティ向上。検索評価のUXシグナルにもプラス。 */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+
+/* 3) 「視差効果・アニメーションを減らす」設定の閲覧者には、
+      動きを最小化する（OS側の設定を尊重する）。
+      乗り物酔いしやすい人・前庭障害のある人への配慮で、標準的な対応です。 */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
