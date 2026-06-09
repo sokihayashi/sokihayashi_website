@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import { ClientRouter } from 'astro:transitions';
 
 interface Props {
   title?: string;
@@ -13,7 +14,15 @@ const {
 
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
 
-// Person 構造化データ(SEO)。実プロフィールに合わせて適宜更新。
+// base を考慮したリンク生成 + 現在地判定
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const path = (Astro.url.pathname.replace(base, '').replace(/\/$/, '') || '/');
+const nav = [
+  { href: '/works', label: 'Works' },
+  { href: '/about', label: 'About' },
+  { href: '/contact', label: 'Contact' },
+];
+
 const personLd = {
   '@context': 'https://schema.org',
   '@type': 'Person',
@@ -33,22 +42,50 @@ const personLd = {
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
 
-    <!-- OGP -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <script
-      type="application/ld+json"
-      set:html={JSON.stringify(personLd)}
-    />
+    <script type="application/ld+json" set:html={JSON.stringify(personLd)} />
+
+    <!-- ページ間をリロードなしで滑らかに繋ぐ -->
+    <ClientRouter />
   </head>
   <body>
-    <slot />
+    <!-- 固定ヘッダー(全ページ共通・遷移で保持) -->
+    <header class="site-bar" transition:persist="bar">
+      <a class="logo" href={`${base}/`}>Soki&nbsp;Hayashi</a>
+      <div class="bar-right">
+        <span class="clock" id="clock" aria-hidden="true"></span>
+        <nav class="mainnav">
+          {
+            nav.map((n) => (
+              <a
+                href={`${base}${n.href}`}
+                aria-current={path === n.href ? 'page' : undefined}
+              >
+                {n.label}
+              </a>
+            ))
+          }
+        </nav>
+      </div>
+    </header>
 
-    <!-- なめらかスクロール + スクロール演出 -->
+    <main transition:animate="fade">
+      <slot />
+    </main>
+
+    <footer class="site-foot" transition:persist="foot">
+      <span>© {new Date().getFullYear()} Soki Hayashi</span>
+      <address>
+        Graphic / Branding / 3DCG<br />
+        Based in Japan
+      </address>
+    </footer>
+
     <script>
       import Lenis from 'lenis';
       import { gsap } from 'gsap';
@@ -58,15 +95,27 @@ const personLd = {
         '(prefers-reduced-motion: reduce)'
       ).matches;
 
-      if (!reduce) {
+      // Lenis は一度だけ初期化(遷移をまたいで使い回す)
+      function initLenisOnce() {
+        if (reduce || (window as any).__lenis) return;
         gsap.registerPlugin(ScrollTrigger);
-
-        const lenis = new Lenis({ lerp: 0.1, wheelMultiplier: 1 });
+        const lenis = new Lenis({ lerp: 0.1 });
+        (window as any).__lenis = lenis;
         lenis.on('scroll', ScrollTrigger.update);
-        gsap.ticker.add((time) => lenis.raf(time * 1000));
+        gsap.ticker.add((t) => lenis.raf(t * 1000));
         gsap.ticker.lagSmoothing(0);
+      }
 
-        // スクロールで要素をふわっと出す
+      // reveal は遷移のたびに作り直す
+      function setupReveals() {
+        if (reduce) {
+          document
+            .querySelectorAll<HTMLElement>('[data-reveal]')
+            .forEach((el) => (el.style.opacity = '1'));
+          return;
+        }
+        gsap.registerPlugin(ScrollTrigger);
+        ScrollTrigger.getAll().forEach((t) => t.kill());
         gsap.utils.toArray<HTMLElement>('[data-reveal]').forEach((el) => {
           gsap.from(el, {
             y: 40,
@@ -76,12 +125,35 @@ const personLd = {
             scrollTrigger: { trigger: el, start: 'top 85%' },
           });
         });
-      } else {
-        // 演出オフでも中身は見えるように
-        document
-          .querySelectorAll<HTMLElement>('[data-reveal]')
-          .forEach((el) => (el.style.opacity = '1'));
+        ScrollTrigger.refresh();
       }
+
+      // ライブ時刻(ii-inc的なHUDの一手)
+      function startClock() {
+        const el = document.getElementById('clock');
+        if (!el) return;
+        const p = (n: number) => String(n).padStart(2, '0');
+        const tick = () => {
+          const d = new Date();
+          el.textContent =
+            `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ` +
+            `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} JST`;
+        };
+        tick();
+        if ((window as any).__clock) clearInterval((window as any).__clock);
+        (window as any).__clock = window.setInterval(tick, 1000);
+      }
+
+      function onLoad() {
+        initLenisOnce();
+        setupReveals();
+        startClock();
+        const l = (window as any).__lenis;
+        if (l) l.scrollTo(0, { immediate: true });
+      }
+
+      // 初回ロード + View Transitions のたびに走る
+      document.addEventListener('astro:page-load', onLoad);
     </script>
   </body>
 </html>

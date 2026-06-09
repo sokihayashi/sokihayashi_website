@@ -1,0 +1,38 @@
+---
+import Base from '../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<Base title="Works — Soki Hayashi">
+  <section class="page wrap">
+    <p class="eyebrow" data-reveal>Selected Works</p>
+    <h1 class="page-title" data-reveal>Works</h1>
+
+    <ul class="grid">
+      {
+        works.map((w) => (
+          <li class="card" data-reveal>
+            <a href={w.data.url ?? '#'} class="card-link">
+              <div
+                class="thumb"
+                style={`--accent:${w.data.accent}`}
+                aria-hidden="true"
+              />
+              <div class="meta">
+                <h3 class="card-title">{w.data.title}</h3>
+                <p class="card-sub">
+                  {w.data.role.join(' / ')}
+                  {w.data.year ? ` — ${w.data.year}` : ''}
+                </p>
+              </div>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+</Base>

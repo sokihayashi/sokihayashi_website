@@ -2,13 +2,12 @@
 import Base from '../layouts/Base.astro';
 import { getCollection } from 'astro:content';
 
-const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
-  (a, b) => a.data.order - b.data.order
-);
-
-// GitHub Pages の base を考慮して HYDRA(静的アセット)を参照
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const hydraSrc = `${base}/hydra/index.html`;
+
+const featured = (await getCollection('works', ({ data }) => !data.draft))
+  .sort((a, b) => a.data.order - b.data.order)
+  .slice(0, 3);
 ---
 
 <Base>
@@ -23,34 +22,21 @@ const hydraSrc = `${base}/hydra/index.html`;
       scrolling="no"
       loading="eager"></iframe>
 
-    <div class="hero-chrome">
-      <header class="site-head">
-        <span class="logo">Soki&nbsp;Hayashi</span>
-        <nav class="nav">
-          <a href="#works">Works</a>
-          <a href="#about">About</a>
-          <a href="#contact">Contact</a>
-        </nav>
-      </header>
-
-      <div class="hero-copy">
-        <p class="eyebrow">Designer — Graphic / Branding / 3DCG</p>
-        <h1 class="hero-title">Design across dimensions.</h1>
-        <p class="hero-lede">平面から立体まで、領域をまたいで設計する。</p>
-      </div>
-
-      <div class="scroll-cue" aria-hidden="true">
-        <span>Scroll</span>
-      </div>
+    <div class="hero-copy wrap">
+      <p class="eyebrow">Designer — Graphic / Branding / 3DCG</p>
+      <h1 class="hero-title">Design across<br />dimensions.</h1>
+      <p class="hero-lede">平面から立体まで、領域をまたいで設計する。</p>
     </div>
+
+    <div class="scroll-cue" aria-hidden="true"><span>Scroll</span></div>
   </section>
 
-  <!-- ===== WORKS ===== -->
-  <section id="works" class="works wrap">
+  <!-- ===== FEATURED WORKS ===== -->
+  <section class="featured wrap">
     <h2 class="section-label" data-reveal>Selected Works</h2>
     <ul class="grid">
       {
-        works.map((w) => (
+        featured.map((w) => (
           <li class="card" data-reveal>
             <a href={w.data.url ?? '#'} class="card-link">
               <div
@@ -70,70 +56,13 @@ const hydraSrc = `${base}/hydra/index.html`;
         ))
       }
     </ul>
-  </section>
-
-  <!-- ===== APPROACH(なぜ・どうやって) ===== -->
-  <section id="approach" class="approach wrap">
-    <h2 class="section-label" data-reveal>Approach</h2>
-    <p class="approach-lead" data-reveal>
-      価値は、はじめ液体のように形がない。<br />
-      それを<em>掬い</em>、<em>象り</em>、あらゆる接点へ<em>流し込む</em>。
-    </p>
-    <ol class="phases">
-      <li class="phase" data-reveal>
-        <span class="phase-no">01</span>
-        <h3 class="phase-title">掬う <span>Distill</span></h3>
-        <p>
-          リサーチとヒアリングで、まだ言葉になっていない「らしさ」を掬い上げ、
-          ブランドの核を定義する。
-        </p>
-      </li>
-      <li class="phase" data-reveal>
-        <span class="phase-no">02</span>
-        <h3 class="phase-title">象る <span>Form</span></h3>
-        <p>
-          核に視覚的な原型を与える。ロゴ・タイポグラフィ・色・質感。
-          平面にも立体にも展開できる形をつくる。
-        </p>
-      </li>
-      <li class="phase" data-reveal>
-        <span class="phase-no">03</span>
-        <h3 class="phase-title">満たす <span>Flow</span></h3>
-        <p>
-          その形を、グラフィック・空間・3D・映像・Webへ流し込み、
-          媒体を越えて一貫させる。
-        </p>
-      </li>
-    </ol>
-  </section>
-
-  <!-- ===== ABOUT ===== -->
-  <section id="about" class="about wrap">
-    <h2 class="section-label" data-reveal>About</h2>
-    <p class="about-text" data-reveal>
-      ブランドの価値は、最初は液体のように形がない。感じられるのに、掴めない。
-      放っておけば蒸発してしまう。デザインは、その核に“器”をあたえる仕事だ。
-      形になってはじめて、価値は人を動かし、市場で働きはじめる。<br />
-      私は平面から立体まで、媒体を選ばずにその形を立ち上げる。
+    <p class="more" data-reveal>
+      <a href={`${base}/works`}>View all works →</a>
     </p>
   </section>
-
-  <!-- ===== CONTACT(暫定) ===== -->
-  <section id="contact" class="contact wrap">
-    <h2 class="section-label" data-reveal>Contact</h2>
-    <p class="about-text" data-reveal>
-      お問い合わせフォームはこの後実装します。<br />
-      （名前 / 会社名 / メール / ご相談内容 など）
-    </p>
-  </section>
-
-  <footer class="site-foot wrap">
-    <span>© {new Date().getFullYear()} Soki Hayashi</span>
-  </footer>
 </Base>
 
 <style>
-  /* ===== HERO ===== */
   .hero {
     position: relative;
     height: 100svh;
@@ -148,8 +77,6 @@ const hydraSrc = `${base}/hydra/index.html`;
     height: 100%;
     border: 0;
     display: block;
-    /* スマホ等のタッチ環境では装飾のまま(ページのスクロールを巻き込まない)。
-       マウス環境(デスクトップ)だけインタラクションを有効化する。 */
     pointer-events: none;
   }
   @media (hover: hover) and (pointer: fine) {
@@ -157,48 +84,12 @@ const hydraSrc = `${base}/hydra/index.html`;
       pointer-events: auto;
     }
   }
-  .hero-chrome {
-    position: relative;
-    z-index: 2;
-    height: 100%;
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    padding: var(--pad);
-    /* テキスト可読性のための控えめなスクリム */
-    background:
-      radial-gradient(120% 80% at 20% 90%, rgba(0, 0, 0, 0.5), transparent 60%),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.35), transparent 22%);
-  }
-
-  .site-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .logo {
-    font-weight: 700;
-    letter-spacing: 0.02em;
-  }
-  .nav a {
-    margin-left: 1.5rem;
-    color: var(--muted);
-    font-size: 0.9rem;
-    transition: color 0.3s;
-  }
-  .nav a:hover {
-    color: var(--fg);
-  }
-
   .hero-copy {
-    align-self: end;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: clamp(4rem, 12vh, 8rem);
     max-width: 24ch;
-  }
-  .eyebrow {
-    margin: 0 0 0.9rem;
-    font-size: 0.8rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--muted);
   }
   .hero-title {
     margin: 0;
@@ -213,8 +104,10 @@ const hydraSrc = `${base}/hydra/index.html`;
     font-size: clamp(0.95rem, 1.3vw, 1.1rem);
   }
   .scroll-cue {
-    justify-self: center;
-    align-self: end;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 1.6rem;
     font-size: 0.72rem;
     letter-spacing: 0.22em;
     text-transform: uppercase;
@@ -222,135 +115,30 @@ const hydraSrc = `${base}/hydra/index.html`;
     animation: cue 2.4s ease-in-out infinite;
   }
   @keyframes cue {
-    0%, 100% { opacity: 0.35; transform: translateY(0); }
-    50% { opacity: 1; transform: translateY(4px); }
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: translate(-50%, 0);
+    }
+    50% {
+      opacity: 1;
+      transform: translate(-50%, 4px);
+    }
   }
 
-  /* ===== SECTIONS ===== */
-  .section-label {
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    color: var(--muted);
-    font-weight: 500;
-    border-top: 1px solid var(--line);
-    padding-top: 1.5rem;
-    margin-bottom: 2.5rem;
-  }
-
-  .works {
+  .featured {
     padding-block: clamp(4rem, 12vh, 9rem);
   }
-  .grid {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: clamp(1.5rem, 3vw, 3rem) clamp(1.5rem, 2.5vw, 2.5rem);
-  }
-  .card-link {
-    display: block;
-  }
-  .thumb {
-    aspect-ratio: 4 / 5;
-    border-radius: 4px;
-    background: linear-gradient(
-      150deg,
-      var(--accent),
-      color-mix(in srgb, var(--accent) 55%, #000)
-    );
-    transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
-  .card-link:hover .thumb {
-    transform: translateY(-6px) scale(1.01);
-  }
-  .meta {
-    padding-top: 1rem;
-  }
-  .card-title {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 600;
-  }
-  .card-sub {
-    margin: 0.35rem 0 0;
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-
-  /* ===== APPROACH ===== */
-  .approach {
-    padding-block: clamp(4rem, 11vh, 8rem);
-  }
-  .approach-lead {
-    max-width: 30ch;
-    margin: 0 0 clamp(2.5rem, 6vh, 4.5rem);
-    font-size: clamp(1.4rem, 3.5vw, 2.4rem);
-    line-height: 1.5;
-    letter-spacing: -0.01em;
-  }
-  .approach-lead em {
-    font-style: italic;
-    color: var(--accent);
-  }
-  .phases {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: clamp(1.5rem, 3vw, 2.5rem);
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  }
-  .phase {
-    border-top: 1px solid var(--line);
-    padding-top: 1.25rem;
-  }
-  .phase-no {
-    font-size: 0.8rem;
-    letter-spacing: 0.1em;
-    color: var(--muted);
-  }
-  .phase-title {
-    margin: 0.5rem 0 0.75rem;
-    font-size: 1.4rem;
-    font-weight: 600;
-    display: flex;
-    align-items: baseline;
-    gap: 0.6rem;
-  }
-  .phase-title span {
-    font-size: 0.78rem;
-    font-weight: 400;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-  .phase p {
-    margin: 0;
+  .more {
+    margin-top: clamp(2rem, 5vh, 3.5rem);
     font-size: 0.95rem;
-    line-height: 1.75;
-    color: rgba(244, 241, 234, 0.78);
   }
-
-  .about,
-  .contact {
-    padding-block: clamp(3rem, 9vh, 7rem);
-  }
-  .about-text {
-    max-width: 52ch;
-    font-size: clamp(1.1rem, 2vw, 1.6rem);
-    line-height: 1.7;
-  }
-  .about-text code {
-    font-size: 0.85em;
+  .more a {
     color: var(--accent);
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.3s;
   }
-
-  .site-foot {
-    padding-block: 3rem;
-    color: var(--muted);
-    font-size: 0.85rem;
-    border-top: 1px solid var(--line);
+  .more a:hover {
+    border-color: var(--accent);
   }
 </style>
