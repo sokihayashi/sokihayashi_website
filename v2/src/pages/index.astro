@@ -5,29 +5,47 @@ import { getCollection } from 'astro:content';
 const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
   (a, b) => a.data.order - b.data.order
 );
+
+// GitHub Pages の base を考慮して HYDRA(静的アセット)を参照
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const hydraSrc = `${base}/hydra/index.html`;
 ---
 
 <Base>
-  <header class="site-head wrap">
-    <span class="logo">Soki&nbsp;Hayashi</span>
-    <nav class="nav">
-      <a href="#works">Works</a>
-      <a href="#about">About</a>
-    </nav>
-  </header>
+  <!-- ===== HERO: HYDRA(署名オブジェクト) ===== -->
+  <section class="hero">
+    <iframe
+      class="hero-bg"
+      src={hydraSrc}
+      title="Hayashi Design Works — Hydra"
+      aria-hidden="true"
+      tabindex="-1"
+      scrolling="no"
+      loading="eager"></iframe>
 
-  <section class="hero wrap">
-    <h1 class="hero-title">
-      <span class="line" data-reveal>Design</span>
-      <span class="line" data-reveal>across</span>
-      <span class="line accent" data-reveal>dimensions.</span>
-    </h1>
-    <p class="hero-sub" data-reveal>
-      グラフィック・ブランディング・3DCGを横断するデザイナー。<br />
-      平面から立体まで、領域をまたいで作ります。
-    </p>
+    <div class="hero-chrome">
+      <header class="site-head">
+        <span class="logo">Soki&nbsp;Hayashi</span>
+        <nav class="nav">
+          <a href="#works">Works</a>
+          <a href="#about">About</a>
+          <a href="#contact">Contact</a>
+        </nav>
+      </header>
+
+      <div class="hero-copy">
+        <p class="eyebrow">Designer — Graphic / Branding / 3DCG</p>
+        <h1 class="hero-title">Design across dimensions.</h1>
+        <p class="hero-lede">平面から立体まで、領域をまたいで設計する。</p>
+      </div>
+
+      <div class="scroll-cue" aria-hidden="true">
+        <span>Scroll</span>
+      </div>
+    </div>
   </section>
 
+  <!-- ===== WORKS ===== -->
   <section id="works" class="works wrap">
     <h2 class="section-label" data-reveal>Selected Works</h2>
     <ul class="grid">
@@ -54,11 +72,21 @@ const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
     </ul>
   </section>
 
+  <!-- ===== ABOUT ===== -->
   <section id="about" class="about wrap">
     <h2 class="section-label" data-reveal>About</h2>
     <p class="about-text" data-reveal>
       ここにプロフィール文が入ります。Markdownや本文はあとから差し替え可能。<br />
       実績が増えたら <code>src/content/works/</code> に .md を足すだけで一覧に反映されます。
+    </p>
+  </section>
+
+  <!-- ===== CONTACT(暫定) ===== -->
+  <section id="contact" class="contact wrap">
+    <h2 class="section-label" data-reveal>Contact</h2>
+    <p class="about-text" data-reveal>
+      お問い合わせフォームはこの後実装します。<br />
+      （名前 / 会社名 / メール / ご相談内容 など）
     </p>
   </section>
 
@@ -68,12 +96,42 @@ const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
 </Base>
 
 <style>
+  /* ===== HERO ===== */
+  .hero {
+    position: relative;
+    height: 100svh;
+    min-height: 560px;
+    overflow: hidden;
+    background: #000;
+  }
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+    /* v1は装飾として表示(スクロールを邪魔しない)。
+       次パスでインタラクション/ジャイロを安全に再有効化する。 */
+    pointer-events: none;
+  }
+  .hero-chrome {
+    position: relative;
+    z-index: 2;
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: var(--pad);
+    /* テキスト可読性のための控えめなスクリム */
+    background:
+      radial-gradient(120% 80% at 20% 90%, rgba(0, 0, 0, 0.5), transparent 60%),
+      linear-gradient(to bottom, rgba(0, 0, 0, 0.35), transparent 22%);
+  }
+
   .site-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: 1.75rem;
-    padding-bottom: 1.75rem;
   }
   .logo {
     font-weight: 700;
@@ -89,31 +147,44 @@ const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
     color: var(--fg);
   }
 
-  .hero {
-    padding-block: clamp(4rem, 18vh, 12rem) clamp(3rem, 10vh, 7rem);
+  .hero-copy {
+    align-self: end;
+    max-width: 24ch;
+  }
+  .eyebrow {
+    margin: 0 0 0.9rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
   }
   .hero-title {
     margin: 0;
-    font-size: clamp(3rem, 12vw, 11rem);
-    line-height: 0.92;
+    font-size: clamp(2.4rem, 7vw, 5.5rem);
+    line-height: 0.98;
     font-weight: 700;
     letter-spacing: -0.03em;
   }
-  .hero-title .line {
-    display: block;
+  .hero-lede {
+    margin: 1.2rem 0 0;
+    color: rgba(244, 241, 234, 0.8);
+    font-size: clamp(0.95rem, 1.3vw, 1.1rem);
   }
-  .hero-title .accent {
-    color: var(--accent);
-    font-style: italic;
-    font-weight: 400;
-  }
-  .hero-sub {
-    margin-top: 2rem;
-    max-width: 32ch;
+  .scroll-cue {
+    justify-self: center;
+    align-self: end;
+    font-size: 0.72rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
     color: var(--muted);
-    font-size: clamp(1rem, 1.4vw, 1.15rem);
+    animation: cue 2.4s ease-in-out infinite;
+  }
+  @keyframes cue {
+    0%, 100% { opacity: 0.35; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(4px); }
   }
 
+  /* ===== SECTIONS ===== */
   .section-label {
     font-size: 0.85rem;
     text-transform: uppercase;
@@ -126,7 +197,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
   }
 
   .works {
-    padding-block: clamp(3rem, 8vh, 6rem);
+    padding-block: clamp(4rem, 12vh, 9rem);
   }
   .grid {
     list-style: none;
@@ -166,11 +237,12 @@ const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
     color: var(--muted);
   }
 
-  .about {
-    padding-block: clamp(3rem, 10vh, 8rem);
+  .about,
+  .contact {
+    padding-block: clamp(3rem, 9vh, 7rem);
   }
   .about-text {
-    max-width: 50ch;
+    max-width: 52ch;
     font-size: clamp(1.1rem, 2vw, 1.6rem);
     line-height: 1.7;
   }

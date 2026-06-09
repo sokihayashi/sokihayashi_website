@@ -1,8 +1,8 @@
 :root {
-  --bg: #0e0e0c;
+  --bg: #000000;
   --fg: #f4f1ea;
   --muted: #8c887e;
-  --line: #2a2a26;
+  --line: #1c1c1a;
   --accent: #e8e2d6;
   --max: 1280px;
   --pad: clamp(1.25rem, 4vw, 4rem);
