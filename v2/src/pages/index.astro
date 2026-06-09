@@ -131,12 +131,8 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
     height: 100%;
     border: 0;
     display: block;
-    pointer-events: none;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .hero-bg {
-      pointer-events: auto;
-    }
+    /* 生のタッチ/クリックを HYDRA に直接通す(Wixと同じ=何度でも弾ける) */
+    pointer-events: auto;
   }
   /* Heroは液体が主役。文字は隅に最小限。 */
   .hero-name {
