@@ -64,7 +64,7 @@ let mx = 0, my = 0, tmx = 0, tmy = 0;
 let vmx = 0, vmy = 0;
 let lastInteract = -99999;
 
-const MAXP = 40, BASE = 6;
+const MAXP = 26, BASE = 6;
 let nActive = BASE;
 let pos = new Float32Array(MAXP * 3);
 let vel = new Float32Array(MAXP * 3);
@@ -162,6 +162,19 @@ function setup(){
     if (d && d.hdwPoke){
       poke(d.hdwPoke.x * width, d.hdwPoke.y * height);
     }
+    // 親ページからのスワイプ転送(水平ドラッグ=カット)
+    if (d && d.hdwSwipe){
+      const dx = d.hdwSwipe.dx * width, dy = d.hdwSwipe.dy * height;
+      const sp = Math.hypot(dx, dy);
+      if (sp > 8 && Math.abs(dx) >= Math.abs(dy) && millis() - lastCutTime > 200){
+        const L = sp || 1;
+        cutNX = dy / L; cutNY = dx / L; cutAmt = 1.0;
+        impulseCut(cutNX, cutNY, Math.min(0.16, sp * 0.010));
+        spawnDrops(2);
+        lastCutTime = millis();
+      }
+      lastInteract = millis();
+    }
   });
   resetParticles();
 }
@@ -203,8 +216,11 @@ function draw(){
   const now = millis();
   const idle = (now - lastInteract) > 2200;
   if (idle){
-    tmx = sin(now * 0.00028) * 0.05;
-    tmy = cos(now * 0.00037) * 0.045;
+    // ゆるやかな漂流(画面を使う)
+    tmx = sin(now * 0.00026) * 0.085 + sin(now * 0.00011) * 0.03;
+    tmy = cos(now * 0.00034) * 0.07;
+    // たまに滴がふっと生まれる(水面の生命感)
+    if (frameCount % 150 === 0) spawnDrops(1);
   }
 
   vmx += (tmx - mx) * 0.022; vmx *= 0.86; mx += vmx;
@@ -245,7 +261,9 @@ function draw(){
   myShader.setUniform('u_flip', CONFIG.flipBg ? 1.0 : 0.0);
   myShader.setUniform('u_scale', formScaleFactor());
   myShader.setUniform('u_logoRot', logoRot);
-  myShader.setUniform('u_core', CONFIG.coreSize * (1.0 - 0.90 * agit) * (1.0 - dissolve));
+  // 呼吸:ゆっくり膨らんで縮む(常時・控えめ)
+  const breath = 1.0 + 0.045 * Math.sin(now * 0.0011);
+  myShader.setUniform('u_core', CONFIG.coreSize * breath * (1.0 - 0.90 * agit) * (1.0 - dissolve));
   myShader.setUniform('u_dissolve', dissolve);
   myShader.setUniform('u_cutDir', [cutNX, cutNY]);
   myShader.setUniform('u_cutAmt', cutAmt);
@@ -305,6 +323,7 @@ function stepSim(){
 function splitParticles(str){          // タップ=各粒が2つに分裂(指数関数的に増える)＋刺々しく弾ける
   const cur = nActive;
   for (let i = 0; i < cur && nActive < MAXP; i++){
+    if (rad[i] < 0.10) continue;       // これ以上は細かくしない(塵化→消失/固まりを防止)
     const j = nActive++;
     const o = i * 3, p = j * 3;
     const rr = rad[i] * 0.7937;        // 体積を保ちつつ半径を縮小(2^-1/3)
@@ -356,8 +375,9 @@ function poke(px, py){
   const prox = constrain(1.0 - Math.hypot(tx - mx, ty - my) * 1.6, 0.0, 1.0);
   if (prox <= 0.02) return;
   splitParticles((0.07 + rapid * 0.12) * prox);
-  dissolve = min(1.0, dissolve + (0.03 + rapid * 0.10) * prox);
-  spawnDrops(Math.floor(1 + rapid * 3));
+  // 霧化は上限を抑える=連打しても消えて固まらない
+  dissolve = min(0.55, dissolve + (0.015 + rapid * 0.05) * prox);
+  spawnDrops(Math.floor(1 + rapid * 2));
   lastInteract = now;
 }
 function swipe(){
@@ -519,7 +539,7 @@ const fs = `
     vec3 mousePos = vec3(u_mouse * 0.6, 0.0);
     float d = 1e10;
 
-    float blendK = mix(0.34, 0.025, u_agit);   // 興奮で鋭く=刺々しい / 安定で滑らかな球
+    float blendK = mix(0.34, 0.14, u_agit);    // 飛び散っても丸い液体を保つ(刺々しさ抑制)
     for (int i = 0; i < 40; i++){
       if (float(i) >= u_nActive) break;
       vec3 parentPos = mousePos + u_directions[i];
@@ -528,7 +548,7 @@ const fs = `
       vec3 rel = p - parentPos;
       vec3 v = u_vel[i];
       float vl = length(v);
-      if (vl > 1e-4) rel -= (v / vl) * dot(rel, v / vl) * min(vl * 13.0, 0.8); // 速いほど刺状に伸びる
+      if (vl > 1e-4) rel -= (v / vl) * dot(rel, v / vl) * min(vl * 6.0, 0.3); // 伸びを抑え、丸い滴に
       float drop = length(rel) - pSize;
       d = smin(d, drop, blendK);
     }

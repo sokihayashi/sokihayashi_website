@@ -32,18 +32,54 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
   </section>
 
   <script>
-    // タップ/クリックを HYDRA に転送(iframeは pointer-events:none のまま
-    // なので、ページのスクロールは一切邪魔しない)
+    // タップ=分裂 / 水平ドラッグ=スワイプカット を HYDRA に転送。
+    // iframeは pointer-events:none のままなので、縦スクロールは一切邪魔しない。
     function initHeroTap() {
-      const hero = document.querySelector('.hero');
+      const hero = document.querySelector('.hero') as HTMLElement | null;
       const frame = document.getElementById('hydra') as HTMLIFrameElement | null;
-      if (!hero || !frame) return;
+      if (!hero || !frame || hero.dataset.bound) return;
+      hero.dataset.bound = '1';
+
+      const send = (msg: any) => frame.contentWindow?.postMessage(msg, '*');
+      const norm = (e: { clientX: number; clientY: number }) => {
+        const r = hero.getBoundingClientRect();
+        return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+      };
+
+      let last: { x: number; y: number } | null = null;
+      let moved = false;
+
+      hero.addEventListener('pointerdown', (e) => {
+        last = norm(e as PointerEvent);
+        moved = false;
+      });
+      hero.addEventListener('pointermove', (e) => {
+        const pe = e as PointerEvent;
+        if (pe.pointerType === 'mouse' && pe.buttons === 0) {
+          last = null;
+          return;
+        }
+        const p = norm(pe);
+        if (last) {
+          const dx = p.x - last.x;
+          const dy = p.y - last.y;
+          if (Math.abs(dx) > 0.012 || Math.abs(dy) > 0.012) moved = true;
+          // 水平ドラッグのみスワイプ転送(縦はページスクロールに任せる)
+          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 0.004) {
+            send({ hdwSwipe: { dx, dy } });
+          }
+        }
+        last = p;
+      });
+      hero.addEventListener('pointerup', () => (last = null));
+      hero.addEventListener('pointercancel', () => (last = null));
+
       hero.addEventListener('click', (e) => {
-        const ev = e as MouseEvent;
-        const r = (hero as HTMLElement).getBoundingClientRect();
-        const x = (ev.clientX - r.left) / r.width;
-        const y = (ev.clientY - r.top) / r.height;
-        frame.contentWindow?.postMessage({ hdwPoke: { x, y } }, '*');
+        if (moved) {
+          moved = false;
+          return;
+        } // ドラッグ後のクリックは無視
+        send({ hdwPoke: norm(e as MouseEvent) });
       });
     }
     document.addEventListener('astro:page-load', initHeroTap);
