@@ -44,7 +44,7 @@ const CONFIG = {
   logoUrl:    LOGO_URI,
   logoSize:   0.30,
   logoTiltMax: 0.55,
-  coreSize:   0.52,
+  coreSize:   0.30,
   cutWidth:   0.10,
 };
 
@@ -64,7 +64,7 @@ let mx = 0, my = 0, tmx = 0, tmy = 0;
 let vmx = 0, vmy = 0;
 let lastInteract = -99999;
 
-const MAXP = 40, BASE = 6;
+const MAXP = 40, BASE = 9;
 let nActive = BASE;
 let pos = new Float32Array(MAXP * 3);
 let vel = new Float32Array(MAXP * 3);
@@ -257,7 +257,8 @@ function draw(){
   myShader.setUniform('u_flip', CONFIG.flipBg ? 1.0 : 0.0);
   myShader.setUniform('u_scale', formScaleFactor());
   myShader.setUniform('u_logoRot', logoRot);
-  myShader.setUniform('u_core', CONFIG.coreSize * (1.0 - 0.90 * agit) * (1.0 - dissolve));
+  // 破裂中(agit高)は中心コアをほぼ消す=中央に玉が留まらない
+  myShader.setUniform('u_core', CONFIG.coreSize * Math.max(0.0, 1.0 - 1.6 * agit) * (1.0 - dissolve));
   myShader.setUniform('u_dissolve', dissolve);
   myShader.setUniform('u_cutDir', [cutNX, cutNY]);
   myShader.setUniform('u_cutAmt', cutAmt);
@@ -286,7 +287,7 @@ function draw(){
 }
 
 function stepSim(){
-  const kHome = 0.0072, damp = 0.95, g = 0.0004, kRep = 0.05; // 戻りをゆっくり・液体的に
+  const kHome = 0.0042, damp = 0.965, g = 0.0004, kRep = 0.05; // 中心引力を弱め・減衰を緩め=遠くまで飛びゆっくり戻る
   for (let i = 0; i < nActive; i++){
     const o = i * 3;
     let fx = -pos[o] * kHome;
@@ -368,7 +369,7 @@ function poke(px, py){
   const prox = constrain(1.0 - Math.hypot(tx - mx, ty - my) * 1.4, 0.0, 1.0);
   if (prox <= 0.02) return;
   // 破裂:中心から放射状に弾き飛ばす(分裂ではない=毎回ちゃんと弾ける・塵化しない)
-  const str = (0.12 + rapid * 0.10) * prox;
+  const str = (0.19 + rapid * 0.13) * prox;
   for (let i = 0; i < nActive; i++){
     const o = i * 3;
     const L = Math.hypot(pos[o], pos[o+1], pos[o+2]) || 1e-3;
@@ -377,7 +378,7 @@ function poke(px, py){
     vel[o+2] += pos[o+2] / L * str;
   }
   // 粒が少ないうちだけ少し分裂して飛沫を増やす(控えめな上限。これ以上は割らない)
-  if (nActive < 18) splitParticles(str * 0.5);
+  if (nActive < 26) splitParticles(str * 0.5);
   dissolve = min(0.32, dissolve + (0.007 + rapid * 0.02) * prox);
   spawnDrops(Math.floor(1 + rapid * 2));
   lastInteract = now;
