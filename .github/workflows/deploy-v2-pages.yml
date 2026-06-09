@@ -1,0 +1,44 @@
+name: Deploy v2 to GitHub Pages
+
+# v2/ を変更してプッシュすると、自動でビルド→GitHub Pagesに公開する。
+on:
+  push:
+    branches:
+      - claude/eager-franklin-MN2Xv
+    paths:
+      - 'v2/**'
+      - '.github/workflows/deploy-v2-pages.yml'
+  workflow_dispatch: # 手動実行も可能(Actionsタブから)
+
+# Pagesへ公開するために必要な権限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時実行は1つに(古いデプロイは打ち切る)
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Astro (v2)
+        uses: withastro/action@v3
+        with:
+          path: ./v2 # Astroプロジェクトの場所
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
