@@ -1,6 +1,11 @@
 import { defineConfig } from 'astro/config';
 
-// 公開ドメインが決まったら site を本番URLに差し替え(OGP/sitemap等で使用)
+// GitHub Pages(プロジェクトページ)用の設定。
+// 公開URL: https://sokihayashi.github.io/sokihayashi_website/
+//
+// ▼独自ドメインに移行するとき
+//   base を '/' に変えて、site を本番ドメイン(例 https://soki-hayashi.com)にする。
 export default defineConfig({
-  site: 'https://sokihayashi.example.com',
+  site: 'https://sokihayashi.github.io',
+  base: '/sokihayashi_website',
 });
