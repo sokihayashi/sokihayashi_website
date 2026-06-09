@@ -23,12 +23,8 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
       scrolling="no"
       loading="eager"></iframe>
 
-    <div class="hero-stage">
-      <h1 class="hero-head">Design across<br />dimensions.</h1>
-    </div>
-
-    <div class="hero-meta wrap" aria-hidden="true">
-      <span>Soki Hayashi</span>
+    <div class="hero-meta wrap">
+      <h1 class="hero-name">Soki Hayashi</h1>
       <span>Graphic · Branding · 3DCG</span>
     </div>
 
@@ -106,25 +102,14 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
       pointer-events: auto;
     }
   }
-  /* 巨大見出しを HYDRA に重ねて融合(henriheymans方式) */
-  .hero-stage {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    display: grid;
-    place-items: center;
-    padding: var(--pad);
-    pointer-events: none;
-  }
-  .hero-head {
+  /* Heroは液体が主役。文字は隅に最小限。 */
+  .hero-name {
     margin: 0;
-    text-align: center;
-    font-weight: 800;
-    font-size: clamp(2.8rem, 11vw, 9rem);
-    line-height: 0.88;
-    letter-spacing: -0.04em;
-    color: var(--fg);
-    text-shadow: 0 2px 50px rgba(0, 0, 0, 0.4);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: inherit;
   }
   .hero-meta {
     position: absolute;
