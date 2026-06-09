@@ -38,6 +38,7 @@ const personLd = {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href={`${base}/logo.svg`} />
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
@@ -56,7 +57,14 @@ const personLd = {
   <body>
     <!-- 固定ヘッダー(全ページ共通・遷移で保持) -->
     <header class="site-bar" transition:persist="bar">
-      <a class="logo" href={`${base}/`}>Soki&nbsp;Hayashi</a>
+      <a class="logo" href={`${base}/`} aria-label="Soki Hayashi — Home">
+        <img
+          src={`${base}/logo.svg`}
+          alt="Hayashi Design Works"
+          width="36"
+          height="36"
+        />
+      </a>
       <div class="bar-right">
         <span class="clock" id="clock" aria-hidden="true"></span>
         <nav class="mainnav">

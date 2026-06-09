@@ -79,12 +79,15 @@ html.lenis body {
   justify-content: space-between;
   gap: 1rem;
   padding: 1.4rem var(--pad);
-  mix-blend-mode: difference; /* 背景が明暗どちらでも視認できる */
 }
 .site-bar .logo {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  font-size: 1rem;
+  display: flex;
+  align-items: center;
+}
+.site-bar .logo img {
+  display: block;
+  width: auto;
+  height: 34px;
 }
 .bar-right {
   display: flex;
