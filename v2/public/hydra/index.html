@@ -45,7 +45,7 @@ const CONFIG = {
   logoSize:   0.30,
   logoTiltMax: 0.55,
   coreSize:   0.52,
-  cutWidth:   0.18,
+  cutWidth:   0.10,
 };
 
 let myShader, cnv, bgTex, logoImg;
@@ -223,8 +223,8 @@ function draw(){
   vmx += (tmx - mx) * 0.022; vmx *= 0.86; mx += vmx;
   vmy += (tmy - my) * 0.022; vmy *= 0.86; my += vmy;
   stepSim();
-  if (agit < 0.22 && now - lastInteract > 500 && frameCount % 5 === 0) mergeStep(); // 速く再結合=何度でも弾ける
-  cutAmt *= 0.88;
+  if (agit < 0.10 && now - lastInteract > 1600 && frameCount % 14 === 0) mergeStep(); // ゆっくり再結合(戻り途中でも弾ける)
+  cutAmt *= 0.82;
   dissolve *= 0.992;
   updateDrops();
 
@@ -286,7 +286,7 @@ function draw(){
 }
 
 function stepSim(){
-  const kHome = 0.011, damp = 0.94, g = 0.0004, kRep = 0.05;
+  const kHome = 0.0072, damp = 0.95, g = 0.0004, kRep = 0.05; // 戻りをゆっくり・液体的に
   for (let i = 0; i < nActive; i++){
     const o = i * 3;
     let fx = -pos[o] * kHome;
@@ -317,7 +317,6 @@ function stepSim(){
 function splitParticles(str){          // タップ=各粒が2つに分裂(指数関数的に増える)＋刺々しく弾ける
   const cur = nActive;
   for (let i = 0; i < cur && nActive < MAXP; i++){
-    if (rad[i] < 0.12) continue;       // これ以上割らない(塵化=縮むだけを防止)
     const j = nActive++;
     const o = i * 3, p = j * 3;
     const rr = rad[i] * 0.7937;        // 体積を保ちつつ半径を縮小(2^-1/3)
@@ -366,10 +365,20 @@ function poke(px, py){
   const dt = now - lastTap; lastTap = now;
   const rapid = constrain(map(dt, 80, 520, 1.0, 0.12), 0.12, 1.0);
 
-  const prox = constrain(1.0 - Math.hypot(tx - mx, ty - my) * 1.6, 0.0, 1.0);
+  const prox = constrain(1.0 - Math.hypot(tx - mx, ty - my) * 1.4, 0.0, 1.0);
   if (prox <= 0.02) return;
-  splitParticles((0.14 + rapid * 0.14) * prox);      // 破裂を強く=ちゃんと弾ける
-  dissolve = min(0.45, dissolve + (0.010 + rapid * 0.03) * prox); // 霧化しすぎ=消える を防止
+  // 破裂:中心から放射状に弾き飛ばす(分裂ではない=毎回ちゃんと弾ける・塵化しない)
+  const str = (0.12 + rapid * 0.10) * prox;
+  for (let i = 0; i < nActive; i++){
+    const o = i * 3;
+    const L = Math.hypot(pos[o], pos[o+1], pos[o+2]) || 1e-3;
+    vel[o]   += pos[o]   / L * str;
+    vel[o+1] += pos[o+1] / L * str;
+    vel[o+2] += pos[o+2] / L * str;
+  }
+  // 粒が少ないうちだけ少し分裂して飛沫を増やす(控えめな上限。これ以上は割らない)
+  if (nActive < 18) splitParticles(str * 0.5);
+  dissolve = min(0.32, dissolve + (0.007 + rapid * 0.02) * prox);
   spawnDrops(Math.floor(1 + rapid * 2));
   lastInteract = now;
 }
@@ -381,7 +390,7 @@ function swipe(){
     const L = Math.hypot(dx, dy) || 1;
     cutNX = dy / L; cutNY = dx / L; cutAmt = 1.0;
     impulseCut(cutNX, cutNY, Math.min(0.16, sp * 0.010));
-    spawnDrops(2);
+    spawnDrops(5);                      // 飛沫を増やして“液体を切った”感を強く
     lastCutTime = millis();
   }
   lastInteract = millis();
