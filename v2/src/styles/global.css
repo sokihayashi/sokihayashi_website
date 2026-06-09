@@ -117,6 +117,19 @@ html.lenis body {
   text-decoration-thickness: 1px;
 }
 
+/* 狭い画面ではヘッダーを簡素化 */
+@media (max-width: 640px) {
+  .clock {
+    display: none;
+  }
+  .site-bar {
+    padding: 1rem var(--pad);
+  }
+  .mainnav {
+    gap: 1.1rem;
+  }
+}
+
 /* ===== 共有: フッター ===== */
 .site-foot {
   display: flex;

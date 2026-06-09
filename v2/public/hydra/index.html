@@ -39,7 +39,7 @@ const CONFIG = {
   dispersion: 0.020,
   flipBg:     true,
 
-  formScale:  1.0,
+  formScale:  1.22,
 
   logoUrl:    LOGO_URI,
   logoSize:   0.30,
@@ -157,6 +157,10 @@ function setup(){
     if (d && typeof d.hdwScroll === 'number'){
       scrollTarget = constrain(d.hdwScroll, 0, 1);
       lastScrollMsg = millis();
+    }
+    // 親ページからのタップ転送(iframeはpointer-events:noneのまま=スクロール安全)
+    if (d && d.hdwPoke){
+      poke(d.hdwPoke.x * width, d.hdwPoke.y * height);
     }
   });
   resetParticles();

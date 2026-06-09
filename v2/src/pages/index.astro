@@ -14,6 +14,7 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
   <!-- ===== HERO: HYDRA(署名オブジェクト) ===== -->
   <section class="hero">
     <iframe
+      id="hydra"
       class="hero-bg"
       src={hydraSrc}
       title="Hayashi Design Works — Hydra"
@@ -23,13 +24,29 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
       loading="eager"></iframe>
 
     <div class="hero-copy wrap">
-      <p class="eyebrow">Designer — Graphic / Branding / 3DCG</p>
-      <h1 class="hero-title">Design across<br />dimensions.</h1>
-      <p class="hero-lede">平面から立体まで、領域をまたいで設計する。</p>
+      <h1 class="hero-title">Design across dimensions.</h1>
     </div>
 
     <div class="scroll-cue" aria-hidden="true"><span>Scroll</span></div>
   </section>
+
+  <script>
+    // タップ/クリックを HYDRA に転送(iframeは pointer-events:none のまま
+    // なので、ページのスクロールは一切邪魔しない)
+    function initHeroTap() {
+      const hero = document.querySelector('.hero');
+      const frame = document.getElementById('hydra') as HTMLIFrameElement | null;
+      if (!hero || !frame) return;
+      hero.addEventListener('click', (e) => {
+        const ev = e as MouseEvent;
+        const r = (hero as HTMLElement).getBoundingClientRect();
+        const x = (ev.clientX - r.left) / r.width;
+        const y = (ev.clientY - r.top) / r.height;
+        frame.contentWindow?.postMessage({ hdwPoke: { x, y } }, '*');
+      });
+    }
+    document.addEventListener('astro:page-load', initHeroTap);
+  </script>
 
   <!-- ===== FEATURED WORKS ===== -->
   <section class="featured wrap">
