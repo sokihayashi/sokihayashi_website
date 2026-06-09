@@ -1,0 +1,188 @@
+---
+import Base from '../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+
+const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<Base>
+  <header class="site-head wrap">
+    <span class="logo">Soki&nbsp;Hayashi</span>
+    <nav class="nav">
+      <a href="#works">Works</a>
+      <a href="#about">About</a>
+    </nav>
+  </header>
+
+  <section class="hero wrap">
+    <h1 class="hero-title">
+      <span class="line" data-reveal>Design</span>
+      <span class="line" data-reveal>across</span>
+      <span class="line accent" data-reveal>dimensions.</span>
+    </h1>
+    <p class="hero-sub" data-reveal>
+      グラフィック・ブランディング・3DCGを横断するデザイナー。<br />
+      平面から立体まで、領域をまたいで作ります。
+    </p>
+  </section>
+
+  <section id="works" class="works wrap">
+    <h2 class="section-label" data-reveal>Selected Works</h2>
+    <ul class="grid">
+      {
+        works.map((w) => (
+          <li class="card" data-reveal>
+            <a href={w.data.url ?? '#'} class="card-link">
+              <div
+                class="thumb"
+                style={`--accent:${w.data.accent}`}
+                aria-hidden="true"
+              />
+              <div class="meta">
+                <h3 class="card-title">{w.data.title}</h3>
+                <p class="card-sub">
+                  {w.data.role.join(' / ')}
+                  {w.data.year ? ` — ${w.data.year}` : ''}
+                </p>
+              </div>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section id="about" class="about wrap">
+    <h2 class="section-label" data-reveal>About</h2>
+    <p class="about-text" data-reveal>
+      ここにプロフィール文が入ります。Markdownや本文はあとから差し替え可能。<br />
+      実績が増えたら <code>src/content/works/</code> に .md を足すだけで一覧に反映されます。
+    </p>
+  </section>
+
+  <footer class="site-foot wrap">
+    <span>© {new Date().getFullYear()} Soki Hayashi</span>
+  </footer>
+</Base>
+
+<style>
+  .site-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 1.75rem;
+    padding-bottom: 1.75rem;
+  }
+  .logo {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .nav a {
+    margin-left: 1.5rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+    transition: color 0.3s;
+  }
+  .nav a:hover {
+    color: var(--fg);
+  }
+
+  .hero {
+    padding-block: clamp(4rem, 18vh, 12rem) clamp(3rem, 10vh, 7rem);
+  }
+  .hero-title {
+    margin: 0;
+    font-size: clamp(3rem, 12vw, 11rem);
+    line-height: 0.92;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+  .hero-title .line {
+    display: block;
+  }
+  .hero-title .accent {
+    color: var(--accent);
+    font-style: italic;
+    font-weight: 400;
+  }
+  .hero-sub {
+    margin-top: 2rem;
+    max-width: 32ch;
+    color: var(--muted);
+    font-size: clamp(1rem, 1.4vw, 1.15rem);
+  }
+
+  .section-label {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--muted);
+    font-weight: 500;
+    border-top: 1px solid var(--line);
+    padding-top: 1.5rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .works {
+    padding-block: clamp(3rem, 8vh, 6rem);
+  }
+  .grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: clamp(1.5rem, 3vw, 3rem) clamp(1.5rem, 2.5vw, 2.5rem);
+  }
+  .card-link {
+    display: block;
+  }
+  .thumb {
+    aspect-ratio: 4 / 5;
+    border-radius: 4px;
+    background: linear-gradient(
+      150deg,
+      var(--accent),
+      color-mix(in srgb, var(--accent) 55%, #000)
+    );
+    transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .card-link:hover .thumb {
+    transform: translateY(-6px) scale(1.01);
+  }
+  .meta {
+    padding-top: 1rem;
+  }
+  .card-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .card-sub {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .about {
+    padding-block: clamp(3rem, 10vh, 8rem);
+  }
+  .about-text {
+    max-width: 50ch;
+    font-size: clamp(1.1rem, 2vw, 1.6rem);
+    line-height: 1.7;
+  }
+  .about-text code {
+    font-size: 0.85em;
+    color: var(--accent);
+  }
+
+  .site-foot {
+    padding-block: 3rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--line);
+  }
+</style>
