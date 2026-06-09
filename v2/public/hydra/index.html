@@ -39,7 +39,7 @@ const CONFIG = {
   dispersion: 0.020,
   flipBg:     true,
 
-  formScale:  1.22,
+  formScale:  1.7,
 
   logoUrl:    LOGO_URI,
   logoSize:   0.30,
@@ -210,9 +210,10 @@ function draw(){
   vmx += (tmx - mx) * 0.022; vmx *= 0.86; mx += vmx;
   vmy += (tmy - my) * 0.022; vmy *= 0.86; my += vmy;
   stepSim();
-  if (agit < 0.05 && now - lastInteract > 2200 && frameCount % 12 === 0) mergeStep();
+  // タップ後すぐ再結合させて、何度でも“弾ける”状態に戻す
+  if (agit < 0.18 && now - lastInteract > 600 && frameCount % 5 === 0) mergeStep();
   cutAmt *= 0.88;
-  dissolve *= 0.992;
+  dissolve *= 0.965; // 霧化からの回復を速めて、しぼみっぱなしを防ぐ
   updateDrops();
 
   scrollProg += (scrollTarget - scrollProg) * 0.08;
