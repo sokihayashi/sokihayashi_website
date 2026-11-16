@@ -271,6 +271,10 @@ html.stage-on .site-foot {
 .drop.is-mid {
   filter: blur(2px);
 }
+/* 丸く裁つ: ひらいても水滴の形のまま。 */
+.field[data-crop='round'] .drop {
+  border-radius: 50%;
+}
 /* 1枚に乗ると、ほかが沈む。 */
 .field.is-focusing .drop:not(.is-hot) {
   opacity: calc(var(--a, 1) * 0.28);

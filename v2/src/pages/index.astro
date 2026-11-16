@@ -44,7 +44,7 @@ const usedStances = (Object.keys(STANCES) as (keyof typeof STANCES)[]).filter((k
       loading="eager"></iframe>
 
     <!-- 飛沫=作品。切ると画面いっぱいに散る。 -->
-    <div class="field" data-field aria-hidden="true">
+    <div class="field" data-field data-crop="sq" aria-hidden="true">
       {
         splash.map(([file, ar]) => (
           <div class="drop" data-drop data-ar={ar}>

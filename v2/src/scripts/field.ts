@@ -81,6 +81,11 @@ export function createField(box: HTMLElement): Field {
     alpha: 1,
     used: true,
   }));
+  // 画像の形。ar=元の比率のまま / sq=正方形に裁つ / round=丸く裁つ(水滴の形のまま)。
+  // 確認用に #c=ar などで切り替えられる。
+  const want = new URLSearchParams(location.hash.replace(/^#/, '')).get('c') || box.dataset.crop || 'ar';
+  const crop = want === 'sq' || want === 'round' ? want : 'ar';
+  box.dataset.crop = crop;
   let burstAt = 0;
   let hot: Drop | null = null;
   let shown = true;
@@ -115,8 +120,10 @@ export function createField(box: HTMLElement): Field {
       d.z = Math.pow(r(), 0.85);
       d.hx = -vw * 0.08 + (cx + 0.5 + (r() - 0.5) * 0.7) * cw;
       d.hy = -vh * 0.08 + (cy + 0.5 + (r() - 0.5) * 0.7) * ch;
-      const ar = Number(d.el.dataset.ar) || 1.5;
+      // ヒーローでは画像を裁ってよい。crop が sq / round のときは、形を正方形にそろえる。
+      const ar = crop === 'ar' ? Number(d.el.dataset.ar) || 1.5 : 1;
       let w = lerp(wFar, wNear, Math.pow(d.z, 1.5));
+      if (crop !== 'ar') w *= 0.86; // 面積をそろえる
       if (ar < 0.9) w *= Math.sqrt(ar / 0.9); // 縦長は少し小さく
       d.w = Math.round(w);
       d.h = Math.round(w / ar);
