@@ -23,7 +23,12 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       {
         works.map((w) => (
           <li>
-            <a data-work data-src={wallSrc(w.data.images[0], 560)} href={`${base}/works/${w.id}/`}>
+            <a
+              data-work
+              data-src={wallSrc(w.data.images[0], 560)}
+              data-large={wallSrc(w.data.images[0], 1500)}
+              href={`${base}/works/${w.id}/`}
+            >
               {w.data.title}
             </a>
           </li>
@@ -32,8 +37,8 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     </ul>
 
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
-    <!-- 吟味用: 筆を替えるボタン。決まったら外す。 -->
-    <button class="draw-brush" type="button" data-keep data-brush>筆 <span data-brush-name>帯</span></button>
+    <!-- ひらいた作品の下に出る、題名と入口。 -->
+    <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
     <a class="draw-exit" data-keep href={`${base}/works/`}>Works</a>
   </div>
 
@@ -46,11 +51,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       dispose = undefined;
       const root = document.querySelector<HTMLElement>('[data-draw-root]');
       if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      const names = { band: '帯', nib: '平ペン', fude: '毛筆', hake: '刷毛' };
-      const out = root.querySelector<HTMLElement>('[data-brush-name]');
-      dispose = mountDraw(root, (b) => {
-        if (out) out.textContent = names[b];
-      });
+      dispose = mountDraw(root);
     });
     document.addEventListener('astro:before-swap', () => {
       dispose?.();
@@ -144,28 +145,34 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     mix-blend-mode: difference;
     pointer-events: none;
   }
-  .draw-brush {
+  .draw-open {
     display: none;
   }
-  /* 吟味用: 筆の切り替え。 */
-  .draw.is-live .draw-brush {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
+  /* ひらいた作品の題名と入口。作品の左下に付いて、紙と一緒に流れる。 */
+  .draw.is-live .draw-open {
+    display: block;
     position: absolute;
-    left: 50%;
-    top: calc(4.2rem + env(safe-area-inset-top));
-    transform: translateX(-50%);
-    z-index: 6;
-    min-height: 40px;
-    padding: 0 1rem;
-    border: 1px solid #5a5850;
-    border-radius: 999px;
+    left: 0;
+    top: 0;
+    z-index: 5;
+    padding: 0.55rem 0.8rem;
+    margin-top: -12px;
     background: #000;
-    color: var(--fg);
-    font: inherit;
-    font-size: 0.8rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    white-space: pre;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
     cursor: pointer;
+  }
+  .draw.is-live .draw-open.is-on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* ひらいているあいだ、左下の題名は消す(作品の下に出ているので)。 */
+  .draw.is-live.is-open .draw-label {
+    opacity: 0;
   }
   /* 落ち着いたページへの出口。親指の届く右下に、いつも置いておく。 */
   .draw.is-live .draw-exit {

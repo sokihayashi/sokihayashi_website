@@ -2,49 +2,63 @@
 //
 // 指(またはドラッグ)でなぞると、その軌跡が太い帯になり、帯の中に作品が順に現れる。
 // 紙は「画面の長辺から28°」の向きにゆっくり流れ続けるので、描いた帯は斜めに流れて画面から出ていく。
-// 帯の中の作品を押すと、その作品のページへ行く。
+// 帯の中の作品を押すと、帯がその場でひらいて作品の全体になる(線が面になる)。もう一度押すと、その作品のページへ。
+//
+// 磨いたところ:
+//   ・筆は指を少し遅れて追う。手の震えが消え、弧がなめらかになる
+//   ・帯はひと続きの形として作る。作品の境目はまっすぐな切れ目になる
+//   ・重なったところは細い黒の縁で分かれる(紙が重なって見える)
+//   ・帯が増えすぎたら、古いものから巻き取られて消える
 //
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
-// 誰も触っていないあいだは、ペンがひとりでに描いて、何が起きる場所かを見せる。
-// 写真は帯の形に裁つが、歪めない・透かさない。
+// 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
 import { navigate } from 'astro:transitions/client';
 
 type Pt = { x: number; y: number };
 
-// 筆の種類(吟味用)。
-//   band … 帯。太さ一定、端は平ら(テープ)
-//   nib  … 平ペン。ペン先を28°に固定。線の向きで太さが変わり、端は28°に切れる
-//   fude … 毛筆。速いと細く、遅いと太い。入りと抜きがある
-//   hake … 刷毛。28°に並んだ毛の筋。写真は筋のあいだから見える
-export type Brush = 'band' | 'nib' | 'fude' | 'hake';
-export const BRUSHES: Brush[] = ['band', 'nib', 'fude', 'hake'];
-
 interface Seg {
-  pts: Pt[]; // 紙の上の座標
-  wds: number[]; // 各点での太さ(毛筆用)
-  brush: Brush;
+  pts: Pt[]; // 帯の芯(紙の上の座標)
+  nrm: Pt[]; // 各点での、帯の幅の向き
   len: number;
   work: number;
   pat: CanvasPattern | null;
+  big: boolean; // 大きい画像で塗っているか
+  k: number; // 写真の倍率と位置(帯のとき)
+  tx: number;
+  ty: number;
   open: boolean; // まだ描いている途中
+  trim: number; // 0→1 で、描きはじめの側から巻き取られる
+  trimming: boolean;
   x0: number;
   y0: number;
   x1: number;
   y1: number;
 }
 
+interface Bloom {
+  seg: Seg;
+  t: number; // 0=帯 / 1=作品の全体
+  dir: 1 | -1;
+  x: number; // ひらいたときの四角(紙の上の座標)
+  y: number;
+  w: number;
+  h: number;
+  k: number;
+}
+
 const ANGLE = 28; // 画面の長辺からの角度(度)
 
-export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () => void {
+export function mountDraw(root: HTMLElement): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
   const ctx = canvas.getContext('2d')!;
   const label = root.querySelector<HTMLElement>('[data-label]');
+  const openLink = root.querySelector<HTMLAnchorElement>('[data-open]');
   const works = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-work]')).map((a) => {
     const img = new Image();
     img.decoding = 'async';
     img.src = a.dataset.src || '';
-    return { title: a.textContent?.trim() || '', href: a.href, img };
+    return { title: a.textContent?.trim() || '', href: a.href, img, large: a.dataset.large || '', big: null as HTMLImageElement | null };
   });
   const html = document.documentElement;
   const idleLabel = label?.textContent || '';
@@ -52,31 +66,30 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
   let w = 0;
   let h = 0;
   let dpr = 1;
-  let W = 120; // 帯の太さ
-  let L = 180; // 作品1つぶんの長さ
+  let W = 100; // 帯の太さ
+  let L = 150; // 作品1つぶんの長さ
+  let cap = 12; // 画面に残す帯の数(作品の数)
   let dx = 0;
   let dy = -1;
   let offX = 0; // 紙のずれ(画面 = 紙 + ずれ)
   let offY = 0;
-  let base = 36; // 紙の流れる速さ(px/秒)
+  let base = 40; // 紙の流れる速さ(px/秒)
   let boost = 0;
   let segs: Seg[] = [];
   let cur: Seg | null = null;
+  let bloom: Bloom | null = null;
   let nextWork = 0;
   let raf = 0;
   let last = 0;
+  let lastUser = -1e9;
+
+  // 指(目標)と筆(実際に描く位置)。筆は指を少し遅れて追う。
   let pointerDown = false;
   let moved = false;
+  let releasing = false;
   let downAt: Pt = { x: 0, y: 0 };
-  let lastUser = -1e9;
-  // 筆。#b=nib のように URL でも指定できる。描いたあとで替えても、前の線は元の筆のまま残る。
-  const want = new URLSearchParams(location.hash.replace(/^#/, '')).get('b') as Brush | null;
-  let brush: Brush = want && BRUSHES.includes(want) ? want : 'band';
-  let nibX = 0; // ペン先の向き(28°)
-  let nibY = 0;
-  let wNow = 0; // いまの太さ(毛筆)
-  let strokeLen = 0;
-  let lastT = 0;
+  const finger: Pt = { x: 0, y: 0 };
+  const pen: Pt = { x: 0, y: 0 };
 
   root.classList.add('is-live');
   html.classList.add('draw-on');
@@ -88,8 +101,9 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     const small = Math.min(w, h) < 640;
-    W = small ? Math.round(Math.min(w, h) * 0.26) : 164;
+    W = small ? Math.round(Math.min(w, h) * 0.27) : 168;
     L = Math.round(W * 1.5);
+    cap = small ? 11 : 16;
     base = small ? 40 : 62;
     const a = (ANGLE * Math.PI) / 180;
     // 長辺から28°。縦長なら縦から、横長なら横から測る。紙は左上へ流れる。
@@ -100,21 +114,23 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
       dx = -Math.cos(a);
       dy = -Math.sin(a);
     }
-    // ペン先は、紙の流れと同じ28°の向きに寝かせる。
-    nibX = -dx;
-    nibY = -dy;
   }
 
   // ---- ペン ----
-  function newSeg(p: Pt): Seg {
+  function newSeg(p: Pt, n: Pt): Seg {
     const s: Seg = {
       pts: [p],
-      wds: [wNow],
-      brush,
+      nrm: [n],
       len: 0,
       work: nextWork,
       pat: null,
+      big: false,
+      k: 1,
+      tx: 0,
+      ty: 0,
       open: true,
+      trim: 0,
+      trimming: false,
       x0: p.x,
       y0: p.y,
       x1: p.x,
@@ -122,7 +138,6 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
     };
     nextWork = (nextWork + 1) % works.length;
     segs.push(s);
-    if (segs.length > 90) segs.shift();
     return s;
   }
 
@@ -136,62 +151,67 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
     const cx = a.x + ((b.x - a.x) / l) * (L / 2);
     const cy = a.y + ((b.y - a.y) / l) * (L / 2);
     const side = L + W;
-    const k = side / Math.min(img.naturalWidth, img.naturalHeight);
-    const pat = ctx.createPattern(img, 'repeat');
-    if (!pat) return;
-    pat.setTransform(
-      new DOMMatrix([k, 0, 0, k, cx - (img.naturalWidth * k) / 2, cy - (img.naturalHeight * k) / 2])
-    );
-    s.pat = pat;
+    s.k = side / Math.min(img.naturalWidth, img.naturalHeight);
+    s.tx = cx - (img.naturalWidth * s.k) / 2;
+    s.ty = cy - (img.naturalHeight * s.k) / 2;
+    s.pat = ctx.createPattern(img, 'repeat');
+    s.pat?.setTransform(new DOMMatrix([s.k, 0, 0, s.k, s.tx, s.ty]));
   }
 
   function penDown(p: Pt) {
-    strokeLen = 0;
-    wNow = W * 0.2; // 入りは細く
-    lastT = performance.now();
-    cur = newSeg(p);
+    cur = newSeg(p, { x: 0, y: 0 });
   }
-  // v … ペンの速さ(px/ミリ秒)。省くと、実際の動きから測る。
-  function penMove(p: Pt, v?: number) {
+  function penMove(p: Pt) {
     if (!cur) return;
     const q = cur.pts[cur.pts.length - 1];
     const d = Math.hypot(p.x - q.x, p.y - q.y);
-    if (d < 5) return;
-    const now = performance.now();
-    const speed = v ?? d / Math.max(1, now - lastT);
-    lastT = now;
-    strokeLen += d;
-    // 毛筆: 速いと細く、遅いと太い。入りは細いところから太る。
-    const f = Math.max(0.28, Math.min(1.2, 1.3 - speed * 0.5));
-    const inF = Math.min(1, 0.2 + strokeLen / (W * 0.9));
-    wNow = wNow * 0.72 + W * f * inF * 0.28;
+    if (d < 4) return;
+    // 幅の向き(進む向きに直交)。前の点となじませて、縁をなめらかにする。
+    let nx = -(p.y - q.y) / d;
+    let ny = (p.x - q.x) / d;
+    const pn = cur.nrm[cur.nrm.length - 1];
+    if (pn.x || pn.y) {
+      nx = nx * 0.6 + pn.x * 0.4;
+      ny = ny * 0.6 + pn.y * 0.4;
+      const l = Math.hypot(nx, ny) || 1;
+      nx /= l;
+      ny /= l;
+    } else {
+      // 描きはじめの点には、最初の向きをそのまま入れる。
+      cur.nrm[cur.nrm.length - 1] = { x: nx, y: ny };
+    }
     cur.pts.push(p);
-    cur.wds.push(wNow);
+    cur.nrm.push({ x: nx, y: ny });
     cur.len += d;
     cur.x0 = Math.min(cur.x0, p.x);
     cur.y0 = Math.min(cur.y0, p.y);
     cur.x1 = Math.max(cur.x1, p.x);
     cur.y1 = Math.max(cur.y1, p.y);
-    if (!cur.pat && cur.len >= 24) lock(cur);
-    if (label && cur.len >= 24) setLabel(works[cur.work].title);
+    if (!cur.pat && cur.len >= 20) lock(cur);
+    if (cur.len >= 20) setLabel(works[cur.work].title);
     if (cur.len >= L) {
+      // 作品の境目。次の帯は、同じ点・同じ向きから始める(切れ目がまっすぐになる)。
       cur.open = false;
-      cur = newSeg(p);
+      cur = newSeg(p, { x: nx, y: ny });
     }
+  }
+  function dropSeg(s: Seg) {
+    segs = segs.filter((x) => x !== s);
+    nextWork = (nextWork - 1 + works.length) % works.length;
   }
   function penUp() {
     if (!cur) return;
     cur.open = false;
-    // 毛筆の抜き: 終わりの数点を細くしていく。
-    const n = cur.wds.length;
-    const k = Math.min(n, 7);
-    for (let i = 0; i < k; i++) cur.wds[n - 1 - i] *= 0.12 + 0.88 * (i / k);
-    // 点だけで終わったものは残さない。
-    if (cur.pts.length < 2) {
-      segs = segs.filter((s) => s !== cur);
-      nextWork = (nextWork - 1 + works.length) % works.length;
-    }
+    if (cur.pts.length < 2) dropSeg(cur); // 点だけで終わったものは残さない
     cur = null;
+    // 増えすぎたら、古いものから巻き取る。
+    let live = segs.filter((s) => !s.trimming).length;
+    for (const s of segs) {
+      if (live <= cap) break;
+      if (s.trimming || s === bloom?.seg) continue;
+      s.trimming = true;
+      live--;
+    }
   }
 
   let labelText = idleLabel;
@@ -207,6 +227,7 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
     const py = y - offY;
     for (let i = segs.length - 1; i >= 0; i--) {
       const s = segs[i];
+      if (s.trimming) continue;
       if (px < s.x0 - W / 2 || px > s.x1 + W / 2 || py < s.y0 - W / 2 || py > s.y1 + W / 2) continue;
       for (let j = 1; j < s.pts.length; j++) {
         const a = s.pts[j - 1];
@@ -219,18 +240,54 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
     }
     return null;
   }
+  const inBloom = (x: number, y: number) =>
+    !!bloom &&
+    x - offX >= bloom.x &&
+    x - offX <= bloom.x + bloom.w &&
+    y - offY >= bloom.y &&
+    y - offY <= bloom.y + bloom.h;
+
+  // ---- ひらく(線が面になる) ----
+  function openBloom(s: Seg) {
+    const wk = works[s.work];
+    const img = wk.img;
+    if (!img.naturalWidth) return;
+    const ar = img.naturalWidth / img.naturalHeight;
+    const bw = Math.min(w - 40, (h * 0.56) * ar, 860);
+    const bh = bw / ar;
+    // 帯の中心あたりにひらく。画面からはみ出さないよう寄せる。
+    const cx = (s.x0 + s.x1) / 2 + offX;
+    const cy = (s.y0 + s.y1) / 2 + offY;
+    const x = Math.max(20, Math.min(w - 20 - bw, cx - bw / 2));
+    const y = Math.max(76, Math.min(h - 150 - bh, cy - bh / 2));
+    bloom = { seg: s, t: 0, dir: 1, x: x - offX, y: y - offY, w: bw, h: bh, k: bw / img.naturalWidth };
+    setLabel(wk.title);
+    if (openLink) {
+      openLink.href = wk.href;
+      openLink.textContent = `${wk.title}  →`;
+    }
+    // 大きい画像を読んでおく(ひらいたときに粗く見えないように)。
+    if (!wk.big && wk.large) {
+      const b = new Image();
+      b.decoding = 'async';
+      b.src = wk.large;
+      wk.big = b;
+    }
+  }
+  function closeBloom() {
+    if (bloom) bloom.dir = -1;
+  }
 
   // ---- ひとりでに描くペン ----
-  // 触られていないあいだだけ動く。ゆるく曲がりながら数作品ぶん描いて、離れ、別の場所からまた描く。
   let seed = 20261116;
   const rnd = () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
     return seed / 4294967296;
   };
-  const auto = { on: false, x: 0, y: 0, heading: 0, turn: 0, left: 0, wait: 0.35 };
+  const auto = { on: false, x: 0, y: 0, heading: 0, turn: 0, left: 0, wait: 0.15 };
   let autoSide = 1;
   function autoStep(dt: number, now: number) {
-    if (pointerDown || now - lastUser < 3500) {
+    if (pointerDown || releasing || bloom || now - lastUser < 3500) {
       if (auto.on) {
         penUp();
         auto.on = false;
@@ -254,140 +311,141 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
       return;
     }
     const v = Math.min(w, h) * 0.62; // ペンの速さ(px/秒)
-    // 帯が自分に重ならないよう、曲がりはゆるく保つ。
     auto.heading += auto.turn * dt;
     auto.turn += (rnd() - 0.5) * dt * 2;
     auto.turn = Math.max(-0.75, Math.min(0.75, auto.turn));
     auto.x += Math.cos(auto.heading) * v * dt;
     auto.y += Math.sin(auto.heading) * v * dt;
     auto.left -= v * dt;
-    penMove({ x: auto.x - offX, y: auto.y - offY }, 0.35 + 1.5 * Math.abs(Math.sin(now * 0.0021)));
+    penMove({ x: auto.x - offX, y: auto.y - offY });
     const out = auto.x < -W || auto.x > w + W || auto.y < -W || auto.y > h + W;
     if (auto.left <= 0 || out) {
       penUp();
       auto.on = false;
-      // 前の帯が流れて場所が空くまで待つ。
       auto.wait = 2.2 + rnd() * 1.2;
     }
   }
 
   // ---- 描画 ----
+  function outline(s: Seg, from: number) {
+    const n = s.pts.length;
+    const hw = W / 2;
+    ctx.beginPath();
+    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw, s.pts[from].y + s.nrm[from].y * hw);
+    for (let i = from + 1; i < n; i++) ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw, s.pts[i].y + s.nrm[i].y * hw);
+    for (let i = n - 1; i >= from; i--) ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw, s.pts[i].y - s.nrm[i].y * hw);
+    ctx.closePath();
+  }
+
+  function paintSeg(s: Seg) {
+    if (s.pts.length < 2) return;
+    if (!s.pat) lock(s);
+    const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
+    outline(s, from);
+    ctx.fillStyle = s.pat || '#161614';
+    ctx.fill('nonzero');
+    // 細い黒の縁。重なりと境目を分ける。
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+  }
+
+  function paintBloom(b: Bloom) {
+    const s = b.seg;
+    const wk = works[s.work];
+    // ひらいていくにつれ、写真は「帯の中の置き方」から「全体が見える置き方」へ移る。
+    const e = 1 - Math.pow(1 - b.t, 3);
+    const useBig = !!wk.big && wk.big.complete && wk.big.naturalWidth > 0;
+    const img = useBig ? wk.big! : wk.img;
+    const ratio = wk.img.naturalWidth / img.naturalWidth; // 小さい画像を基準にした倍率の補正
+    const k = (s.k + (b.k - s.k) * e) * ratio;
+    const tx = s.tx + (b.x - s.tx) * e;
+    const ty = s.ty + (b.y - s.ty) * e;
+    const pat = ctx.createPattern(img, 'repeat');
+    if (!pat) return;
+    pat.setTransform(new DOMMatrix([k, 0, 0, k, tx, ty]));
+    // 塗るのは「作品の四角」と「いまの写真の範囲」が重なるところだけ(写真の外は塗らない)。
+    const iw = img.naturalWidth * k;
+    const ih = img.naturalHeight * k;
+    const cx0 = Math.max(b.x, tx);
+    const cy0 = Math.max(b.y, ty);
+    const cx1 = Math.min(b.x + b.w, tx + iw);
+    const cy1 = Math.min(b.y + b.h, ty + ih);
+    if (cx1 <= cx0 || cy1 <= cy0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+    ctx.clip();
+    // 帯が太って、作品の四角を満たしていく。
+    const reach = Math.hypot(b.w, b.h);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = W + e * e * reach * 2.2;
+    ctx.strokeStyle = pat;
+    ctx.beginPath();
+    ctx.moveTo(s.pts[0].x, s.pts[0].y);
+    for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i].x, s.pts[i].y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function frame(now: number) {
     raf = requestAnimationFrame(frame);
     const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
     last = now;
 
-    // 紙が流れる。
+    // 紙が流れる。作品をひらいているあいだは、ゆっくりにする。
     boost *= Math.exp(-dt / 0.6);
-    const sp = base + boost;
+    const sp = (base + boost) * (bloom ? 0.3 : 1);
     offX += dx * sp * dt;
     offY += dy * sp * dt;
 
+    // 筆は指を少し遅れて追う。
+    if (pointerDown || releasing) {
+      const f = 1 - Math.exp(-dt / 0.07);
+      pen.x += (finger.x - pen.x) * f;
+      pen.y += (finger.y - pen.y) * f;
+      if (moved) penMove({ x: pen.x - offX, y: pen.y - offY });
+      if (releasing && Math.hypot(finger.x - pen.x, finger.y - pen.y) < 3) {
+        releasing = false;
+        penUp();
+      }
+    }
     autoStep(dt, now);
 
-    // 画面の外へ出た帯は捨てる。
-    segs = segs.filter(
-      (s) =>
-        s.open ||
-        !(s.x1 + offX < -W || s.y1 + offY < -W || s.x0 + offX > w + W || s.y0 + offY > h + W)
-    );
+    // 巻き取り。
+    for (const s of segs) if (s.trimming) s.trim = Math.min(1, s.trim + dt / 0.45);
+    // 画面の外へ出た帯と、巻き取り終えた帯は捨てる。
+    segs = segs.filter((s) => {
+      if (s.open || s === bloom?.seg) return true;
+      if (s.trim >= 1) return false;
+      return !(s.x1 + offX < -W || s.y1 + offY < -W || s.x0 + offX > w + W || s.y0 + offY > h + W);
+    });
+
+    if (bloom) {
+      bloom.t = Math.max(0, Math.min(1, bloom.t + (bloom.dir * dt) / (bloom.dir > 0 ? 0.62 : 0.34)));
+      // 触られないまましばらく経ったら、閉じる。画面の外へ流れ出たときも閉じる。
+      if (bloom.dir > 0 && (now - lastUser > 9000 || bloom.y + bloom.h + offY < 40)) bloom.dir = -1;
+      if (bloom.dir < 0 && bloom.t <= 0) bloom = null;
+    }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr, 0, 0, dpr, offX * dpr, offY * dpr);
     ctx.lineJoin = 'round';
-    ctx.lineCap = 'butt';
-    for (const s of segs) {
-      if (s.pts.length < 2) continue;
-      if (!s.pat) lock(s);
-      const paint = s.pat || '#161614';
-      ctx.strokeStyle = paint;
-      ctx.fillStyle = paint;
-      if (s.brush === 'nib') paintNib(s);
-      else if (s.brush === 'fude') paintFude(s);
-      else if (s.brush === 'hake') paintHake(s);
-      else {
-        ctx.lineWidth = W;
-        trace(s.pts);
-        ctx.stroke();
+    // ひらいている帯も、まず帯として描く。その上に、ひらいていく面を重ねる。
+    for (const s of segs) paintSeg(s);
+    if (bloom && bloom.t > 0.001) paintBloom(bloom);
+
+    // ひらいた作品の下に、題名と入口を出す。
+    if (openLink) {
+      const on = !!bloom && bloom.dir > 0 && bloom.t > 0.85;
+      openLink.classList.toggle('is-on', on);
+      if (bloom) {
+        openLink.style.transform = `translate3d(${Math.round(bloom.x + offX)}px, ${Math.round(bloom.y + bloom.h + offY + 12)}px, 0)`;
       }
     }
-  }
-
-  function trace(pts: Pt[]) {
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-  }
-
-  // 平ペン: 28°に寝かせたペン先(長さ W の線分)が通ったあとを塗る。
-  function paintNib(s: Seg) {
-    const hx = (nibX * W) / 2;
-    const hy = (nibY * W) / 2;
-    ctx.beginPath();
-    for (let i = 1; i < s.pts.length; i++) {
-      const a = s.pts[i - 1];
-      const b = s.pts[i];
-      // 面の向きをそろえて、重なりをひとつの形として塗る。
-      const cross = (b.x - a.x) * hy - (b.y - a.y) * hx;
-      const k = cross >= 0 ? 1 : -1;
-      ctx.moveTo(a.x - hx * k, a.y - hy * k);
-      ctx.lineTo(b.x - hx * k, b.y - hy * k);
-      ctx.lineTo(b.x + hx * k, b.y + hy * k);
-      ctx.lineTo(a.x + hx * k, a.y + hy * k);
-      ctx.closePath();
-    }
-    ctx.fill('nonzero');
-    // ペン先が線と平行に近いところは、最低限の太さを足す。
-    ctx.lineWidth = W * 0.07;
-    trace(s.pts);
-    ctx.stroke();
-  }
-
-  // 毛筆: 点ごとの太さで、左右の縁をつないだ形を塗る。
-  function paintFude(s: Seg) {
-    const n = s.pts.length;
-    const L1: Pt[] = [];
-    const R1: Pt[] = [];
-    for (let i = 0; i < n; i++) {
-      const a = s.pts[Math.max(0, i - 1)];
-      const b = s.pts[Math.min(n - 1, i + 1)];
-      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const ox = (-(b.y - a.y) / l) * (s.wds[i] / 2);
-      const oy = ((b.x - a.x) / l) * (s.wds[i] / 2);
-      L1.push({ x: s.pts[i].x + ox, y: s.pts[i].y + oy });
-      R1.push({ x: s.pts[i].x - ox, y: s.pts[i].y - oy });
-    }
-    ctx.beginPath();
-    ctx.moveTo(L1[0].x, L1[0].y);
-    for (let i = 1; i < n; i++) ctx.lineTo(L1[i].x, L1[i].y);
-    for (let i = n - 1; i >= 0; i--) ctx.lineTo(R1[i].x, R1[i].y);
-    ctx.closePath();
-    ctx.fill('nonzero');
-    // 急に曲がったところの欠けを埋める。
-    for (let i = 3; i < n - 3; i += 2) {
-      ctx.beginPath();
-      ctx.arc(s.pts[i].x, s.pts[i].y, s.wds[i] / 2, 0, 6.2832);
-      ctx.fill();
-    }
-  }
-
-  // 刷毛: 28°に並んだ毛の筋。筋ごとに太さが違う。
-  const HAIRS = [0.9, 0.5, 1, 0.7, 0.35, 1, 0.8, 0.55, 0.95, 0.4, 0.85];
-  function paintHake(s: Seg) {
-    const n = HAIRS.length;
-    const pitch = W / n;
-    for (let k = 0; k < n; k++) {
-      const t = (k + 0.5) / n - 0.5;
-      ctx.save();
-      ctx.translate(nibX * W * t, nibY * W * t);
-      // 写真の位置は動かさない(筋だけがずれる)。
-      if (s.pat) ctx.strokeStyle = s.pat;
-      ctx.lineWidth = Math.max(1.5, pitch * 0.92 * HAIRS[k]);
-      trace(s.pts);
-      ctx.stroke();
-      ctx.restore();
-    }
+    root.classList.toggle('is-open', !!bloom && bloom.dir > 0);
   }
 
   // ---- 入力 ----
@@ -398,82 +456,93 @@ export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () =
       penUp();
       auto.on = false;
     }
+    if (releasing) {
+      releasing = false;
+      penUp();
+    }
     pointerDown = true;
     moved = false;
     downAt = { x: e.clientX, y: e.clientY };
+    finger.x = pen.x = e.clientX;
+    finger.y = pen.y = e.clientY;
     lastUser = performance.now();
-    penDown({ x: e.clientX - offX, y: e.clientY - offY });
   }
   function onMove(e: PointerEvent) {
     if (!pointerDown) {
       // PC: 帯の上では、押せることを示す。
       if (e.pointerType === 'mouse') {
-        const s = hit(e.clientX, e.clientY);
-        root.classList.toggle('is-over', !!s);
-        if (s) setLabel(works[s.work].title);
+        const over = inBloom(e.clientX, e.clientY) || !!hit(e.clientX, e.clientY);
+        root.classList.toggle('is-over', over);
+        if (!bloom) {
+          const s = hit(e.clientX, e.clientY);
+          if (s) setLabel(works[s.work].title);
+        }
       }
       return;
     }
-    if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 8) moved = true;
+    finger.x = e.clientX;
+    finger.y = e.clientY;
     lastUser = performance.now();
-    penMove({ x: e.clientX - offX, y: e.clientY - offY });
+    if (!moved && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 8) {
+      // 描きはじめる。ひらいていた作品は帯に戻る。
+      moved = true;
+      closeBloom();
+      penDown({ x: pen.x - offX, y: pen.y - offY });
+    }
   }
   function onUp(e: PointerEvent) {
     if (!pointerDown) return;
     pointerDown = false;
     lastUser = performance.now();
-    const wasTap = !moved;
-    if (wasTap && cur) {
-      // 描かずに押しただけ: 点は残さない。
-      segs = segs.filter((s) => s !== cur);
-      nextWork = (nextWork - 1 + works.length) % works.length;
-      cur = null;
-    } else penUp();
-    if (wasTap) {
-      const s = hit(e.clientX, e.clientY);
-      if (s) navigate(works[s.work].href);
+    if (moved) {
+      releasing = true; // 筆が指の離れた場所に追いつくまで描く
+      return;
     }
+    // 描かずに押しただけ。
+    if (bloom && bloom.dir > 0) {
+      if (inBloom(e.clientX, e.clientY)) navigate(works[bloom.seg.work].href);
+      else closeBloom();
+      return;
+    }
+    const s = hit(e.clientX, e.clientY);
+    if (s && !s.open) openBloom(s);
   }
   function onWheel(e: WheelEvent) {
     if (e.ctrlKey) return;
     e.preventDefault();
     // ホイールは、紙を速く流す。
     boost = Math.min(1600, boost + Math.abs(e.deltaY + e.deltaX) * 2.2);
+    if (bloom) closeBloom();
+  }
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') closeBloom();
   }
   function onResize() {
     measure();
   }
-  // 筆を替える(吟味用のボタン)。
-  function onBrushClick(e: MouseEvent) {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-brush]');
-    if (!btn) return;
-    brush = BRUSHES[(BRUSHES.indexOf(brush) + 1) % BRUSHES.length];
-    lastUser = -1e9; // すぐに自動のペンで見せる
-    onBrush?.(brush);
-  }
 
   measure();
-  onBrush?.(brush);
-  root.addEventListener('click', onBrushClick);
   root.addEventListener('pointerdown', onDown);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
   root.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onResize);
   raf = requestAnimationFrame(frame);
 
   return () => {
     cancelAnimationFrame(raf);
-    root.removeEventListener('click', onBrushClick);
     root.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
     root.removeEventListener('wheel', onWheel);
+    window.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     if (label) label.textContent = idleLabel;
-    root.classList.remove('is-live', 'is-over');
+    openLink?.classList.remove('is-on');
+    root.classList.remove('is-live', 'is-over', 'is-open');
     html.classList.remove('draw-on');
   };
 }
