@@ -281,3 +281,40 @@ html.lenis body {
 .prose + .prose {
   margin-top: 1.5rem;
 }
+
+/* ===== 共有: タグのボタン ===== */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chip {
+  appearance: none;
+  border: 1px solid #33322e;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: rgba(244, 241, 234, 0.72);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+.chip:hover {
+  color: var(--fg);
+  border-color: #6b6860;
+}
+.chip:focus-visible {
+  outline: 1px solid var(--fg);
+  outline-offset: 2px;
+}
+.chip[aria-pressed='true'] {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: #000;
+}

@@ -1,21 +1,36 @@
 ---
 import Base from '../layouts/Base.astro';
+import WorkCard from '../components/WorkCard.astro';
 import { getCollection } from 'astro:content';
+import { DOMAINS, STANCES } from '../content.config';
+import '../styles/stage.css';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const hydraSrc = `${base}/hydra/index.html`;
 
-const featured = (await getCollection('works', ({ data }) => !data.draft))
-  .sort((a, b) => a.data.order - b.data.order)
-  .slice(0, 3);
+const works = (await getCollection('works', ({ data }) => !data.draft && data.featured)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+
+// 実際に使われているタグだけをボタンにする。
+const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
+  works.some((w) => w.data.domain.includes(k))
+);
+const usedStances = (Object.keys(STANCES) as (keyof typeof STANCES)[]).filter((k) =>
+  works.some((w) => w.data.stance === k)
+);
 ---
 
 <Base>
-  <!-- ===== HERO: HYDRA(署名オブジェクト) ===== -->
-  <section class="hero">
+  <!--
+    斜めスクロールのステージ。
+    data-angle … 軸の角度(度)。90=縦 / 28=斜め / 0=横。
+    JS が動かない環境では、このまま縦に読めるページになる。
+  -->
+  <div class="stage" data-stage-root data-angle="28">
     <iframe
-      id="hydra"
-      class="hero-bg"
+      class="stage-hydra"
+      data-hydra
       src={hydraSrc}
       title="Hayashi Design Works — Hydra"
       aria-hidden="true"
@@ -23,177 +38,119 @@ const featured = (await getCollection('works', ({ data }) => !data.draft))
       scrolling="no"
       loading="eager"></iframe>
 
-    <div class="hero-meta wrap">
-      <h1 class="hero-name">Soki Hayashi</h1>
-      <span>Graphic · Branding · 3DCG</span>
-    </div>
+    <canvas class="stage-fx" data-fx aria-hidden="true"></canvas>
 
-    <div class="scroll-cue" aria-hidden="true"><span>Scroll</span></div>
-  </section>
+    <section class="node node-hero" data-node="hero">
+      <div class="hero-meta">
+        <h1 class="hero-name">Soki Hayashi</h1>
+        <span>Branding · Graphic · Photo · Movie · 3D · UIUX</span>
+      </div>
+      <p class="stage-cue" data-cue aria-hidden="true">
+        <span class="cue-static">Scroll</span>
+        <span class="cue-live">Swipe to cut</span>
+      </p>
+    </section>
+
+    <section class="node node-text" data-node="text">
+      <p class="statement">世界観を作ります。</p>
+      <p class="statement-sub">
+        店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。
+        小さなビジュアルの中に、その先の世界を予感させる。
+      </p>
+    </section>
+
+    {
+      works.map((w, i) => (
+        <article
+          class="node node-work"
+          data-node="work"
+          data-domain={w.data.domain.join(' ')}
+          data-stance={w.data.stance}
+        >
+          <a class="work-link" href={`${base}/works/${w.id}/`} draggable="false">
+            <div class="halves" data-halves>
+              <div class="half half-a">
+                <WorkCard work={w} index={i} />
+              </div>
+              <div class="half half-b" aria-hidden="true">
+                <WorkCard work={w} index={i} />
+              </div>
+            </div>
+          </a>
+        </article>
+      ))
+    }
+
+    <section class="node node-end" data-node="end">
+      <p class="end-links">
+        <a href={`${base}/works/`}>All works</a>
+        <a href={`${base}/about/`}>About</a>
+        <a href={`${base}/contact/`}>Contact</a>
+      </p>
+      <p class="end-copy">© {new Date().getFullYear()} Soki Hayashi Designworks</p>
+    </section>
+
+    <p class="stage-empty">この組み合わせの作品はまだありません。</p>
+
+    <div class="stage-ui" data-stage-ui>
+      <div class="filters" aria-label="作品の絞り込み">
+        <div class="chips" role="group" aria-label="領域">
+          <button class="chip" type="button" data-filter-domain="all" aria-pressed="true">All</button>
+          {
+            usedDomains.map((k) => (
+              <button class="chip" type="button" data-filter-domain={k} aria-pressed="false">
+                {DOMAINS[k]}
+              </button>
+            ))
+          }
+        </div>
+        <div class="chips" role="group" aria-label="立場">
+          <button class="chip" type="button" data-filter-stance="all" aria-pressed="true">
+            Client + Original
+          </button>
+          {
+            usedStances.map((k) => (
+              <button class="chip" type="button" data-filter-stance={k} aria-pressed="false">
+                {STANCES[k]}
+              </button>
+            ))
+          }
+        </div>
+      </div>
+
+      <div class="stage-side">
+        <span class="stage-counter" data-counter aria-hidden="true"></span>
+        <!-- 試作用: 角度を比べるための切り替え。方向が決まったら外す。 -->
+        <div class="angle-switch" role="group" aria-label="スクロールの角度(試作用)">
+          <span class="angle-label">角度</span>
+          <button class="chip" type="button" data-set-angle="90" aria-pressed="false">縦</button>
+          <button class="chip" type="button" data-set-angle="28" aria-pressed="true">斜め28°</button>
+          <button class="chip" type="button" data-set-angle="40" aria-pressed="false">斜め40°</button>
+          <button class="chip" type="button" data-set-angle="0" aria-pressed="false">横</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
-    // タップ=分裂 / 水平ドラッグ=スワイプカット を HYDRA に転送。
-    // iframeは pointer-events:none のままなので、縦スクロールは一切邪魔しない。
-    function initHeroTap() {
-      const hero = document.querySelector('.hero') as HTMLElement | null;
-      const frame = document.getElementById('hydra') as HTMLIFrameElement | null;
-      if (!hero || !frame || hero.dataset.bound) return;
-      hero.dataset.bound = '1';
+    import { mountStage } from '../scripts/stage';
 
-      const send = (msg: any) => frame.contentWindow?.postMessage(msg, '*');
-      const norm = (e: { clientX: number; clientY: number }) => {
-        const r = hero.getBoundingClientRect();
-        return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
-      };
+    let dispose: (() => void) | undefined;
 
-      let last: { x: number; y: number } | null = null;
-      let moved = false;
-
-      hero.addEventListener('pointerdown', (e) => {
-        last = norm(e as PointerEvent);
-        moved = false;
-      });
-      hero.addEventListener('pointermove', (e) => {
-        const pe = e as PointerEvent;
-        if (pe.pointerType === 'mouse' && pe.buttons === 0) {
-          last = null;
-          return;
-        }
-        const p = norm(pe);
-        if (last) {
-          const dx = p.x - last.x;
-          const dy = p.y - last.y;
-          if (Math.abs(dx) > 0.012 || Math.abs(dy) > 0.012) moved = true;
-          // 水平ドラッグのみスワイプ転送(縦はページスクロールに任せる)
-          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 0.004) {
-            send({ hdwSwipe: { dx, dy } });
-          }
-        }
-        last = p;
-      });
-      hero.addEventListener('pointerup', () => (last = null));
-      hero.addEventListener('pointercancel', () => (last = null));
-
-      hero.addEventListener('click', (e) => {
-        if (moved) {
-          moved = false;
-          return;
-        } // ドラッグ後のクリックは無視
-        send({ hdwPoke: norm(e as MouseEvent) });
-      });
+    function start() {
+      dispose?.();
+      dispose = undefined;
+      const root = document.querySelector<HTMLElement>('[data-stage-root]');
+      if (!root) return;
+      // 「動きを減らす」設定の人には、ふつうの縦のページのまま見せる。
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      dispose = mountStage(root);
     }
-    document.addEventListener('astro:page-load', initHeroTap);
+
+    document.addEventListener('astro:page-load', start);
+    document.addEventListener('astro:before-swap', () => {
+      dispose?.();
+      dispose = undefined;
+    });
   </script>
-
-  <!-- ===== FEATURED WORKS ===== -->
-  <section class="featured wrap">
-    <h2 class="section-label" data-reveal>Selected Works</h2>
-    <ul class="grid">
-      {
-        featured.map((w) => (
-          <li class="card" data-reveal>
-            <a href={w.data.url ?? '#'} class="card-link">
-              <div
-                class="thumb"
-                style={`--accent:${w.data.accent}`}
-                aria-hidden="true"
-              />
-              <div class="meta">
-                <h3 class="card-title">{w.data.title}</h3>
-                <p class="card-sub">
-                  {w.data.role.join(' / ')}
-                  {w.data.year ? ` — ${w.data.year}` : ''}
-                </p>
-              </div>
-            </a>
-          </li>
-        ))
-      }
-    </ul>
-    <p class="more" data-reveal>
-      <a href={`${base}/works`}>View all works →</a>
-    </p>
-  </section>
 </Base>
-
-<style>
-  .hero {
-    position: relative;
-    height: 100svh;
-    min-height: 560px;
-    overflow: hidden;
-    background: #000;
-  }
-  .hero-bg {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    border: 0;
-    display: block;
-    /* 生のタッチ/クリックを HYDRA に直接通す(Wixと同じ=何度でも弾ける) */
-    pointer-events: auto;
-  }
-  /* Heroは液体が主役。文字は隅に最小限。 */
-  .hero-name {
-    margin: 0;
-    font-size: 0.72rem;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: inherit;
-  }
-  .hero-meta {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: clamp(2.5rem, 7vh, 4.5rem);
-    z-index: 2;
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    pointer-events: none;
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(244, 241, 234, 0.7);
-  }
-  .scroll-cue {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: 1.6rem;
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--muted);
-    animation: cue 2.4s ease-in-out infinite;
-  }
-  @keyframes cue {
-    0%,
-    100% {
-      opacity: 0.35;
-      transform: translate(-50%, 0);
-    }
-    50% {
-      opacity: 1;
-      transform: translate(-50%, 4px);
-    }
-  }
-
-  .featured {
-    padding-block: clamp(4rem, 12vh, 9rem);
-  }
-  .more {
-    margin-top: clamp(2rem, 5vh, 3.5rem);
-    font-size: 0.95rem;
-  }
-  .more a {
-    color: var(--accent);
-    border-bottom: 1px solid transparent;
-    transition: border-color 0.3s;
-  }
-  .more a:hover {
-    border-color: var(--accent);
-  }
-</style>

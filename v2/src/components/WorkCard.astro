@@ -1,0 +1,27 @@
+---
+// 作品カードの中身。ステージでは「切る」演出のために同じ中身を2枚重ねて使う。
+import type { CollectionEntry } from 'astro:content';
+import { DOMAINS, STANCES } from '../content.config';
+
+interface Props {
+  work: CollectionEntry<'works'>;
+  index: number;
+}
+const { work, index } = Astro.props;
+const d = work.data;
+---
+
+<div class="wc">
+  <div class="wc-thumb" style={`--accent:${d.accent}`}>
+    <span class="wc-no">{String(index + 1).padStart(2, '0')}</span>
+  </div>
+  <div class="wc-body">
+    <h3 class="wc-title">{d.title}</h3>
+    <p class="wc-tags">
+      {d.domain.map((k) => <span>{DOMAINS[k]}</span>)}
+      <span class="wc-stance">{STANCES[d.stance]}</span>
+      {d.year && <span>{d.year}</span>}
+    </p>
+    <p class="wc-summary">{d.summary}</p>
+  </div>
+</div>
