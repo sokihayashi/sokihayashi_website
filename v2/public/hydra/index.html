@@ -175,6 +175,14 @@ function setup(){
       }
       lastInteract = millis();
     }
+    // 親ページから描画の停止/再開(水滴が画面の外にあるあいだは止める)。
+    if (d && typeof d.hdwPause === 'boolean'){
+      if (d.hdwPause) noLoop(); else loop();
+    }
+    // 親ページから大きさを指定(画面の向きや幅に合わせる)。
+    if (d && typeof d.hdwScale === 'number'){
+      CONFIG.formScale = constrain(d.hdwScale, 0.5, 4.0);
+    }
     // 親ページからの「最初の一太刀」。切ると同時に大きく弾けさせる。
     if (d && d.hdwBurst){
       const bx = d.hdwBurst.nx || 0, by = d.hdwBurst.ny || 1;

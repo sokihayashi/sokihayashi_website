@@ -4,9 +4,9 @@ summary: "ミシュラン一つ星レストラン「銀座レカン」のリブ�
 client: "銀座レカン"
 domain: ["branding"]
 stance: "client"
-accent: "#c9b48a"
+images: [16, 17, 18]
+featured: true
 order: 1
 provisional: true
 ---
 
-(長文の説明は準備中。課題・判断・やったこと・結果を300〜400字で。)

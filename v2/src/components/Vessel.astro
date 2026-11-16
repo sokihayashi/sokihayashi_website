@@ -1,0 +1,42 @@
+---
+// 器。空のときは3辺の線だけ(上は開いている)。
+// 液体が注がれて満ちると、澄んで中身が見え、線は外れる。
+// JS が動かない環境では、最初から満ちた状態(ただの画像)として見える。
+import { imgSmall, imgLarge, imgSize, imgRatio } from '../data/img';
+
+interface Props {
+  n?: number; // 画像の通し番号。無ければ空の器
+  ratio?: number; // 画像が無いときの縦横比
+  alt?: string;
+  sizes?: string; // 大きい画像も候補に入れるときの sizes
+  eager?: boolean;
+}
+const { n, ratio = 4 / 3, alt = '', sizes, eager = false } = Astro.props;
+const ar = n ? imgRatio(n) : ratio;
+const [w, h] = n ? imgSize(n) : [0, 0];
+// 器ごとに、流紋の見える場所を変える。
+const ix = ((n ?? 7) * 37) % 100;
+const iy = ((n ?? 7) * 61) % 100;
+const sw = n ? Math.round(w >= h ? 560 : (560 * w) / h) : 0;
+---
+
+<div class="vessel" style={`--ar:${ar.toFixed(4)};--ix:${ix}%;--iy:${iy}%`}>
+  {
+    n && (
+      <div class="vessel-fill">
+        <img
+          src={sizes ? imgLarge(n) : imgSmall(n)}
+          srcset={sizes ? `${imgSmall(n)} ${sw}w, ${imgLarge(n)} ${w}w` : undefined}
+          sizes={sizes}
+          width={w}
+          height={h}
+          alt={alt}
+          loading={eager ? 'eager' : 'lazy'}
+          decoding="async"
+          draggable="false"
+        />
+      </div>
+    )
+  }
+  <div class="vessel-ink" aria-hidden="true"></div>
+</div>

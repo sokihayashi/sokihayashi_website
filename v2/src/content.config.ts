@@ -30,15 +30,17 @@ const works = defineCollection({
   loader: glob({ pattern: '**/*.md', base: './src/content/works' }),
   schema: z.object({
     title: z.string(),
-    summary: z.string(),
+    // 一覧や詳細の冒頭に出す短い説明。本人の言葉があるものだけ入れる。
+    summary: z.string().default(''),
     client: z.string().optional(),
     role: z.array(z.string()).default([]),
     year: z.number().optional(),
     domain: z.array(z.enum(domainKeys)).min(1),
     stance: z.enum(['client', 'original']).default('client'),
-    // カバー画像は後で。今はアクセント色のプレースホルダで描画する。
-    cover: z.string().optional(),
-    accent: z.string().default('#e8e2d6'),
+    // 画像。public/img/wall/ の通し番号(001〜142)。先頭がカバーになる。
+    images: z.array(z.number().int().min(1).max(142)).default([]),
+    // 画像がないときの色。
+    accent: z.string().default('#2a2927'),
     // 外部の関連リンク(プレスリリース等)。詳細ページの末尾に出す。
     url: z.string().url().optional(),
     // トップに出すか。

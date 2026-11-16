@@ -1,90 +1,138 @@
-// 斜めスクロールのステージ。
+// トップのステージ。
 //
-// 考え方:
-//   ・ページはブラウザのスクロールを使わず、1本の軸(斜め)に沿って「世界」を動かす。
-//   ・スクロール=スワイプ=「切る」。ヒーロー(HYDRA)には、その向きのカットを送る。
-//   ・文字は常に水平。動くのは位置だけ。
+// 核になる考え:
+//   価値は最初からある。形だけがない。掬って、器に流し込むと、形になる。
 //
-// 軸の向き d = (cos a, sin a)。a は水平からの角度(度)。
-//   a = 90 … 縦(ふつうのスクロール)
-//   a = 28 … 斜め(既定)
-//   a = 0  … 横
-// 進む方向にスクロールすると、中身は左上へ流れ、次の中身が右下から入ってくる。
+// 画面で起きること:
+//   ・はじめ  … 水滴(HYDRA)がひとつ。まわりに、案件名の札が付いた空の器が待っている
+//   ・掬う    … 水滴を切ると、飛沫がそれぞれの器の口へ飛ぶ
+//   ・満ちる  … 器に黒い液が上がり、満ちると澄んで作品が見える。器の線は外れる
+//   ・進む    … 次の器が入ってくるたびに、同じことが起きる
+//   ・最後    … 空の器がひとつ残っている。「次は、あなたの案件。」
+//
+// 決まりごと(合議で決めたもの):
+//   ・1器=1案件。器は必ず題名を持ち、押すと詳細へ行く
+//   ・飛沫には必ず行き先がある(器の口に着く)
+//   ・文字は常に水平。動くのは位置だけ
+//   ・戻る・共有・再訪では演出を飛ばし、満ちた状態で同じ器を出す(#w=3)
+//
+// PC … 斜めの軸に沿って並べ、自前で送る(mountDiagonal)
+// スマホ … 真縦。ブラウザ本来のスクロールに任せ、1画面に1案件(mountFlow)
 
-import { createField, type FieldEnv } from './field';
-import { createLiquid } from './liquid';
+import { fly, makePour, pourAfter, pourReset, pourSet, prime, type Pour } from './pour';
 
-type Kind = 'hero' | 'text' | 'work' | 'end';
+type Kind = 'hero' | 'work' | 'vessel' | 'end';
 
 interface StageNode {
   el: HTMLElement;
   kind: Kind;
-  s: number; // 軸上の現在位置(px)
-  sTarget: number; // 軸上の目標位置(px)
-  off: number; // 軸に直交する方向のずらし(px)
-  hw: number; // 幅の半分(px)
-  hh: number; // 高さの半分(px)
-  shown: boolean; // タグ絞り込みで残っているか
-  domain: string[];
-  stance: string;
+  s: number; // 軸上の位置(px)
+  off: number; // 軸に直交する方向のずらし(px)。0 が中央の列
+  hw: number;
+  hh: number;
+  vh: number; // 器そのものの高さの半分(札を除く)
+  used: boolean;
+  pour: Pour | null;
+  seed: number;
+  x: number; // 画面上の中心(px)
+  y: number;
+  onScreen: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const isSmall = () =>
+  Math.min(window.innerWidth, window.innerHeight) < 640 || window.innerWidth < 720;
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+function writeHash(w: number) {
+  const url = w > 0 ? `#w=${w}` : location.pathname + location.search;
+  if ((w > 0 ? url : '') === location.hash) return;
+  history.replaceState(history.state, '', url);
+}
 
 export function mountStage(root: HTMLElement): () => void {
+  let small = isSmall();
+  let dispose = small ? mountFlow(root) : mountDiagonal(root);
+  const onResize = () => {
+    const now = isSmall();
+    if (now === small) return;
+    small = now;
+    dispose();
+    dispose = small ? mountFlow(root) : mountDiagonal(root);
+  };
+  window.addEventListener('resize', onResize);
+  return () => {
+    window.removeEventListener('resize', onResize);
+    dispose();
+  };
+}
+
+// ============================================================
+// PC: 斜めの軸
+//   軸の向き d = (cos a, sin a)。a は水平からの角度(度)。
+//   進むと中身は左上へ流れ、次が右下から入ってくる。
+// ============================================================
+function mountDiagonal(root: HTMLElement): () => void {
   const hydra = root.querySelector<HTMLIFrameElement>('[data-hydra]');
-  const fx = root.querySelector<HTMLCanvasElement>('[data-fx]');
+  const beadBox = root.querySelector<HTMLElement>('[data-beads]');
   const counter = root.querySelector<HTMLElement>('[data-counter]');
   const cue = root.querySelector<HTMLElement>('[data-cue]');
-  const fieldBox = root.querySelector<HTMLElement>('[data-field]');
-  const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-  const liquid = fx ? createLiquid(fx, fine) : null;
-  const field = fieldBox ? createField(fieldBox) : null;
-  root.classList.toggle('has-liquid-cursor', fine && !!liquid);
+  const reserves = Array.from(root.querySelectorAll<HTMLElement>('[data-reserve]'));
+  const timers: number[] = [];
 
   const nodes: StageNode[] = Array.from(root.querySelectorAll<HTMLElement>('[data-node]')).map(
-    (el) => ({
+    (el, i) => ({
       el,
-      kind: (el.dataset.node as Kind) || 'text',
+      kind: (el.dataset.node as Kind) || 'work',
       s: 0,
-      sTarget: 0,
       off: 0,
       hw: 0,
       hh: 0,
-      shown: true,
-      domain: (el.dataset.domain || '').split(' ').filter(Boolean),
-      stance: el.dataset.stance || '',
+      vh: 0,
+      used: true,
+      pour: el.querySelector('.vessel-fill img') ? makePour(el) : null,
+      seed: i * 1.917,
+      x: 0,
+      y: 0,
+      onScreen: false,
     })
   );
   const works = nodes.filter((n) => n.kind === 'work');
+  const vessels = nodes.filter((n) => n.kind === 'vessel');
+  const spine = nodes.filter((n) => n.kind !== 'vessel');
 
-  // ---- 状態 ----
-  let angle = Number(root.dataset.angle || 28);
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const angle = hash.has('a') ? clamp(Number(hash.get('a')), 0, 90) : Number(root.dataset.angle || 28);
   let dx = 1;
-  let dy = 0; // 軸 d
+  let dy = 0;
   let nx = 0;
-  let ny = 1; // 法線 n
+  let ny = 1;
   let vw = 0;
   let vh = 0;
   let span = 0; // 画面を軸方向に測った長さ
-  let hold = 0; // ヒーローを留めておくスクロール量
+  let hold = 0; // ヒーローを留めておく送り量
   let maxPos = 0;
   let pos = 0;
   let target = 0;
+  let drawn = -1;
   let raf = 0;
-  let filterDomain = 'all';
-  let filterStance = 'all';
+  let last = 0;
   let lastCut = 0;
   let cutAcc = 0;
   let lastScrollSent = -1;
-  let first = true;
-  const pointer = { x: 0, y: 0, has: false, hot: false };
-  let burstDone = false;
+  let burstAt = 0;
+  let quiet = false; // 途中から開いた(演出を飛ばす)
+  let paused = false;
+  let focusIdx = 0;
 
-  root.classList.add('is-live');
+  root.classList.add('is-live', 'pour-on');
   document.documentElement.classList.add('stage-on');
 
-  // ---- 配置 ----
+  function post(msg: unknown) {
+    hydra?.contentWindow?.postMessage(msg, '*');
+  }
+  const sendScale = () => post({ hdwScale: 1.7 });
+
   function measure() {
     vw = root.clientWidth;
     vh = root.clientHeight;
@@ -94,125 +142,101 @@ export function mountStage(root: HTMLElement): () => void {
     nx = -dy;
     ny = dx;
     span = Math.abs(vw * dx) + Math.abs(vh * dy);
-    hold = Math.round(clamp(Math.min(vw, vh) * 0.7, 320, 620));
-    root.style.setProperty('--dx', dx.toFixed(4));
-    root.style.setProperty('--dy', dy.toFixed(4));
-    root.style.setProperty('--nx', nx.toFixed(4));
-    root.style.setProperty('--ny', ny.toFixed(4));
-    root.style.setProperty('--angle', `${angle}deg`);
-
-    liquid?.resize(vw, vh);
-    field?.resize(vw, vh);
+    hold = Math.round(clamp(Math.min(vw, vh) * 0.7, 300, 620));
+    sendScale();
   }
 
-  function env(): FieldEnv {
-    return {
-      vw,
-      vh,
-      dx,
-      dy,
-      nx,
-      ny,
-      travel: Math.max(0, pos - hold),
-      span,
-      hero: clamp(1 - Math.max(0, pos - hold) / (span * 0.5), 0, 1),
-      px: pointer.x,
-      py: pointer.y,
-      hasPointer: pointer.has && fine,
-    };
-  }
+  const alongD = (w: number, h: number) => Math.abs(w * dx) + Math.abs(h * dy);
+  const alongN = (w: number, h: number) => Math.abs(w * nx) + Math.abs(h * ny);
 
-  // カード同士が重ならない最小の間隔を、角度から求める。
-  function workGap(): number {
-    const sample = works[0]?.el;
-    const w = sample ? sample.offsetWidth : 320;
-    const h = sample ? sample.offsetHeight : 380;
-    const pad = clamp(Math.min(vw, vh) * 0.06, 28, 72);
-    const byX = Math.abs(dx) > 0.05 ? (w + pad) / Math.abs(dx) : Infinity;
-    const byY = Math.abs(dy) > 0.05 ? (h + pad) / Math.abs(dy) : Infinity;
-    return Math.min(byX, byY);
-  }
-
-  function layout(immediate: boolean) {
-    const gap = workGap();
-    // 斜めのときだけ、軸の左右に少し振ってリズムを作る。
-    const sway = Math.abs(dx) > 0.2 && Math.abs(dy) > 0.2 ? clamp(Math.min(vw, vh) * 0.05, 14, 46) : 0;
-    let cursor = 0;
-    let i = 0;
-    let prev: Kind = 'hero';
+  function layout() {
     for (const n of nodes) {
       n.hw = n.el.offsetWidth / 2;
       n.hh = n.el.offsetHeight / 2;
+      const v = n.el.querySelector<HTMLElement>('.vessel');
+      n.vh = v ? v.offsetHeight / 2 : n.hh;
+    }
+    const pad = clamp(Math.min(vw, vh) * 0.06, 28, 72);
+
+    // 中央の列: 水滴 → 代表の案件 → 空の器(次の案件)
+    // 隣り合う2つが重ならない最小の間隔で並べる。
+    let cursor = 0;
+    let prev: StageNode | undefined;
+    let cardN = 0;
+    for (const n of spine) {
+      n.off = 0;
       if (n.kind === 'hero') {
-        n.sTarget = 0;
-        n.off = 0;
-      } else if (n.kind === 'text') {
-        cursor += span * 0.72;
-        n.sTarget = cursor;
-        n.off = 0;
-        prev = 'text';
-      } else if (n.kind === 'work') {
-        if (!n.shown) continue;
-        cursor += prev === 'work' ? gap : span * 0.62;
-        n.sTarget = cursor;
-        n.off = i % 2 === 0 ? -sway : sway;
-        i++;
-        prev = 'work';
-      } else {
-        cursor += span * 0.66;
-        n.sTarget = cursor;
-        n.off = 0;
+        n.s = 0;
+        continue;
       }
-      if (immediate) n.s = n.sTarget;
+      if (!prev) {
+        // 最初の器は、はじめの画面の右下に口を覗かせておく。
+        cursor = span * 0.5;
+      } else {
+        const w = prev.hw + n.hw + pad;
+        const h = prev.hh + n.hh + pad;
+        const byX = Math.abs(dx) > 0.05 ? w / Math.abs(dx) : Infinity;
+        const byY = Math.abs(dy) > 0.05 ? h / Math.abs(dy) : Infinity;
+        cursor += Math.min(byX, byY);
+      }
+      n.s = cursor;
+      prev = n;
+      cardN = Math.max(cardN, alongN(n.hw * 2, n.hh * 2) / 2);
     }
-    maxPos = hold + cursor;
+    const endS = cursor;
+    maxPos = hold + endS;
+
+    // 外側の列: そのほかの案件。軸と平行な2本の列に、均等に置く。重ねない。
+    const sample = vessels[0];
+    const lanes: number[] = [];
+    if (sample) {
+      const vN = alongN(sample.hw * 2, sample.hh * 2);
+      const off = Math.max(cardN, Math.min(vw, vh) * 0.3) + vN / 2 + pad * 0.8;
+      if (off - vN / 2 < alongN(vw, vh) / 2) lanes.push(off, -off);
+    }
+    const start = -span * 0.42;
+    const limit = endS + span * 0.3;
+    const perLane = Math.max(1, Math.ceil(vessels.length / Math.max(1, lanes.length)));
+    const step = (limit - start) / perLane;
+    const zones = reserves.map((el) => el.getBoundingClientRect());
+    const hits = (n: StageNode, s: number, off: number) => {
+      const x = vw / 2 + dx * s + nx * off;
+      const y = vh / 2 + dy * s + ny * off;
+      return zones.some(
+        (z) =>
+          x + n.hw > z.left - 24 && x - n.hw < z.right + 24 && y + n.hh > z.top - 24 && y - n.hh < z.bottom + 24
+      );
+    };
+    const cursors = lanes.map((_, i) => start + (i % 2) * step * 0.5);
+    vessels.forEach((n, i) => {
+      n.used = lanes.length > 0;
+      n.el.classList.toggle('is-unused', !n.used);
+      if (!n.used) return;
+      const k = i % lanes.length;
+      const ext = alongD(n.hw * 2, n.hh * 2);
+      let s = cursors[k] + ext / 2;
+      // はじめの画面の文字とは重ねない。
+      let guard = 0;
+      while (hits(n, s, lanes[k]) && guard++ < 40) s += 40;
+      n.off = lanes[k];
+      n.s = s;
+      cursors[k] = Math.max(cursors[k] + step, s + ext / 2 + pad);
+    });
+
     target = clamp(target, 0, maxPos);
-    if (immediate) pos = clamp(pos, 0, maxPos);
-    setHalves();
+    pos = clamp(pos, 0, maxPos);
+    drawn = -1;
   }
 
-  // カードを軸の向きで2つに割るための切り抜き(clip-path)を用意する。
-  function setHalves() {
-    const L = 4000;
-    for (const n of works) {
-      const box = n.el.querySelector<HTMLElement>('[data-halves]');
-      if (!box) continue;
-      const w = box.offsetWidth;
-      const h = box.offsetHeight;
-      const cx = w / 2;
-      const cy = h / 2;
-      const poly = (sign: number) => {
-        // 継ぎ目に隙間が出ないよう、0.5px だけ重ねる。
-        const ox = cx - nx * sign * 0.5;
-        const oy = cy - ny * sign * 0.5;
-        const p = [
-          [ox - dx * L, oy - dy * L],
-          [ox + dx * L, oy + dy * L],
-          [ox + dx * L + nx * sign * L, oy + dy * L + ny * sign * L],
-          [ox - dx * L + nx * sign * L, oy - dy * L + ny * sign * L],
-        ];
-        return p.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(', ');
-      };
-      box.style.setProperty('--poly-a', poly(1));
-      box.style.setProperty('--poly-b', poly(-1));
-    }
-  }
+  const heroActive = () => pos < hold + span * 0.5;
 
-  // ---- HYDRA(ヒーロー)への橋渡し ----
-  const post = (msg: unknown) => hydra?.contentWindow?.postMessage(msg, '*');
-
-  function heroActive() {
-    return pos < hold + span * 0.5;
-  }
-
-  // スクロールの向きでヒーローを切る。
+  // 送る向きで水滴を切る。
   function cutHero(sign: number, strength: number) {
     const now = performance.now();
     if (now - lastCut < 230) return;
     lastCut = now;
     const m = clamp(0.045 + strength * 0.03, 0.045, 0.09);
     // HYDRA は横向きが強いスワイプだけをカットとして受け取る。
-    // 画面の縦横比で向きが変わらないよう、ピクセルの比に直して送る。
     if (Math.abs(dx) >= Math.abs(dy)) {
       post({ hdwSwipe: { dx: -sign * dx * m, dy: -sign * dy * m * (vw / Math.max(1, vh)) } });
     } else {
@@ -220,58 +244,41 @@ export function mountStage(root: HTMLElement): () => void {
     }
   }
 
-  // ---- 液体の切り跡 ----
-  // 入力のあった場所から、軸の向きに水滴を飛ばす。
-  function spray(x: number, y: number, amount: number) {
-    if (!liquid) return;
-    const sgn = amount > 0 ? -1 : 1;
-    const power = clamp(Math.abs(amount) / 60, 0.4, 3.2);
-    const n = Math.round(clamp(power * 2, 1, 6));
-    for (let i = 0; i < n; i++) {
-      const sp = (4 + Math.random() * 9) * power;
-      const side = (Math.random() - 0.5) * 2.4;
-      liquid.bead(
-        x + nx * side * 4,
-        y + ny * side * 4,
-        dx * sgn * sp + nx * side,
-        dy * sgn * sp + ny * side,
-        5 + Math.random() * 6 * Math.min(power, 2),
-        0.9 + Math.random() * 0.05
-      );
+  // ---- 掬う(最初の一太刀) ----
+  // 水滴が弾け、飛沫がそれぞれの器の口へ飛ぶ。届いた器から満ちていく。
+  function burst(silent = false) {
+    if (burstAt) return;
+    burstAt = performance.now();
+    root.classList.add('is-burst');
+    cue?.classList.add('is-gone');
+    if (silent) {
+      quiet = true;
+      return;
+    }
+    post({ hdwBurst: { nx: dy, ny: dx } });
+    locate();
+    const cx = vw / 2 - dx * Math.max(0, pos - hold);
+    const cy = vh / 2 - dy * Math.max(0, pos - hold);
+    const reach = Math.hypot(vw, vh) / 2;
+    for (const n of nodes) {
+      if (!n.pour || !n.used || !n.onScreen) continue;
+      const mx = n.x;
+      const my = n.y - n.hh + 6; // 器の口
+      const dist = Math.hypot(mx - cx, my - cy);
+      const dur = 460 + (dist / reach) * 520;
+      fly(beadBox, cx, cy, mx, my, dur, n.seed, nx, ny);
+      pourAfter(n.pour, dur - 80, timers);
     }
   }
 
-  // 画面全体を一太刀で横切る線(最初のカットと、タグ切り替えのとき)。
-  function slash() {
-    liquid?.slash(vw / 2, vh / 2, dx, dy, Math.hypot(vw, vh) * 1.05);
-  }
-
-  // 最初の一太刀。ヒーローが弾け、作品が飛沫として画面に散る。
-  function burst() {
-    if (burstDone) return;
-    burstDone = true;
-    root.classList.add('is-burst');
-    post({ hdwBurst: { nx: dy, ny: dx } });
-    slash();
-    field?.burst(performance.now(), env());
-  }
-
   // ---- 入力 ----
-  function advance(amount: number, px?: number, py?: number) {
+  function advance(amount: number) {
     if (!amount) return;
     target = clamp(target + amount, 0, maxPos);
-    if (cue && target > 12) cue.classList.add('is-gone');
-
-    // 入力のあった位置から、軸の向きに水滴を飛ばす。
-    const ox = px ?? (pointer.has ? pointer.x : vw / 2);
-    const oy = py ?? (pointer.has ? pointer.y : vh / 2);
-    spray(ox, oy, amount);
-    field?.kick(amount, env());
-
     if (heroActive()) {
       cutAcc += Math.abs(amount);
       if (cutAcc > 70) {
-        if (!burstDone) burst();
+        if (!burstAt) burst();
         else cutHero(amount > 0 ? 1 : -1, clamp(cutAcc / 400, 0, 1));
         cutAcc = 0;
       }
@@ -279,52 +286,35 @@ export function mountStage(root: HTMLElement): () => void {
   }
 
   function onWheel(e: WheelEvent) {
+    if (e.ctrlKey) return; // 拡大の操作は奪わない
     e.preventDefault();
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? vh : 1;
-    // 縦ホイールはそのまま進む量に。横成分は軸の横向きぶんだけ足す。
-    advance((e.deltaY + e.deltaX * dx) * unit, e.clientX, e.clientY);
+    advance((e.deltaY + e.deltaX * dx) * unit);
   }
 
   let drag: { x: number; y: number; sx: number; sy: number; t: number; v: number; moved: boolean } | null =
     null;
+  let suppressClick = 0;
 
   function onPointerDown(e: PointerEvent) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const el = e.target as HTMLElement;
-    if (el.closest('[data-stage-ui]')) return;
     drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), v: 0, moved: false };
   }
 
   function onPointerMove(e: PointerEvent) {
-    pointer.x = e.clientX;
-    pointer.y = e.clientY;
-    pointer.has = true;
-    pointer.hot = !!(e.target as HTMLElement | null)?.closest?.('a, button');
-    if (e.pointerType === 'mouse') liquid?.pointer(e.clientX, e.clientY, pointer.hot);
     if (!drag) return;
     const mx = e.clientX - drag.x;
     const my = e.clientY - drag.y;
     if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 6) drag.moved = true;
     if (!drag.moved) return;
-    // 指の動きを軸に写す。縦に動かしても必ず進むようにしてある。
     const amount = -(mx * dx + my);
     const now = performance.now();
     const dt = Math.max(1, now - drag.t);
     drag.v = drag.v * 0.6 + (amount / dt) * 0.4;
     drag.t = now;
-
     target = clamp(target + amount, 0, maxPos);
-    if (cue && target > 12) cue.classList.add('is-gone');
-    // 指の通ったところに水の筋を残す。
-    const steps = Math.max(1, Math.round(Math.hypot(mx, my) / 9));
-    for (let i = 0; i < steps; i++) {
-      const t = i / steps;
-      liquid?.bead(drag.x + mx * t, drag.y + my * t, mx * 0.06, my * 0.06, 7 + Math.random() * 5, 0.9);
-    }
-    field?.kick(amount, env());
     if (heroActive()) {
-      if (!burstDone && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 40) burst();
-      // ヒーローには実際のドラッグの向きを送る(横向きが強ければカットになる)。
+      if (!burstAt && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 36) burst();
       else post({ hdwSwipe: { dx: mx / Math.max(1, vw), dy: my / Math.max(1, vh) } });
     }
     drag.x = e.clientX;
@@ -334,31 +324,29 @@ export function mountStage(root: HTMLElement): () => void {
   function onPointerUp() {
     if (!drag) return;
     if (drag.moved) {
-      // 指を離したあとの余韻。
       target = clamp(target + drag.v * 260, 0, maxPos);
       suppressClick = performance.now();
     }
     drag = null;
   }
 
-  let suppressClick = 0;
   function onClickCapture(e: MouseEvent) {
-    // ドラッグ直後のクリック(リンクの誤作動)を止める。
     if (performance.now() - suppressClick < 350) {
       e.preventDefault();
       e.stopPropagation();
       return;
     }
-    const el = e.target as HTMLElement;
-    if (el.closest('a, button, [data-stage-ui]')) return;
-    // 何もない場所のタップは、ヒーローを弾く。
-    if (heroActive()) post({ hdwPoke: { x: e.clientX / Math.max(1, vw), y: e.clientY / Math.max(1, vh) } });
+    if ((e.target as HTMLElement).closest('a, button')) return;
+    if (heroActive()) {
+      if (!burstAt) burst();
+      else post({ hdwPoke: { x: e.clientX / Math.max(1, vw), y: e.clientY / Math.max(1, vh) } });
+    }
   }
 
-  // キーボード: 矢印で次/前の要素へ。
+  // キーボード: 矢印で次/前の器へ。
   function stepTo(dir: 1 | -1) {
     const travel = Math.max(0, target - hold);
-    const list = nodes.filter((n) => n.kind !== 'work' || n.shown).map((n) => n.sTarget);
+    const list = spine.filter((n) => n.kind !== 'hero').map((n) => n.s);
     if (dir > 0) {
       const next = list.find((s) => s > travel + 2);
       target = next === undefined ? maxPos : hold + next;
@@ -366,14 +354,8 @@ export function mountStage(root: HTMLElement): () => void {
       const prevs = list.filter((s) => s < travel - 2);
       target = prevs.length ? hold + prevs[prevs.length - 1] : 0;
     }
-    if (cue) cue.classList.add('is-gone');
-    slashLocal(dir);
-  }
-  function slashLocal(dir: number) {
-    liquid?.slash(vw / 2, vh / 2, dx, dy, Math.min(vw, vh) * 0.7);
-    field?.kick(dir * 120, env());
     if (heroActive()) {
-      if (!burstDone) burst();
+      if (!burstAt) burst();
       else cutHero(dir, 0.6);
     }
   }
@@ -406,160 +388,88 @@ export function mountStage(root: HTMLElement): () => void {
     }
   }
 
-  // Tab でカードに入ったら、そのカードを中央へ。
+  // Tab で器に入ったら、その器を中央へ。
   function onFocusIn(e: FocusEvent) {
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-node]');
     const n = nodes.find((x) => x.el === el);
-    if (n && n.kind !== 'hero') target = clamp(hold + n.sTarget, 0, maxPos);
-  }
-
-  // ---- タグの絞り込み ----
-  function applyFilter() {
-    const before = works.filter((n) => n.shown).length;
-    for (const n of works) {
-      const okD = filterDomain === 'all' || n.domain.includes(filterDomain);
-      const okS = filterStance === 'all' || n.stance === filterStance;
-      n.shown = okD && okS;
-      n.el.classList.toggle('is-cut', !n.shown);
-      n.el.toggleAttribute('inert', !n.shown);
-    }
-    const after = works.filter((n) => n.shown).length;
-    root.classList.toggle('is-empty', after === 0);
-    slash();
-    layout(false);
-    // いまの位置が列の外に出ないよう、先頭の作品へ寄せる。
-    const firstShown = works.find((n) => n.shown);
-    if (firstShown && (before !== after || target > maxPos)) {
-      target = clamp(hold + firstShown.sTarget, 0, maxPos);
+    if (n && n.kind !== 'hero') {
+      if (!burstAt) burst(true);
+      target = clamp(hold + n.s, 0, maxPos);
     }
   }
 
-  function onUiClick(e: MouseEvent) {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
-    if (!btn) return;
-    if (btn.dataset.filterDomain !== undefined) {
-      filterDomain = btn.dataset.filterDomain;
-      syncPressed('[data-filter-domain]', (b) => b.dataset.filterDomain === filterDomain);
-      applyFilter();
-    } else if (btn.dataset.filterStance !== undefined) {
-      filterStance = btn.dataset.filterStance;
-      syncPressed('[data-filter-stance]', (b) => b.dataset.filterStance === filterStance);
-      applyFilter();
-    } else if (btn.dataset.setAngle !== undefined) {
-      setAngle(Number(btn.dataset.setAngle));
-    }
-  }
-
-  function syncPressed(sel: string, on: (b: HTMLButtonElement) => boolean) {
-    root.querySelectorAll<HTMLButtonElement>(sel).forEach((b) => {
-      b.setAttribute('aria-pressed', on(b) ? 'true' : 'false');
-    });
-    placeBlobs();
-  }
-
-  // 選択中のボタンの下に、白い水のかたまりを流し込む。
-  // 先頭と尾を別の速さで動かし、フィルターでつなぐので、移動のあいだ水が伸びる。
-  function placeBlobs() {
-    root.querySelectorAll<HTMLElement>('[data-chips]').forEach((group) => {
-      const goo = group.querySelector<HTMLElement>('[data-goo]');
-      const on = group.querySelector<HTMLElement>('button[aria-pressed="true"]');
-      if (!goo || !on) return;
-      const pad = 10; // goo レイヤーのはみ出し分
-      goo.querySelectorAll<HTMLElement>('i').forEach((b) => {
-        b.style.transform = `translate3d(${on.offsetLeft + pad}px, ${on.offsetTop + pad}px, 0)`;
-        b.style.width = `${on.offsetWidth}px`;
-        b.style.height = `${on.offsetHeight}px`;
-      });
-    });
-  }
-
-  function setAngle(a: number) {
-    // 角度を変えても、同じ作品を見続けられるようにする。
-    const travel = Math.max(0, pos - hold);
-    let anchor: StageNode | undefined;
-    let best = Infinity;
-    for (const n of nodes) {
-      if (n.kind === 'work' && !n.shown) continue;
-      const dist = Math.abs(n.s - travel);
-      if (dist < best) {
-        best = dist;
-        anchor = n;
-      }
-    }
-    const wasHero = pos < hold;
-    angle = a;
-    measure();
-    layout(true);
-    if (!wasHero && anchor) {
-      pos = target = clamp(hold + anchor.s, 0, maxPos);
-    } else {
-      pos = target = clamp(pos, 0, maxPos);
-    }
-    syncPressed('[data-set-angle]', (b) => Number(b.dataset.setAngle) === angle);
-    slash();
-  }
-
-  // ---- 毎フレーム ----
-  function frame(now: number) {
-    raf = requestAnimationFrame(frame);
-    pos += (target - pos) * (first ? 1 : 0.11);
-    first = false;
-    if (Math.abs(target - pos) < 0.05) pos = target;
+  function locate() {
     const travel = Math.max(0, pos - hold);
     const cx = vw / 2;
     const cy = vh / 2;
-    let resting = pos === target;
+    for (const n of nodes) {
+      const rel = n.s - travel;
+      n.x = cx + dx * rel + nx * n.off;
+      n.y = cy + dy * rel + ny * n.off;
+      n.onScreen =
+        n.used && n.x + n.hw > 0 && n.x - n.hw < vw && n.y + n.hh > 0 && n.y - n.hh < vh;
+    }
+    return travel;
+  }
 
+  function frame(now: number) {
+    raf = requestAnimationFrame(frame);
+    // 経過時間で追従させる(120Hz でも同じ速さ)。
+    const dt = last ? Math.min(64, now - last) : 16;
+    last = now;
+    pos += (target - pos) * (1 - Math.exp(-dt / 140));
+    if (Math.abs(target - pos) < 0.05) pos = target;
+    if (pos === drawn) return; // 止まっているあいだは何も書かない
+    const resting = pos === target;
+    drawn = pos;
+
+    const travel = locate();
     let focus: StageNode | undefined;
     let focusDist = Infinity;
 
     for (const n of nodes) {
-      n.s += (n.sTarget - n.s) * 0.14;
-      if (Math.abs(n.sTarget - n.s) < 0.05) n.s = n.sTarget;
-      else resting = false;
-    }
-
-    for (const n of nodes) {
-      const rel = n.s - travel;
-      const dist = Math.abs(rel);
-
-      if (n.kind === 'hero') continue;
-
-      const far = dist > span * 1.15;
-      if (far && n.el.style.visibility !== 'hidden') n.el.style.visibility = 'hidden';
-      if (far) continue;
-      if (n.el.style.visibility !== 'visible') n.el.style.visibility = 'visible';
-
-      const x = cx + dx * rel + nx * n.off - n.hw;
-      const y = cy + dy * rel + ny * n.off - n.hh;
-      // 止まっているときは整数の位置に置く(文字と継ぎ目をにじませない)。
-      n.el.style.transform = resting
-        ? `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`
-        : `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`;
-      const f = clamp(1 - dist / (span * 0.62), 0, 1);
-      n.el.style.setProperty('--f', f.toFixed(3));
-
-      if (n.kind === 'work' && n.shown && dist < focusDist) {
+      if (n.kind === 'hero' || !n.used) continue;
+      const dist = Math.abs(n.s - travel);
+      const far = !n.onScreen && dist > span * 0.8;
+      if (far) {
+        if (n.el.style.visibility !== 'hidden') n.el.style.visibility = 'hidden';
+      } else {
+        if (n.el.style.visibility !== 'visible') n.el.style.visibility = 'visible';
+        if (n.pour) prime(n.pour); // 近づいた器の画像は先に読む
+        const x = n.x - n.hw;
+        const y = n.y - n.hh;
+        // 止まっているときは整数の位置に置く(文字をにじませない)。
+        n.el.style.transform = resting
+          ? `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`
+          : `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`;
+      }
+      // 掬ったあとは、画面に入ってきた器から満ちる。
+      if (n.pour && burstAt && n.onScreen && !n.pour.queued) {
+        if (quiet) pourSet(n.pour);
+        else pourAfter(n.pour, 120 + Math.abs(Math.sin(n.seed)) * 200, timers);
+      }
+      if (n.kind === 'work' && dist < focusDist) {
         focusDist = dist;
         focus = n;
       }
     }
+    quiet = false;
 
-    // ヒーローは世界と一緒に左上へ流れ、離れたら止める。
+    // 水滴は世界と一緒に左上へ流れる。画面の外に出たら描画を止める。
     if (hydra) {
-      const gone = travel > span * 1.1;
-      if (gone) {
-        if (hydra.style.visibility !== 'hidden') hydra.style.visibility = 'hidden';
-      } else {
-        if (hydra.style.visibility !== 'visible') hydra.style.visibility = 'visible';
-        hydra.style.transform = `translate3d(${(-dx * travel).toFixed(1)}px, ${(-dy * travel).toFixed(1)}px, 0)`;
-        hydra.style.opacity = clamp(1 - travel / (span * 0.9), 0, 1).toFixed(3);
+      const gone = travel > span * 1.05;
+      if (gone !== paused) {
+        paused = gone;
+        post({ hdwPause: gone });
+        hydra.style.visibility = gone ? 'hidden' : 'visible';
       }
-      // スクロール量をロゴの傾きとして渡す。
-      const sp = Math.round(clamp(pos / Math.max(1, hold), 0, 1) * 100) / 100;
-      if (!gone && sp !== lastScrollSent) {
-        lastScrollSent = sp;
-        post({ hdwScroll: 0.5 + sp * 0.5 });
+      if (!gone) {
+        hydra.style.transform = `translate3d(${(-dx * travel).toFixed(1)}px, ${(-dy * travel).toFixed(1)}px, 0)`;
+        const sp = Math.round(clamp(pos / Math.max(1, hold), 0, 1) * 100) / 100;
+        if (sp !== lastScrollSent) {
+          lastScrollSent = sp;
+          post({ hdwScroll: 0.5 + sp * 0.5 });
+        }
       }
     }
 
@@ -570,85 +480,236 @@ export function mountStage(root: HTMLElement): () => void {
       n.el.style.visibility = f <= 0 ? 'hidden' : 'visible';
     }
 
-    if (counter) {
-      const shown = works.filter((n) => n.shown);
-      const idx = focus ? shown.indexOf(focus) + 1 : 0;
-      const inWorks = focus && focusDist < span * 0.6;
-      const text = inWorks
-        ? `${String(idx).padStart(2, '0')} / ${String(shown.length).padStart(2, '0')}`
-        : '';
-      if (counter.textContent !== text) counter.textContent = text;
+    // 現在地。「03 / 08 案件名」。URL にも残す。
+    const inWorks = !!focus && focusDist < span * 0.45 && travel > span * 0.25;
+    const idx = inWorks && focus ? works.indexOf(focus) + 1 : 0;
+    if (idx !== focusIdx) {
+      focusIdx = idx;
+      if (counter) {
+        counter.textContent = idx
+          ? `${pad2(idx)} / ${pad2(works.length)}  ${focus!.el.dataset.title || ''}`
+          : '';
+      }
     }
-    root.classList.toggle('in-works', travel > span * 0.9);
+    if (resting) writeHash(focusIdx);
+    root.classList.toggle('in-works', travel > span * 0.25);
+  }
 
-    field?.frame(now, env());
-    liquid?.frame();
+  function onResize() {
+    if (isSmall()) return; // スマホ用への切り替えは mountStage が行う
+    measure();
+    layout();
   }
 
   // ---- 起動 ----
-  function onResize() {
-    measure();
-    layout(true);
-    placeBlobs();
-  }
-
-  function onLeave() {
-    pointer.has = false;
-    liquid?.leave();
-  }
-
-  // 確認用: #a=40&p=1800&f=branding&s=client で、角度・位置・絞り込みを指定して開ける。
-  const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if (hash.has('a')) angle = clamp(Number(hash.get('a')), 0, 90);
-
   measure();
-  layout(true);
-  if (hash.has('p')) pos = target = clamp(Number(hash.get('p')), 0, maxPos);
-  if (hash.has('b') || (hash.has('p') && pos > 0)) burst();
-  if (hash.has('p') && cue) cue.classList.add('is-gone');
-  syncPressed('[data-set-angle]', (b) => Number(b.dataset.setAngle) === angle);
-  if (hash.has('f') || hash.has('s')) {
-    filterDomain = hash.get('f') || 'all';
-    filterStance = hash.get('s') || 'all';
-    syncPressed('[data-filter-domain]', (b) => b.dataset.filterDomain === filterDomain);
-    syncPressed('[data-filter-stance]', (b) => b.dataset.filterStance === filterStance);
-    applyFilter();
-    if (hash.has('p')) target = clamp(Number(hash.get('p')), 0, maxPos);
+  layout();
+  // #w=3 … 3番目の案件から、満ちた状態で始める(戻る・共有・再訪)。
+  // #p=1800 … 確認用。位置を直接指定する。
+  const w = Number(hash.get('w') || 0);
+  if (w >= 1 && w <= works.length) {
+    pos = target = clamp(hold + works[w - 1].s, 0, maxPos);
+    burst(true);
+  } else if (hash.has('p')) {
+    pos = target = clamp(Number(hash.get('p')), 0, maxPos);
+    if (pos > 0) burst(true);
   }
+  hydra?.addEventListener('load', sendScale);
+  [400, 1200, 2600].forEach((ms) => timers.push(window.setTimeout(sendScale, ms)));
+  // 何もしない人にも見せる: しばらく待って、自動で掬う。
+  timers.push(window.setTimeout(() => burst(), 6000));
 
-  const ui = root.querySelector<HTMLElement>('[data-stage-ui]');
   root.addEventListener('wheel', onWheel, { passive: false });
   root.addEventListener('pointerdown', onPointerDown);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
-  document.documentElement.addEventListener('pointerleave', onLeave);
   root.addEventListener('click', onClickCapture, true);
   root.addEventListener('focusin', onFocusIn);
-  ui?.addEventListener('click', onUiClick);
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onResize);
-  // 画像やフォントでカードの大きさが変わったら並べ直す。
-  const ro = new ResizeObserver(() => layout(false));
-  if (works[0]) ro.observe(works[0].el);
+  // 書体や画像で器の大きさが変わったら並べ直す。
+  const ro = new ResizeObserver(() => layout());
+  works.forEach((n) => ro.observe(n.el));
 
   raf = requestAnimationFrame(frame);
 
   return () => {
     cancelAnimationFrame(raf);
     ro.disconnect();
+    timers.forEach((t) => clearTimeout(t));
+    hydra?.removeEventListener('load', sendScale);
     root.removeEventListener('wheel', onWheel);
     root.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
-    document.documentElement.removeEventListener('pointerleave', onLeave);
     root.removeEventListener('click', onClickCapture, true);
     root.removeEventListener('focusin', onFocusIn);
-    ui?.removeEventListener('click', onUiClick);
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
-    root.classList.remove('is-live', 'is-burst', 'has-liquid-cursor');
+    beadBox?.replaceChildren();
+    post({ hdwPause: false });
+    for (const n of nodes) {
+      n.el.style.transform = '';
+      n.el.style.visibility = '';
+      n.el.style.opacity = '';
+      n.el.classList.remove('is-unused');
+      if (n.pour) pourReset(n.pour);
+    }
+    if (hydra) {
+      hydra.style.transform = '';
+      hydra.style.visibility = '';
+    }
+    if (counter) counter.textContent = '';
+    root.classList.remove('is-live', 'pour-on', 'is-burst', 'in-works');
     document.documentElement.classList.remove('stage-on');
+  };
+}
+
+// ============================================================
+// スマホ: 真縦。ブラウザ本来のスクロール。1画面に1案件。
+//   水滴の下に、最初の器の口が覗いている。
+//   送ると水滴が切れ、飛沫が下の器へ落ちる。
+// ============================================================
+function mountFlow(root: HTMLElement): () => void {
+  const html = document.documentElement;
+  const hydra = root.querySelector<HTMLIFrameElement>('[data-hydra]');
+  const beadBox = root.querySelector<HTMLElement>('[data-beads]');
+  const counter = root.querySelector<HTMLElement>('[data-counter]');
+  const cue = root.querySelector<HTMLElement>('[data-cue]');
+  const hero = root.querySelector<HTMLElement>('[data-node="hero"]');
+  const workEls = Array.from(root.querySelectorAll<HTMLElement>('[data-node="work"]'));
+  const pours = workEls.map(makePour);
+  const timers: number[] = [];
+
+  let burstAt = 0;
+  let lastY = window.scrollY;
+  let cutAcc = 0;
+  let paused = false;
+  let current = 0;
+
+  root.classList.add('is-flow', 'pour-on');
+  html.classList.add('flow-on');
+
+  function post(msg: unknown) {
+    hydra?.contentWindow?.postMessage(msg, '*');
+  }
+  // 水滴は画面幅の6〜7割に。
+  const sendScale = () => post({ hdwScale: 2.9 });
+
+  function burst(silent = false) {
+    if (burstAt) return;
+    burstAt = performance.now();
+    root.classList.add('is-burst');
+    cue?.classList.add('is-gone');
+    if (silent) return;
+    post({ hdwBurst: { nx: 1, ny: 0 } });
+    // 飛沫は、下で待っている最初の器の口へ落ちる。
+    const first = workEls[0]?.querySelector<HTMLElement>('.vessel');
+    if (first && hero && pours[0]) {
+      const box = root.getBoundingClientRect();
+      const h = hero.getBoundingClientRect();
+      const v = first.getBoundingClientRect();
+      const x0 = h.left + h.width / 2 - box.left;
+      const y0 = h.top + h.height / 2 - box.top;
+      const y1 = v.top - box.top + 8;
+      [-0.22, 0.05, 0.28].forEach((k, i) => {
+        fly(beadBox, x0, y0, v.left + v.width * (0.5 + k) - box.left, y1, 620 + i * 110, i + 1.3, 1, 0);
+      });
+      pourAfter(pours[0], 560, timers);
+    }
+  }
+
+  function onScroll() {
+    const y = window.scrollY;
+    const d = y - lastY;
+    lastY = y;
+    const vh = window.innerHeight;
+    if (y < vh) {
+      cutAcc += Math.abs(d);
+      if (!burstAt && y > 12) burst();
+      else if (cutAcc > 90) {
+        cutAcc = 0;
+        post({ hdwSwipe: { dx: (d > 0 ? -1 : 1) * 0.07, dy: 0 } });
+      }
+    }
+    // 水滴が画面の外に出たら、描画を止める。
+    const gone = y > vh * 1.02;
+    if (gone !== paused) {
+      paused = gone;
+      post({ hdwPause: gone });
+    }
+    root.classList.toggle('in-works', y > vh * 0.45);
+    if (y < vh * 0.3 && current) setCurrent(0);
+  }
+
+  function onClick(e: MouseEvent) {
+    if ((e.target as HTMLElement).closest('a, button')) return;
+    if (window.scrollY < window.innerHeight * 0.5) {
+      if (!burstAt) burst();
+      else post({ hdwPoke: { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight } });
+    }
+  }
+
+  function setCurrent(i: number) {
+    current = i;
+    if (counter) {
+      counter.textContent = i
+        ? `${pad2(i)} / ${pad2(workEls.length)}  ${workEls[i - 1].dataset.title || ''}`
+        : '';
+    }
+    writeHash(i);
+  }
+
+  // 画面に入った器から満ちる。真ん中に来た器が「いまの案件」。
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        const i = workEls.indexOf(e.target as HTMLElement);
+        if (i < 0) continue;
+        if (e.isIntersecting && e.intersectionRatio >= 0.35) {
+          if (!burstAt) burst(true);
+          pourAfter(pours[i], 140, timers);
+        }
+        if (e.isIntersecting && e.intersectionRatio >= 0.7) setCurrent(i + 1);
+      }
+    },
+    { threshold: [0.35, 0.7] }
+  );
+
+  // #w=3 … 3番目の案件から、満ちた状態で始める。
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const w = Number(hash.get('w') || 0);
+  if (w >= 1 && w <= workEls.length) {
+    burst(true);
+    for (let i = 0; i < w; i++) pourSet(pours[i]);
+    html.classList.add('flow-jump');
+    workEls[w - 1].scrollIntoView({ block: 'center' });
+    timers.push(window.setTimeout(() => html.classList.remove('flow-jump'), 60));
+  }
+  workEls.forEach((el) => io.observe(el));
+  if (pours[0]) prime(pours[0]);
+
+  hydra?.addEventListener('load', sendScale);
+  sendScale();
+  [400, 1200, 2600].forEach((ms) => timers.push(window.setTimeout(sendScale, ms)));
+  timers.push(window.setTimeout(() => burst(), 6000));
+  window.addEventListener('scroll', onScroll, { passive: true });
+  root.addEventListener('click', onClick);
+  onScroll();
+
+  return () => {
+    io.disconnect();
+    timers.forEach((t) => clearTimeout(t));
+    hydra?.removeEventListener('load', sendScale);
+    window.removeEventListener('scroll', onScroll);
+    root.removeEventListener('click', onClick);
+    beadBox?.replaceChildren();
+    post({ hdwPause: false });
+    pours.forEach(pourReset);
+    if (counter) counter.textContent = '';
+    root.classList.remove('is-flow', 'pour-on', 'is-burst', 'in-works');
+    html.classList.remove('flow-on', 'flow-jump');
   };
 }
