@@ -2,7 +2,6 @@
 import Base from '../layouts/Base.astro';
 import WorkCard from '../components/WorkCard.astro';
 import { getCollection } from 'astro:content';
-import { DOMAINS, STANCES } from '../content.config';
 import { WALL, wallSrc } from '../data/wall';
 import '../styles/stage.css';
 
@@ -17,13 +16,6 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.fe
 const SPLASH = 72;
 const splash = Array.from({ length: SPLASH }, (_, i) => WALL[Math.floor((i * WALL.length) / SPLASH)]);
 
-// 実際に使われているタグだけをボタンにする。
-const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
-  works.some((w) => w.data.domain.includes(k))
-);
-const usedStances = (Object.keys(STANCES) as (keyof typeof STANCES)[]).filter((k) =>
-  works.some((w) => w.data.stance === k)
-);
 ---
 
 <Base>
@@ -116,47 +108,10 @@ const usedStances = (Object.keys(STANCES) as (keyof typeof STANCES)[]).filter((k
       <p class="end-copy">© {new Date().getFullYear()} Soki Hayashi Designworks</p>
     </section>
 
-    <p class="stage-empty">この組み合わせの作品はまだありません。</p>
-
+    <!-- 現在地だけを出す。ジャンル分けは Works のページで行う(トップには持ち込まない)。角度は28°で固定。 -->
     <div class="stage-ui" data-stage-ui>
-      <div class="filters" aria-label="作品の絞り込み">
-        <div class="chips" data-chips role="group" aria-label="領域">
-          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
-          <button class="chip" type="button" data-filter-domain="all" aria-pressed="true">All</button>
-          {
-            usedDomains.map((k) => (
-              <button class="chip" type="button" data-filter-domain={k} aria-pressed="false">
-                {DOMAINS[k]}
-              </button>
-            ))
-          }
-        </div>
-        <div class="chips" data-chips role="group" aria-label="立場">
-          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
-          <button class="chip" type="button" data-filter-stance="all" aria-pressed="true">
-            Client + Original
-          </button>
-          {
-            usedStances.map((k) => (
-              <button class="chip" type="button" data-filter-stance={k} aria-pressed="false">
-                {STANCES[k]}
-              </button>
-            ))
-          }
-        </div>
-      </div>
-
       <div class="stage-side">
         <span class="stage-counter" data-counter aria-hidden="true"></span>
-        <!-- 試作用: 角度を比べるための切り替え。方向が決まったら外す。 -->
-        <div class="angle-switch" data-chips role="group" aria-label="スクロールの角度(試作用)">
-          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
-          <span class="angle-label">角度</span>
-          <button class="chip" type="button" data-set-angle="90" aria-pressed="false">縦</button>
-          <button class="chip" type="button" data-set-angle="28" aria-pressed="true">斜め28°</button>
-          <button class="chip" type="button" data-set-angle="40" aria-pressed="false">斜め40°</button>
-          <button class="chip" type="button" data-set-angle="0" aria-pressed="false">横</button>
-        </div>
       </div>
     </div>
   </div>

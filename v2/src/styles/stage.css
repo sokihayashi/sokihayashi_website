@@ -253,12 +253,14 @@ html.stage-on .site-foot {
   left: 0;
   top: 0;
   overflow: hidden;
-  /* --o: 0=水滴(丸い) / 1=画像(四角)。--a: 奥行きごとの濃さ。 */
+  /* --o: 0=水滴(丸い) / 1=画像(四角)。--a: 奥行きごとの明るさ。
+     写真は透かさない。奥行きは、明るさとぼかしで出す。 */
   border-radius: calc((1 - var(--o, 0)) * 50% + 2px);
-  opacity: calc(var(--a, 1) * (0.42 + 0.58 * var(--o, 0)));
+  --br: calc(var(--a, 1) * (0.42 + 0.58 * var(--o, 0)));
+  filter: brightness(var(--br)) blur(var(--bl, 0px));
   background: #111;
   will-change: transform;
-  transition: opacity 0.35s ease;
+  transition: filter 0.35s ease;
 }
 .drop img {
   width: 100%;
@@ -266,10 +268,10 @@ html.stage-on .site-foot {
   object-fit: cover;
 }
 .drop.is-far {
-  filter: blur(5px);
+  --bl: 5px;
 }
 .drop.is-mid {
-  filter: blur(2px);
+  --bl: 2px;
 }
 /* 丸く裁つ: ひらいても水滴の形のまま。 */
 .field[data-crop='round'] .drop {
@@ -277,11 +279,11 @@ html.stage-on .site-foot {
 }
 /* 1枚に乗ると、ほかが沈む。 */
 .field.is-focusing .drop:not(.is-hot) {
-  opacity: calc(var(--a, 1) * 0.28);
+  --br: calc(var(--a, 1) * 0.28);
 }
 .field .drop.is-hot {
-  opacity: 1;
-  filter: none;
+  --br: 1;
+  --bl: 0px;
 }
 
 .stage.is-live .node {
