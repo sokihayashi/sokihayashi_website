@@ -6,10 +6,8 @@
   --accent: #e8e2d6;
   --max: 1280px;
   --pad: clamp(1.25rem, 4vw, 4rem);
-  /* 欧文は Helvetica、和文は Zen Kaku Gothic New。見出しの和文は明朝。(書体は仮。本人が決める) */
-  --font-sans: "Helvetica Neue", "Arial", "Zen Kaku Gothic New",
-    "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
-  --font-serif: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-sans: "Helvetica Neue", "Arial", "Hiragino Kaku Gothic ProN",
+    "Noto Sans JP", sans-serif;
 }
 
 *,
@@ -97,8 +95,6 @@ html.lenis body {
   gap: clamp(1rem, 2.5vw, 2.2rem);
 }
 .clock {
-  /* 合議の結果、時計は出さない(考えと無関係という意見が多数)。戻せるよう記述は残す。 */
-  display: none;
   font-variant-numeric: tabular-nums;
   font-size: 0.72rem;
   letter-spacing: 0.08em;
@@ -321,106 +317,4 @@ html.lenis body {
   background: var(--fg);
   border-color: var(--fg);
   color: #000;
-}
-
-/* ===== 共有: 器 =====
-   価値は最初からある。形だけがない。掬って、器に流し込むと、形になる。
-
-   ふだんは、ただの画像(満ちた状態)。
-   JS が親に .pour-on を付けると、空の器から始まり、
-   .is-pouring で黒い液が上がり、.is-full で澄んで中身が見える。 */
-.vessel {
-  position: relative;
-  aspect-ratio: var(--ar, 1.3333);
-  overflow: hidden;
-}
-.vessel-fill {
-  position: absolute;
-  inset: 0;
-}
-.vessel-fill img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.vessel-ink {
-  display: none;
-}
-/* 空の器の線。上は開いている。底だけ少し厚い。 */
-.pour-on .vessel::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(244, 241, 234, 0.3);
-  border-top: 0;
-  border-bottom-width: 2px;
-  pointer-events: none;
-  transition: opacity 0.9s ease 0.5s;
-}
-.pour-on .vessel-fill {
-  opacity: 0;
-}
-/* 液。水滴(HYDRA)と同じ、黒く艶のある素材。 */
-.pour-on .vessel-ink {
-  display: block;
-  position: absolute;
-  inset: -12px 0 0 0;
-  transform: translate3d(0, 102%, 0);
-}
-.vessel-ink::before {
-  /* 液面。満ちていく間だけ波が動く。 */
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 300%;
-  height: 13px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='13' viewBox='0 0 96 13'%3E%3Cpath d='M0 13V6Q24 0 48 6T96 6V13Z' fill='%23050505'/%3E%3Cpath d='M0 6Q24 0 48 6T96 6' fill='none' stroke='%23fff' stroke-opacity='.75' stroke-width='1.3'/%3E%3C/svg%3E")
-    repeat-x 0 0 / 96px 13px;
-}
-.vessel-ink::after {
-  /* 水滴(HYDRA)の表面と同じ、黒地に白い流紋と色のにじみ。 */
-  content: '';
-  position: absolute;
-  inset: 12px 0 0 0;
-  background:
-    radial-gradient(55% 34% at 30% 4%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 70%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.55)),
-    #000 url('../assets/ink.webp') var(--ix, 50%) var(--iy, 0%) / max(100%, 420px) auto;
-}
-.pour-on .is-pouring .vessel-ink,
-.pour-on .is-full .vessel-ink {
-  transform: translate3d(0, 0, 0);
-}
-/* 速く入り、ゆっくり上がる。 */
-.pour-on .is-pouring .vessel-ink {
-  transition: transform 1.4s cubic-bezier(0.1, 0.72, 0.22, 1);
-}
-.pour-on .is-pouring .vessel-ink::before {
-  animation: vessel-wave 0.8s linear infinite;
-}
-/* 注がれているあいだ、流紋もゆっくり流れる。 */
-.pour-on .is-pouring .vessel-ink::after {
-  animation: vessel-flow 1.6s cubic-bezier(0.1, 0.72, 0.22, 1) both;
-}
-@keyframes vessel-flow {
-  from {
-    background-position: 0 0, 0 0, var(--ix, 50%) calc(var(--iy, 0%) + 40%);
-  }
-}
-/* 満ちたら澄む。線は外れて、作品だけが残る。 */
-.pour-on .is-full .vessel-fill {
-  opacity: 1;
-}
-.pour-on .is-full .vessel-ink {
-  opacity: 0;
-  transition: opacity 0.8s ease 0.15s;
-}
-.pour-on .is-full .vessel::after {
-  opacity: 0;
-}
-/* 途中から開いたとき(戻る・共有・再訪)は、演出なしで満ちた状態にする。 */
-.pour-on .is-set .vessel-ink,
-.pour-on .is-set .vessel::after {
-  transition: none;
 }

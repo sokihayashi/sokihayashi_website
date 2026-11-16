@@ -1,32 +1,36 @@
 ---
 import Base from '../layouts/Base.astro';
-import Vessel from '../components/Vessel.astro';
+import WorkCard from '../components/WorkCard.astro';
 import { getCollection } from 'astro:content';
-import { DOMAINS } from '../content.config';
-import { imgRatio } from '../data/img';
+import { DOMAINS, STANCES } from '../content.config';
+import { WALL, wallSrc } from '../data/wall';
 import '../styles/stage.css';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const hydraSrc = `${base}/hydra/index.html`;
 
-const all = (await getCollection('works', ({ data }) => !data.draft)).sort(
+const works = (await getCollection('works', ({ data }) => !data.draft && data.featured)).sort(
   (a, b) => a.data.order - b.data.order
 );
-// 中央の列 = 代表の案件。外側の列 = そのほかの案件。1器=1案件。
-const featured = all.filter((w) => w.data.featured);
-const others = all.filter((w) => !w.data.featured && w.data.images.length > 0);
 
-// 器の大きさ。面積がそろうように、縦横比から幅の係数を決める。
-const k = (n?: number) =>
-  Math.min(1.2, Math.max(0.72, Math.sqrt((n ? imgRatio(n) : 4 / 3) / (4 / 3)))).toFixed(3);
+// ヒーローで飛沫として散る画像。142枚から、まんべんなく72枚を選ぶ。
+const SPLASH = 72;
+const splash = Array.from({ length: SPLASH }, (_, i) => WALL[Math.floor((i * WALL.length) / SPLASH)]);
+
+// 実際に使われているタグだけをボタンにする。
+const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
+  works.some((w) => w.data.domain.includes(k))
+);
+const usedStances = (Object.keys(STANCES) as (keyof typeof STANCES)[]).filter((k) =>
+  works.some((w) => w.data.stance === k)
+);
 ---
 
 <Base>
   <!--
-    価値は最初からある。形だけがない。掬って、器に流し込むと、形になる。
-
-    PC は斜めの軸(data-angle、度。90=縦 / 28=斜め / 0=横)。スマホは真縦。
-    JS が動かない環境や「動きを減らす」設定では、このまま縦に読めるページになる。
+    斜めスクロールのステージ。
+    data-angle … 軸の角度(度)。90=縦 / 28=斜め / 0=横。
+    JS が動かない環境では、このまま縦に読めるページになる。
   -->
   <div class="stage" data-stage-root data-angle="28">
     <iframe
@@ -39,76 +43,121 @@ const k = (n?: number) =>
       scrolling="no"
       loading="eager"></iframe>
 
+    <!-- 飛沫=作品。切ると画面いっぱいに散る。 -->
+    <div class="field" data-field aria-hidden="true">
+      {
+        splash.map(([file, ar]) => (
+          <div class="drop" data-drop data-ar={ar}>
+            <img src={wallSrc(file, 420)} alt="" decoding="async" draggable="false" />
+          </div>
+        ))
+      }
+    </div>
+
+    <!-- 液体のカーソルと切り跡。#goo で円どうしがくっつく。 -->
+    <canvas class="stage-fx" data-fx aria-hidden="true"></canvas>
+    <svg class="goo-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="goo" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="b"></feGaussianBlur>
+          <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 26 -11"
+          ></feColorMatrix>
+        </filter>
+      </defs>
+    </svg>
+
     <section class="node node-hero" data-node="hero">
-      <p class="hero-statement" data-reserve>
-        価値は、はじめ<br class="br-s" />液体のように形がない。<br />
-        それを掬い、象り、<br />
-        あらゆる接点へ流し込む。
+      <div class="hero-meta">
+        <h1 class="hero-name">Soki Hayashi</h1>
+        <span>Branding · Graphic · Photo · Movie · 3D · UIUX</span>
+      </div>
+      <p class="stage-cue" data-cue aria-hidden="true">
+        <span class="cue-static">Scroll</span>
+        <span class="cue-live">Swipe to cut</span>
       </p>
-      <h1 class="hero-name" data-reserve>Soki Hayashi <span>林 宋其</span></h1>
-      <p class="stage-cue" data-cue data-reserve aria-hidden="true">Scroll</p>
+    </section>
+
+    <section class="node node-text" data-node="text">
+      <p class="statement">世界観を作ります。</p>
+      <p class="statement-sub">
+        店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。
+        小さなビジュアルの中に、その先の世界を予感させる。
+      </p>
     </section>
 
     {
-      featured.map((w, i) => (
+      works.map((w, i) => (
         <article
           class="node node-work"
           data-node="work"
-          data-title={w.data.title}
-          style={`--k:${k(w.data.images[0])};--ar:${imgRatio(w.data.images[0] ?? 1).toFixed(4)}`}
+          data-domain={w.data.domain.join(' ')}
+          data-stance={w.data.stance}
         >
-          <a class="case" href={`${base}/works/${w.id}/`} draggable="false">
-            <Vessel
-              n={w.data.images[0]}
-              sizes="(max-width: 720px) 90vw, 32vw"
-              eager={i < 2}
-            />
-            <div class="tag">
-              <span class="tag-no">{String(i + 1).padStart(2, '0')}</span>
-              <h2 class="tag-title">{w.data.title}</h2>
-              <p class="tag-sub">{w.data.domain.map((d) => DOMAINS[d]).join(' / ')}</p>
+          <a class="work-link" href={`${base}/works/${w.id}/`} draggable="false">
+            <div class="halves" data-halves>
+              <div class="half half-a">
+                <WorkCard work={w} index={i} />
+              </div>
+              <div class="half half-b" aria-hidden="true">
+                <WorkCard work={w} index={i} />
+              </div>
             </div>
           </a>
         </article>
       ))
     }
 
-    <!-- 最後に、空の器がひとつ残っている。 -->
     <section class="node node-end" data-node="end">
-      <a class="case case-next" href={`${base}/contact/`} draggable="false">
-        <Vessel ratio={4 / 3} />
-        <div class="tag">
-          <span class="tag-no">{String(featured.length + 1).padStart(2, '0')}</span>
-          <h2 class="tag-title">Contact</h2>
-        </div>
-      </a>
       <p class="end-links">
-        <a href={`${base}/works/`}>All works ({all.length})</a>
+        <a href={`${base}/works/`}>All works</a>
         <a href={`${base}/about/`}>About</a>
+        <a href={`${base}/contact/`}>Contact</a>
       </p>
+      <p class="end-copy">© {new Date().getFullYear()} Soki Hayashi Designworks</p>
     </section>
 
-    <!-- 外側の列(PCのみ)。そのほかの案件。 -->
-    {
-      others.map((w) => (
-        <div class="node node-vessel" data-node="vessel" style={`--k:${k(w.data.images[0])}`}>
-          <a class="case" href={`${base}/works/${w.id}/`} draggable="false">
-            <Vessel n={w.data.images[0]} />
-            <div class="tag">
-              <h2 class="tag-title">{w.data.title}</h2>
-            </div>
-          </a>
+    <p class="stage-empty">この組み合わせの作品はまだありません。</p>
+
+    <div class="stage-ui" data-stage-ui>
+      <div class="filters" aria-label="作品の絞り込み">
+        <div class="chips" data-chips role="group" aria-label="領域">
+          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
+          <button class="chip" type="button" data-filter-domain="all" aria-pressed="true">All</button>
+          {
+            usedDomains.map((k) => (
+              <button class="chip" type="button" data-filter-domain={k} aria-pressed="false">
+                {DOMAINS[k]}
+              </button>
+            ))
+          }
         </div>
-      ))
-    }
+        <div class="chips" data-chips role="group" aria-label="立場">
+          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
+          <button class="chip" type="button" data-filter-stance="all" aria-pressed="true">
+            Client + Original
+          </button>
+          {
+            usedStances.map((k) => (
+              <button class="chip" type="button" data-filter-stance={k} aria-pressed="false">
+                {STANCES[k]}
+              </button>
+            ))
+          }
+        </div>
+      </div>
 
-    <!-- 飛沫。掬った瞬間に、水滴から器の口へ飛ぶ。 -->
-    <div class="beads" data-beads aria-hidden="true"></div>
-
-    <!-- 現在地。スマホでは下端にまとめ、Contact への入口を置く。 -->
-    <div class="stage-dock">
-      <span class="stage-counter" data-counter aria-hidden="true"></span>
-      <a class="dock-cta" href={`${base}/contact/`}>Contact</a>
+      <div class="stage-side">
+        <span class="stage-counter" data-counter aria-hidden="true"></span>
+        <!-- 試作用: 角度を比べるための切り替え。方向が決まったら外す。 -->
+        <div class="angle-switch" data-chips role="group" aria-label="スクロールの角度(試作用)">
+          <span class="chips-goo" data-goo aria-hidden="true"><i class="goo-lead"></i><i class="goo-tail"></i></span>
+          <span class="angle-label">角度</span>
+          <button class="chip" type="button" data-set-angle="90" aria-pressed="false">縦</button>
+          <button class="chip" type="button" data-set-angle="28" aria-pressed="true">斜め28°</button>
+          <button class="chip" type="button" data-set-angle="40" aria-pressed="false">斜め40°</button>
+          <button class="chip" type="button" data-set-angle="0" aria-pressed="false">横</button>
+        </div>
+      </div>
     </div>
   </div>
 

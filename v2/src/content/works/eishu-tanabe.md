@@ -6,7 +6,7 @@ domain: ["branding"]
 stance: "client"
 images: [27, 28, 29]
 featured: true
-order: 3
+order: 4
 provisional: true
 ---
 

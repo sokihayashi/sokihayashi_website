@@ -5,7 +5,7 @@ domain: ["sculpture"]
 stance: "client"
 images: [134, 135]
 featured: true
-order: 2
+order: 3
 provisional: true
 ---
 

@@ -2,7 +2,7 @@
 import Base from '../layouts/Base.astro';
 import { getCollection } from 'astro:content';
 import { DOMAINS, STANCES } from '../content.config';
-import Vessel from '../components/Vessel.astro';
+import { wallSrc } from '../data/wall';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft)).sort(
@@ -13,9 +13,10 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
 );
 ---
 
-<Base title="Works — Soki Hayashi" description="Soki Hayashi(林 宋其)の制作実績。">
+<Base title="Works — Soki Hayashi" description="Soki Hayashi(林 宋其)の制作実績。領域と立場のタグで絞り込めます。">
   <section class="page wrap">
-    <h1 class="page-title">Works</h1>
+    <p class="eyebrow" data-reveal>Works</p>
+    <h1 class="page-title" data-reveal>Works</h1>
 
     <div class="list-filters" data-list-filters>
       <div class="chips" role="group" aria-label="領域">
@@ -29,7 +30,7 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
         }
       </div>
       <div class="chips" role="group" aria-label="立場">
-        <button class="chip" type="button" data-s="all" aria-pressed="true">All</button>
+        <button class="chip" type="button" data-s="all" aria-pressed="true">Client + Original</button>
         {
           (Object.keys(STANCES) as (keyof typeof STANCES)[]).map((k) => (
             <button class="chip" type="button" data-s={k} aria-pressed="false">
@@ -40,70 +41,65 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
       </div>
     </div>
 
-    <!-- 一覧は、満ちた状態で始める。器の比率は作品のまま(裁たない)。 -->
-    <ul class="wall" data-list>
+    <ul class="grid" data-list>
       {
         works.map((w) => (
-          <li data-domain={w.data.domain.join(' ')} data-stance={w.data.stance}>
-            <a href={`${base}/works/${w.id}/`}>
-              <Vessel n={w.data.images[0]} sizes="(max-width: 640px) 92vw, (max-width: 1100px) 46vw, 30vw" />
-              <h2 class="wall-title">{w.data.title}</h2>
-              <p class="wall-sub">{w.data.domain.map((k) => DOMAINS[k]).join(' / ')}</p>
+          <li class="card" data-domain={w.data.domain.join(' ')} data-stance={w.data.stance}>
+            <a href={`${base}/works/${w.id}/`} class="card-link">
+              <div class="thumb" style={`--accent:${w.data.accent}`} aria-hidden="true">
+                {w.data.images[0] && (
+                  <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+                )}
+              </div>
+              <div class="meta">
+                <h2 class="card-title">{w.data.title}</h2>
+                <p class="card-sub">
+                  {w.data.domain.map((k) => DOMAINS[k]).join(' / ')} — {STANCES[w.data.stance]}
+                  {w.data.year ? ` — ${w.data.year}` : ''}
+                </p>
+                <p class="card-summary">{w.data.summary}</p>
+              </div>
             </a>
           </li>
         ))
       }
     </ul>
-    <p class="list-empty" data-empty hidden>—</p>
+    <p class="list-empty" data-empty hidden>この組み合わせの作品はまだありません。</p>
   </section>
 
   <script>
-    // 絞り込みは URL に残す(?d=branding&s=client)。0件になるボタンは押せなくする。
     function initList() {
       const box = document.querySelector<HTMLElement>('[data-list-filters]');
       const list = document.querySelector<HTMLElement>('[data-list]');
       const empty = document.querySelector<HTMLElement>('[data-empty]');
       if (!box || !list || box.dataset.bound) return;
       box.dataset.bound = '1';
-      const items = Array.from(list.querySelectorAll<HTMLElement>('li'));
-      const q = new URLSearchParams(location.search);
-      let d = q.get('d') || 'all';
-      let s = q.get('s') || 'all';
-      const match = (li: HTMLElement, dd: string, ss: string) =>
-        (dd === 'all' || (li.dataset.domain || '').split(' ').includes(dd)) &&
-        (ss === 'all' || li.dataset.stance === ss);
-      const apply = (write: boolean) => {
+      let d = 'all';
+      let s = 'all';
+      const apply = () => {
         let n = 0;
-        for (const li of items) {
-          const ok = match(li, d, s);
+        list.querySelectorAll<HTMLElement>('li').forEach((li) => {
+          const ok =
+            (d === 'all' || (li.dataset.domain || '').split(' ').includes(d)) &&
+            (s === 'all' || li.dataset.stance === s);
           li.hidden = !ok;
           if (ok) n++;
-        }
+        });
         if (empty) empty.hidden = n > 0;
-        box.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) => {
-          b.setAttribute('aria-pressed', String(b.dataset.d === d));
-          b.disabled = !items.some((li) => match(li, b.dataset.d!, s));
-        });
-        box.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) => {
-          b.setAttribute('aria-pressed', String(b.dataset.s === s));
-          b.disabled = !items.some((li) => match(li, d, b.dataset.s!));
-        });
-        if (write) {
-          const p = new URLSearchParams();
-          if (d !== 'all') p.set('d', d);
-          if (s !== 'all') p.set('s', s);
-          const qs = p.toString();
-          history.replaceState(history.state, '', location.pathname + (qs ? `?${qs}` : ''));
-        }
+        box.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) =>
+          b.setAttribute('aria-pressed', String(b.dataset.d === d))
+        );
+        box.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) =>
+          b.setAttribute('aria-pressed', String(b.dataset.s === s))
+        );
       };
       box.addEventListener('click', (e) => {
         const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
-        if (!b || b.disabled) return;
+        if (!b) return;
         if (b.dataset.d !== undefined) d = b.dataset.d;
         if (b.dataset.s !== undefined) s = b.dataset.s;
-        apply(true);
+        apply();
       });
-      apply(false);
     }
     document.addEventListener('astro:page-load', initList);
   </script>
@@ -115,48 +111,21 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
     gap: 0.5rem;
     margin-bottom: clamp(2rem, 5vh, 3.5rem);
   }
-  .chip:disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
-  /* 段組みで流す。器の比率は作品のまま。 */
-  .wall {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    columns: 3;
-    column-gap: clamp(1rem, 2.4vw, 2.2rem);
-  }
-  .wall li {
-    break-inside: avoid;
-    margin-bottom: clamp(1.6rem, 3.4vw, 2.8rem);
-  }
-  .wall a {
-    display: block;
-  }
-  .wall-title {
-    margin: 0.7rem 0 0;
-    font-size: 1rem;
-    line-height: 1.4;
-    font-weight: 500;
-  }
-  .wall-sub {
-    margin: 0.25rem 0 0;
-    font-size: 0.75rem;
-    letter-spacing: 0.04em;
-    color: var(--muted);
+  .card-summary {
+    margin: 0.6rem 0 0;
+    font-size: 0.86rem;
+    line-height: 1.75;
+    color: rgba(244, 241, 234, 0.75);
   }
   .list-empty {
     color: var(--muted);
   }
-  @media (max-width: 1100px) {
-    .wall {
-      columns: 2;
-    }
+  .thumb {
+    overflow: hidden;
   }
-  @media (max-width: 640px) {
-    .wall {
-      columns: 1;
-    }
+  .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 </style>
