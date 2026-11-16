@@ -32,6 +32,8 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     </ul>
 
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
+    <!-- 吟味用: 筆を替えるボタン。決まったら外す。 -->
+    <button class="draw-brush" type="button" data-keep data-brush>筆 <span data-brush-name>帯</span></button>
     <a class="draw-exit" data-keep href={`${base}/works/`}>Works</a>
   </div>
 
@@ -44,7 +46,11 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       dispose = undefined;
       const root = document.querySelector<HTMLElement>('[data-draw-root]');
       if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      dispose = mountDraw(root);
+      const names = { band: '帯', nib: '平ペン', fude: '毛筆', hake: '刷毛' };
+      const out = root.querySelector<HTMLElement>('[data-brush-name]');
+      dispose = mountDraw(root, (b) => {
+        if (out) out.textContent = names[b];
+      });
     });
     document.addEventListener('astro:before-swap', () => {
       dispose?.();
@@ -137,6 +143,29 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     color: #fff;
     mix-blend-mode: difference;
     pointer-events: none;
+  }
+  .draw-brush {
+    display: none;
+  }
+  /* 吟味用: 筆の切り替え。 */
+  .draw.is-live .draw-brush {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    position: absolute;
+    left: 50%;
+    top: calc(4.2rem + env(safe-area-inset-top));
+    transform: translateX(-50%);
+    z-index: 6;
+    min-height: 40px;
+    padding: 0 1rem;
+    border: 1px solid #5a5850;
+    border-radius: 999px;
+    background: #000;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
   }
   /* 落ち着いたページへの出口。親指の届く右下に、いつも置いておく。 */
   .draw.is-live .draw-exit {

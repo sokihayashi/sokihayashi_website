@@ -12,8 +12,18 @@ import { navigate } from 'astro:transitions/client';
 
 type Pt = { x: number; y: number };
 
+// 筆の種類(吟味用)。
+//   band … 帯。太さ一定、端は平ら(テープ)
+//   nib  … 平ペン。ペン先を28°に固定。線の向きで太さが変わり、端は28°に切れる
+//   fude … 毛筆。速いと細く、遅いと太い。入りと抜きがある
+//   hake … 刷毛。28°に並んだ毛の筋。写真は筋のあいだから見える
+export type Brush = 'band' | 'nib' | 'fude' | 'hake';
+export const BRUSHES: Brush[] = ['band', 'nib', 'fude', 'hake'];
+
 interface Seg {
   pts: Pt[]; // 紙の上の座標
+  wds: number[]; // 各点での太さ(毛筆用)
+  brush: Brush;
   len: number;
   work: number;
   pat: CanvasPattern | null;
@@ -26,7 +36,7 @@ interface Seg {
 
 const ANGLE = 28; // 画面の長辺からの角度(度)
 
-export function mountDraw(root: HTMLElement): () => void {
+export function mountDraw(root: HTMLElement, onBrush?: (b: Brush) => void): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
   const ctx = canvas.getContext('2d')!;
   const label = root.querySelector<HTMLElement>('[data-label]');
@@ -59,6 +69,14 @@ export function mountDraw(root: HTMLElement): () => void {
   let moved = false;
   let downAt: Pt = { x: 0, y: 0 };
   let lastUser = -1e9;
+  // 筆。#b=nib のように URL でも指定できる。描いたあとで替えても、前の線は元の筆のまま残る。
+  const want = new URLSearchParams(location.hash.replace(/^#/, '')).get('b') as Brush | null;
+  let brush: Brush = want && BRUSHES.includes(want) ? want : 'band';
+  let nibX = 0; // ペン先の向き(28°)
+  let nibY = 0;
+  let wNow = 0; // いまの太さ(毛筆)
+  let strokeLen = 0;
+  let lastT = 0;
 
   root.classList.add('is-live');
   html.classList.add('draw-on');
@@ -82,12 +100,17 @@ export function mountDraw(root: HTMLElement): () => void {
       dx = -Math.cos(a);
       dy = -Math.sin(a);
     }
+    // ペン先は、紙の流れと同じ28°の向きに寝かせる。
+    nibX = -dx;
+    nibY = -dy;
   }
 
   // ---- ペン ----
   function newSeg(p: Pt): Seg {
     const s: Seg = {
       pts: [p],
+      wds: [wNow],
+      brush,
       len: 0,
       work: nextWork,
       pat: null,
@@ -123,14 +146,27 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   function penDown(p: Pt) {
+    strokeLen = 0;
+    wNow = W * 0.2; // 入りは細く
+    lastT = performance.now();
     cur = newSeg(p);
   }
-  function penMove(p: Pt) {
+  // v … ペンの速さ(px/ミリ秒)。省くと、実際の動きから測る。
+  function penMove(p: Pt, v?: number) {
     if (!cur) return;
     const q = cur.pts[cur.pts.length - 1];
     const d = Math.hypot(p.x - q.x, p.y - q.y);
     if (d < 5) return;
+    const now = performance.now();
+    const speed = v ?? d / Math.max(1, now - lastT);
+    lastT = now;
+    strokeLen += d;
+    // 毛筆: 速いと細く、遅いと太い。入りは細いところから太る。
+    const f = Math.max(0.28, Math.min(1.2, 1.3 - speed * 0.5));
+    const inF = Math.min(1, 0.2 + strokeLen / (W * 0.9));
+    wNow = wNow * 0.72 + W * f * inF * 0.28;
     cur.pts.push(p);
+    cur.wds.push(wNow);
     cur.len += d;
     cur.x0 = Math.min(cur.x0, p.x);
     cur.y0 = Math.min(cur.y0, p.y);
@@ -146,6 +182,10 @@ export function mountDraw(root: HTMLElement): () => void {
   function penUp() {
     if (!cur) return;
     cur.open = false;
+    // 毛筆の抜き: 終わりの数点を細くしていく。
+    const n = cur.wds.length;
+    const k = Math.min(n, 7);
+    for (let i = 0; i < k; i++) cur.wds[n - 1 - i] *= 0.12 + 0.88 * (i / k);
     // 点だけで終わったものは残さない。
     if (cur.pts.length < 2) {
       segs = segs.filter((s) => s !== cur);
@@ -221,7 +261,7 @@ export function mountDraw(root: HTMLElement): () => void {
     auto.x += Math.cos(auto.heading) * v * dt;
     auto.y += Math.sin(auto.heading) * v * dt;
     auto.left -= v * dt;
-    penMove({ x: auto.x - offX, y: auto.y - offY });
+    penMove({ x: auto.x - offX, y: auto.y - offY }, 0.35 + 1.5 * Math.abs(Math.sin(now * 0.0021)));
     const out = auto.x < -W || auto.x > w + W || auto.y < -W || auto.y > h + W;
     if (auto.left <= 0 || out) {
       penUp();
@@ -255,17 +295,98 @@ export function mountDraw(root: HTMLElement): () => void {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(dpr, 0, 0, dpr, offX * dpr, offY * dpr);
-    ctx.lineWidth = W;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'butt';
     for (const s of segs) {
       if (s.pts.length < 2) continue;
       if (!s.pat) lock(s);
-      ctx.strokeStyle = s.pat || '#161614';
+      const paint = s.pat || '#161614';
+      ctx.strokeStyle = paint;
+      ctx.fillStyle = paint;
+      if (s.brush === 'nib') paintNib(s);
+      else if (s.brush === 'fude') paintFude(s);
+      else if (s.brush === 'hake') paintHake(s);
+      else {
+        ctx.lineWidth = W;
+        trace(s.pts);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function trace(pts: Pt[]) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  }
+
+  // 平ペン: 28°に寝かせたペン先(長さ W の線分)が通ったあとを塗る。
+  function paintNib(s: Seg) {
+    const hx = (nibX * W) / 2;
+    const hy = (nibY * W) / 2;
+    ctx.beginPath();
+    for (let i = 1; i < s.pts.length; i++) {
+      const a = s.pts[i - 1];
+      const b = s.pts[i];
+      // 面の向きをそろえて、重なりをひとつの形として塗る。
+      const cross = (b.x - a.x) * hy - (b.y - a.y) * hx;
+      const k = cross >= 0 ? 1 : -1;
+      ctx.moveTo(a.x - hx * k, a.y - hy * k);
+      ctx.lineTo(b.x - hx * k, b.y - hy * k);
+      ctx.lineTo(b.x + hx * k, b.y + hy * k);
+      ctx.lineTo(a.x + hx * k, a.y + hy * k);
+      ctx.closePath();
+    }
+    ctx.fill('nonzero');
+    // ペン先が線と平行に近いところは、最低限の太さを足す。
+    ctx.lineWidth = W * 0.07;
+    trace(s.pts);
+    ctx.stroke();
+  }
+
+  // 毛筆: 点ごとの太さで、左右の縁をつないだ形を塗る。
+  function paintFude(s: Seg) {
+    const n = s.pts.length;
+    const L1: Pt[] = [];
+    const R1: Pt[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = s.pts[Math.max(0, i - 1)];
+      const b = s.pts[Math.min(n - 1, i + 1)];
+      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const ox = (-(b.y - a.y) / l) * (s.wds[i] / 2);
+      const oy = ((b.x - a.x) / l) * (s.wds[i] / 2);
+      L1.push({ x: s.pts[i].x + ox, y: s.pts[i].y + oy });
+      R1.push({ x: s.pts[i].x - ox, y: s.pts[i].y - oy });
+    }
+    ctx.beginPath();
+    ctx.moveTo(L1[0].x, L1[0].y);
+    for (let i = 1; i < n; i++) ctx.lineTo(L1[i].x, L1[i].y);
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(R1[i].x, R1[i].y);
+    ctx.closePath();
+    ctx.fill('nonzero');
+    // 急に曲がったところの欠けを埋める。
+    for (let i = 3; i < n - 3; i += 2) {
       ctx.beginPath();
-      ctx.moveTo(s.pts[0].x, s.pts[0].y);
-      for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i].x, s.pts[i].y);
+      ctx.arc(s.pts[i].x, s.pts[i].y, s.wds[i] / 2, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+
+  // 刷毛: 28°に並んだ毛の筋。筋ごとに太さが違う。
+  const HAIRS = [0.9, 0.5, 1, 0.7, 0.35, 1, 0.8, 0.55, 0.95, 0.4, 0.85];
+  function paintHake(s: Seg) {
+    const n = HAIRS.length;
+    const pitch = W / n;
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) / n - 0.5;
+      ctx.save();
+      ctx.translate(nibX * W * t, nibY * W * t);
+      // 写真の位置は動かさない(筋だけがずれる)。
+      if (s.pat) ctx.strokeStyle = s.pat;
+      ctx.lineWidth = Math.max(1.5, pitch * 0.92 * HAIRS[k]);
+      trace(s.pts);
       ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -322,8 +443,18 @@ export function mountDraw(root: HTMLElement): () => void {
   function onResize() {
     measure();
   }
+  // 筆を替える(吟味用のボタン)。
+  function onBrushClick(e: MouseEvent) {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-brush]');
+    if (!btn) return;
+    brush = BRUSHES[(BRUSHES.indexOf(brush) + 1) % BRUSHES.length];
+    lastUser = -1e9; // すぐに自動のペンで見せる
+    onBrush?.(brush);
+  }
 
   measure();
+  onBrush?.(brush);
+  root.addEventListener('click', onBrushClick);
   root.addEventListener('pointerdown', onDown);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -334,6 +465,7 @@ export function mountDraw(root: HTMLElement): () => void {
 
   return () => {
     cancelAnimationFrame(raf);
+    root.removeEventListener('click', onBrushClick);
     root.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
