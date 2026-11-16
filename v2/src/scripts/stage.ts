@@ -11,6 +11,9 @@
 //   a = 0  … 横
 // 進む方向にスクロールすると、中身は左上へ流れ、次の中身が右下から入ってくる。
 
+import { createField, type FieldEnv } from './field';
+import { createLiquid } from './liquid';
+
 type Kind = 'hero' | 'text' | 'work' | 'end';
 
 interface StageNode {
@@ -26,16 +29,6 @@ interface StageNode {
   stance: string;
 }
 
-interface Streak {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  t0: number;
-  life: number;
-  w: number;
-}
-
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export function mountStage(root: HTMLElement): () => void {
@@ -43,7 +36,11 @@ export function mountStage(root: HTMLElement): () => void {
   const fx = root.querySelector<HTMLCanvasElement>('[data-fx]');
   const counter = root.querySelector<HTMLElement>('[data-counter]');
   const cue = root.querySelector<HTMLElement>('[data-cue]');
-  const ctx = fx?.getContext('2d') ?? null;
+  const fieldBox = root.querySelector<HTMLElement>('[data-field]');
+  const fine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const liquid = fx ? createLiquid(fx, fine) : null;
+  const field = fieldBox ? createField(fieldBox) : null;
+  root.classList.toggle('has-liquid-cursor', fine && !!liquid);
 
   const nodes: StageNode[] = Array.from(root.querySelectorAll<HTMLElement>('[data-node]')).map(
     (el) => ({
@@ -81,8 +78,8 @@ export function mountStage(root: HTMLElement): () => void {
   let cutAcc = 0;
   let lastScrollSent = -1;
   let first = true;
-  const streaks: Streak[] = [];
-  const pointer = { x: 0, y: 0, has: false };
+  const pointer = { x: 0, y: 0, has: false, hot: false };
+  let burstDone = false;
 
   root.classList.add('is-live');
   document.documentElement.classList.add('stage-on');
@@ -104,12 +101,25 @@ export function mountStage(root: HTMLElement): () => void {
     root.style.setProperty('--ny', ny.toFixed(4));
     root.style.setProperty('--angle', `${angle}deg`);
 
-    if (fx && ctx) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      fx.width = Math.round(vw * dpr);
-      fx.height = Math.round(vh * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
+    liquid?.resize(vw, vh);
+    field?.resize(vw, vh);
+  }
+
+  function env(): FieldEnv {
+    return {
+      vw,
+      vh,
+      dx,
+      dy,
+      nx,
+      ny,
+      travel: Math.max(0, pos - hold),
+      span,
+      hero: clamp(1 - Math.max(0, pos - hold) / (span * 0.5), 0, 1),
+      px: pointer.x,
+      py: pointer.y,
+      hasPointer: pointer.has && fine,
+    };
   }
 
   // カード同士が重ならない最小の間隔を、角度から求める。
@@ -210,44 +220,40 @@ export function mountStage(root: HTMLElement): () => void {
     }
   }
 
-  // ---- 切り跡(軌跡)----
-  function addStreak(x1: number, y1: number, x2: number, y2: number, w = 1.6, life = 420) {
-    if (!ctx) return;
-    streaks.push({ x1, y1, x2, y2, t0: performance.now(), life, w });
-    if (streaks.length > 40) streaks.shift();
-  }
-
-  function drawStreaks(now: number) {
-    if (!ctx) return;
-    ctx.clearRect(0, 0, vw, vh);
-    for (let i = streaks.length - 1; i >= 0; i--) {
-      const s = streaks[i];
-      const k = (now - s.t0) / s.life;
-      if (k >= 1) {
-        streaks.splice(i, 1);
-        continue;
-      }
-      const a = (1 - k) * (1 - k);
-      const g = ctx.createLinearGradient(s.x1, s.y1, s.x2, s.y2);
-      g.addColorStop(0, 'rgba(244,241,234,0)');
-      g.addColorStop(0.5, `rgba(244,241,234,${(0.85 * a).toFixed(3)})`);
-      g.addColorStop(1, 'rgba(244,241,234,0)');
-      ctx.strokeStyle = g;
-      ctx.lineWidth = s.w * (1 - k * 0.5);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(s.x1, s.y1);
-      ctx.lineTo(s.x2, s.y2);
-      ctx.stroke();
+  // ---- 液体の切り跡 ----
+  // 入力のあった場所から、軸の向きに水滴を飛ばす。
+  function spray(x: number, y: number, amount: number) {
+    if (!liquid) return;
+    const sgn = amount > 0 ? -1 : 1;
+    const power = clamp(Math.abs(amount) / 60, 0.4, 3.2);
+    const n = Math.round(clamp(power * 2, 1, 6));
+    for (let i = 0; i < n; i++) {
+      const sp = (4 + Math.random() * 9) * power;
+      const side = (Math.random() - 0.5) * 2.4;
+      liquid.bead(
+        x + nx * side * 4,
+        y + ny * side * 4,
+        dx * sgn * sp + nx * side,
+        dy * sgn * sp + ny * side,
+        5 + Math.random() * 6 * Math.min(power, 2),
+        0.9 + Math.random() * 0.05
+      );
     }
   }
 
-  // 画面全体を一太刀で横切る線(タグ切り替えのとき)。
+  // 画面全体を一太刀で横切る線(最初のカットと、タグ切り替えのとき)。
   function slash() {
-    const cx = vw / 2;
-    const cy = vh / 2;
-    const L = Math.hypot(vw, vh);
-    addStreak(cx - dx * L, cy - dy * L, cx + dx * L, cy + dy * L, 2.4, 520);
+    liquid?.slash(vw / 2, vh / 2, dx, dy, Math.hypot(vw, vh) * 1.05);
+  }
+
+  // 最初の一太刀。ヒーローが弾け、作品が飛沫として画面に散る。
+  function burst() {
+    if (burstDone) return;
+    burstDone = true;
+    root.classList.add('is-burst');
+    post({ hdwBurst: { nx: dy, ny: dx } });
+    slash();
+    field?.burst(performance.now(), env());
   }
 
   // ---- 入力 ----
@@ -256,17 +262,17 @@ export function mountStage(root: HTMLElement): () => void {
     target = clamp(target + amount, 0, maxPos);
     if (cue && target > 12) cue.classList.add('is-gone');
 
-    // 入力のあった位置に、軸の向きの切り跡を残す。
-    const len = clamp(Math.abs(amount) * 1.4, 40, 420);
+    // 入力のあった位置から、軸の向きに水滴を飛ばす。
     const ox = px ?? (pointer.has ? pointer.x : vw / 2);
     const oy = py ?? (pointer.has ? pointer.y : vh / 2);
-    const sgn = amount > 0 ? -1 : 1;
-    addStreak(ox, oy, ox + dx * len * sgn, oy + dy * len * sgn);
+    spray(ox, oy, amount);
+    field?.kick(amount, env());
 
     if (heroActive()) {
       cutAcc += Math.abs(amount);
       if (cutAcc > 70) {
-        cutHero(amount > 0 ? 1 : -1, clamp(cutAcc / 400, 0, 1));
+        if (!burstDone) burst();
+        else cutHero(amount > 0 ? 1 : -1, clamp(cutAcc / 400, 0, 1));
         cutAcc = 0;
       }
     }
@@ -293,6 +299,8 @@ export function mountStage(root: HTMLElement): () => void {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
     pointer.has = true;
+    pointer.hot = !!(e.target as HTMLElement | null)?.closest?.('a, button');
+    if (e.pointerType === 'mouse') liquid?.pointer(e.clientX, e.clientY, pointer.hot);
     if (!drag) return;
     const mx = e.clientX - drag.x;
     const my = e.clientY - drag.y;
@@ -307,11 +315,17 @@ export function mountStage(root: HTMLElement): () => void {
 
     target = clamp(target + amount, 0, maxPos);
     if (cue && target > 12) cue.classList.add('is-gone');
-    // 実際の指の軌跡をそのまま切り跡にする。
-    addStreak(drag.x, drag.y, e.clientX, e.clientY, 2, 380);
+    // 指の通ったところに水の筋を残す。
+    const steps = Math.max(1, Math.round(Math.hypot(mx, my) / 9));
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      liquid?.bead(drag.x + mx * t, drag.y + my * t, mx * 0.06, my * 0.06, 7 + Math.random() * 5, 0.9);
+    }
+    field?.kick(amount, env());
     if (heroActive()) {
+      if (!burstDone && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 40) burst();
       // ヒーローには実際のドラッグの向きを送る(横向きが強ければカットになる)。
-      post({ hdwSwipe: { dx: mx / Math.max(1, vw), dy: my / Math.max(1, vh) } });
+      else post({ hdwSwipe: { dx: mx / Math.max(1, vw), dy: my / Math.max(1, vh) } });
     }
     drag.x = e.clientX;
     drag.y = e.clientY;
@@ -356,11 +370,12 @@ export function mountStage(root: HTMLElement): () => void {
     slashLocal(dir);
   }
   function slashLocal(dir: number) {
-    const cx = vw / 2;
-    const cy = vh / 2;
-    const L = Math.min(vw, vh) * 0.45;
-    addStreak(cx + dx * L * dir, cy + dy * L * dir, cx - dx * L * dir, cy - dy * L * dir);
-    if (heroActive()) cutHero(dir, 0.6);
+    liquid?.slash(vw / 2, vh / 2, dx, dy, Math.min(vw, vh) * 0.7);
+    field?.kick(dir * 120, env());
+    if (heroActive()) {
+      if (!burstDone) burst();
+      else cutHero(dir, 0.6);
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -438,6 +453,23 @@ export function mountStage(root: HTMLElement): () => void {
   function syncPressed(sel: string, on: (b: HTMLButtonElement) => boolean) {
     root.querySelectorAll<HTMLButtonElement>(sel).forEach((b) => {
       b.setAttribute('aria-pressed', on(b) ? 'true' : 'false');
+    });
+    placeBlobs();
+  }
+
+  // 選択中のボタンの下に、白い水のかたまりを流し込む。
+  // 先頭と尾を別の速さで動かし、フィルターでつなぐので、移動のあいだ水が伸びる。
+  function placeBlobs() {
+    root.querySelectorAll<HTMLElement>('[data-chips]').forEach((group) => {
+      const goo = group.querySelector<HTMLElement>('[data-goo]');
+      const on = group.querySelector<HTMLElement>('button[aria-pressed="true"]');
+      if (!goo || !on) return;
+      const pad = 10; // goo レイヤーのはみ出し分
+      goo.querySelectorAll<HTMLElement>('i').forEach((b) => {
+        b.style.transform = `translate3d(${on.offsetLeft + pad}px, ${on.offsetTop + pad}px, 0)`;
+        b.style.width = `${on.offsetWidth}px`;
+        b.style.height = `${on.offsetHeight}px`;
+      });
     });
   }
 
@@ -549,13 +581,20 @@ export function mountStage(root: HTMLElement): () => void {
     }
     root.classList.toggle('in-works', travel > span * 0.9);
 
-    drawStreaks(now);
+    field?.frame(now, env());
+    liquid?.frame();
   }
 
   // ---- 起動 ----
   function onResize() {
     measure();
     layout(true);
+    placeBlobs();
+  }
+
+  function onLeave() {
+    pointer.has = false;
+    liquid?.leave();
   }
 
   // 確認用: #a=40&p=1800&f=branding&s=client で、角度・位置・絞り込みを指定して開ける。
@@ -565,6 +604,7 @@ export function mountStage(root: HTMLElement): () => void {
   measure();
   layout(true);
   if (hash.has('p')) pos = target = clamp(Number(hash.get('p')), 0, maxPos);
+  if (hash.has('b') || (hash.has('p') && pos > 0)) burst();
   if (hash.has('p') && cue) cue.classList.add('is-gone');
   syncPressed('[data-set-angle]', (b) => Number(b.dataset.setAngle) === angle);
   if (hash.has('f') || hash.has('s')) {
@@ -582,6 +622,7 @@ export function mountStage(root: HTMLElement): () => void {
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointercancel', onPointerUp);
+  document.documentElement.addEventListener('pointerleave', onLeave);
   root.addEventListener('click', onClickCapture, true);
   root.addEventListener('focusin', onFocusIn);
   ui?.addEventListener('click', onUiClick);
@@ -601,12 +642,13 @@ export function mountStage(root: HTMLElement): () => void {
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerUp);
+    document.documentElement.removeEventListener('pointerleave', onLeave);
     root.removeEventListener('click', onClickCapture, true);
     root.removeEventListener('focusin', onFocusIn);
     ui?.removeEventListener('click', onUiClick);
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
-    root.classList.remove('is-live');
+    root.classList.remove('is-live', 'is-burst', 'has-liquid-cursor');
     document.documentElement.classList.remove('stage-on');
   };
 }

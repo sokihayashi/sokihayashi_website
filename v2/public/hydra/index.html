@@ -39,7 +39,7 @@ const CONFIG = {
   dispersion: 0.020,
   flipBg:     true,
 
-  formScale:  1.0,
+  formScale:  1.7,   // v2: 画面の主役になる大きさに
 
   logoUrl:    LOGO_URI,
   logoSize:   0.30,
@@ -170,9 +170,21 @@ function setup(){
         const L = sp || 1;
         cutNX = dy / L; cutNY = dx / L; cutAmt = 1.0;
         impulseCut(cutNX, cutNY, Math.min(0.16, sp * 0.010));
-        spawnDrops(2);
+        spawnDrops(5);
         lastCutTime = millis();
       }
+      lastInteract = millis();
+    }
+    // 親ページからの「最初の一太刀」。切ると同時に大きく弾けさせる。
+    if (d && d.hdwBurst){
+      const bx = d.hdwBurst.nx || 0, by = d.hdwBurst.ny || 1;
+      const L = Math.hypot(bx, by) || 1;
+      cutNX = bx / L; cutNY = by / L; cutAmt = 1.0;
+      impulseCut(cutNX, cutNY, 0.22);
+      if (nActive < 22) splitParticles(0.10);
+      dissolve = min(0.32, dissolve + 0.10);
+      spawnDrops(14);
+      lastCutTime = millis();
       lastInteract = millis();
     }
   });
