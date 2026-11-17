@@ -17,7 +17,8 @@
 // 行き先の案(data-nav)。最初の画面に、帯や棒は置かない。
 //   trace … なぞる。行き先の文字の上から描きはじめた線は白い線になり、離すとその線が太ってページになる
 //   edge  … 引き切る。描いている線を行き先の文字の上で離すと、その線が太ってページになる
-//   mix   … 混ざる。描いた帯の中に、作品に混じって白い区切り(行き先)が出る。押すとページになる
+//   mix   … 混ざる。描いた帯の中に、作品に混じって白い区切り(行き先)が出る。押すとページになる。
+//           画面に無い行き先は、次に描かれる線に先に出る(待たせない)。開いた直後は、ペンが続けて2本描く
 //
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
@@ -150,8 +151,8 @@ export function mountDraw(root: HTMLElement): () => void {
   let strokeNav = -1; // いま描いている線の行き先(trace)。ふつうの線なら -1
   let stroke: Seg[] = []; // いま指で描いている線をつくる帯
   let aim = -1; // 指がいま乗っている行き先(edge)
-  let sinceNav = 0; // 最後の行き先の区切りから、何個の作品を描いたか(mix)
-  let nextNav = 0;
+  let sinceNav = 1; // 最後の行き先の区切りから、何個の作品を描いたか(mix)
+  let opening = mode === 'mix' ? 2 : 0; // 開いた直後に、ペンが続けて描く本数(mix)
   let leaving = false;
   const finger: Pt = { x: 0, y: 0 };
   const pen: Pt = { x: 0, y: 0 };
@@ -227,10 +228,9 @@ export function mountDraw(root: HTMLElement): () => void {
     if (strokeNav >= 0) {
       // 行き先の文字から描きはじめた線は、ずっと白い。
       s.nav = strokeNav;
-    } else if (mode === 'mix' && navs.length && sinceNav >= 3) {
-      // 作品3つごとに、行き先の区切りをはさむ。
-      s.nav = nextNav;
-      nextNav = (nextNav + 1) % navs.length;
+    } else if (mode === 'mix' && (sinceNav >= 1 || !prev) && missingNav() >= 0) {
+      // 画面に無い行き先を、線の頭か、作品のあいだにはさむ(白が2つ続かないように)。
+      s.nav = missingNav();
       sinceNav = 0;
     } else {
       nextWork = (nextWork + 1) % works.length;
@@ -239,6 +239,22 @@ export function mountDraw(root: HTMLElement): () => void {
     segs.push(s);
     if (pointerDown || releasing) stroke.push(s);
     return s;
+  }
+  // 画面に出ていない行き先(mix)。全部出ていれば -1。
+  function navShown(i: number) {
+    return segs.some(
+      (s) =>
+        s.nav === i &&
+        !s.trimming &&
+        s.x1 + offX > 24 &&
+        s.x0 + offX < w - 24 &&
+        s.y1 + offY > 70 &&
+        s.y0 + offY < h - 24
+    );
+  }
+  function missingNav() {
+    for (let i = 0; i < navs.length; i++) if (!navShown(i)) return i;
+    return -1;
   }
   const nameOf = (s: Seg) => (s.nav >= 0 ? navs[s.nav].word : works[s.work].title);
   // 帯1つぶんの長さ。行き先の区切りは短い。
@@ -408,10 +424,7 @@ export function mountDraw(root: HTMLElement): () => void {
   function dropSeg(s: Seg) {
     segs = segs.filter((x) => x !== s);
     if (s.nav >= 0) {
-      if (strokeNav < 0) {
-        nextNav = (nextNav - 1 + navs.length) % navs.length;
-        sinceNav = 3;
-      }
+      if (strokeNav < 0) sinceNav = 1;
     } else {
       nextWork = (nextWork - 1 + works.length) % works.length;
       sinceNav = Math.max(0, sinceNav - 1);
@@ -427,7 +440,7 @@ export function mountDraw(root: HTMLElement): () => void {
     let live = segs.filter((s) => !s.trimming).length;
     for (const s of segs) {
       if (live <= cap) break;
-      if (s.trimming || s === bloom?.seg) continue;
+      if (s.trimming || s === bloom?.seg || (mode === 'mix' && s.nav >= 0)) continue; // 行き先は巻き取らない
       s.trimming = true;
       live--;
     }
@@ -515,6 +528,8 @@ export function mountDraw(root: HTMLElement): () => void {
       return;
     }
     if (!auto.on) {
+      // 行き先が画面から無くなったら、すぐ描き足す(mix)。
+      if (mode === 'mix' && auto.wait > 0.4 && missingNav() >= 0) auto.wait = 0.4;
       auto.wait -= dt;
       if (auto.wait > 0) return;
       // 流れを横切る向きに、ゆるい弧で描く。流れの上手(右下寄り)から描きはじめる。
@@ -524,7 +539,7 @@ export function mountDraw(root: HTMLElement): () => void {
       auto.x = w / 2 - Math.cos(auto.heading) * m0 * 0.36 - dx * m0 * (0.2 + rnd() * 0.25) + (rnd() - 0.5) * m0 * 0.2;
       auto.y = h / 2 - Math.sin(auto.heading) * m0 * 0.36 - dy * m0 * (0.2 + rnd() * 0.25) + (rnd() - 0.5) * m0 * 0.2;
       auto.turn = (rnd() - 0.5) * 1.1;
-      auto.left = L * (2.4 + rnd() * 1.8);
+      auto.left = opening > 0 ? L * 2.6 : L * (2.4 + rnd() * 1.8);
       auto.on = true;
       penDown({ x: auto.x - offX, y: auto.y - offY });
       return;
@@ -532,6 +547,7 @@ export function mountDraw(root: HTMLElement): () => void {
     // ペンの速さ(px/秒)。ゴムの版では、ひと筆のなかで緩急をつける(速いところで首が細る)。
     let v = Math.min(w, h) * 0.62;
     if (gum) v *= 0.55 + 1.5 * Math.pow(Math.sin(auto.left / (L * 0.9)), 2);
+    if (opening > 0) v *= 2; // 開いた直後は、速く描く
     auto.heading += auto.turn * dt;
     auto.turn += (rnd() - 0.5) * dt * 2;
     auto.turn = Math.max(-0.75, Math.min(0.75, auto.turn));
@@ -543,7 +559,8 @@ export function mountDraw(root: HTMLElement): () => void {
     if (auto.left <= 0 || out) {
       penUp();
       auto.on = false;
-      auto.wait = 2.2 + rnd() * 1.2;
+      auto.wait = opening > 1 ? 0.25 : 2.2 + rnd() * 1.2;
+      opening = Math.max(0, opening - 1);
     }
   }
 
@@ -767,6 +784,7 @@ export function mountDraw(root: HTMLElement): () => void {
       }
     }
     autoStep(dt, now);
+    if (mode === 'mix') root.dataset.navOn = navs.map((_, i) => (navShown(i) ? '1' : '0')).join('');
     stepTape(dt, now);
     if (gum) stepGum(dt);
 
