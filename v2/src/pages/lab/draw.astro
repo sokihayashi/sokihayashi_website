@@ -39,7 +39,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
     <!-- ひらいた作品の下に出る、題名と入口。 -->
     <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
-    <!-- 出口: 右下から差し込まれた帯の切れ端。引っぱると白い帯が引き出され、離すとその帯が太って Works になる。押すだけでも行ける。 -->
+    <!-- 出口: 右下の角から差し込まれた、ゴムのような白い帯。つまんで引くと根の形ごと伸び、離すと太って Works になる。押すだけでも行ける。 -->
     <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
   </div>
 
@@ -167,20 +167,24 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   .draw.is-live.is-open .draw-label {
     opacity: 0;
   }
-  /* 出口は、右下の角から紙の流れと同じ向きに差し込まれた帯。画面の外へ続いている。 */
+  /* 出口の帯は、キャンバスに描く(ゴムのように伸びるので)。
+     このリンクは同じ場所に重ねた透明な「つまむところ」で、押すだけでも移動できる。 */
   .draw.is-live .draw-exit {
     position: absolute;
     right: 0;
-    bottom: calc(1.6rem + env(safe-area-inset-bottom));
+    bottom: 29px;
     z-index: 6;
     width: 240px;
-    padding-left: 1.3rem;
+    padding: 0;
+    opacity: 0;
     -webkit-user-drag: none;
     touch-action: none;
     transform-origin: 100% 50%;
-    /* 回してから、帯の向きに沿って外へ押し出す(端は画面の外)。 */
     transform: rotate(28deg) translateX(72px);
-    cursor: pointer;
+    cursor: grab;
+  }
+  .draw.is-live .draw-exit:active {
+    cursor: grabbing;
   }
   @media (orientation: portrait) {
     .draw.is-live .draw-exit {

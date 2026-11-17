@@ -23,7 +23,6 @@ interface Seg {
   nrm: Pt[]; // 各点での、帯の幅の向き
   len: number;
   work: number;
-  nav: string; // 行き先。空でなければ、作品ではなく「行き先の帯」(白い帯)
   pat: CanvasPattern | null;
   big: boolean; // 大きい画像で塗っているか
   k: number; // 写真の倍率と位置(帯のとき)
@@ -50,7 +49,7 @@ interface Bloom {
 }
 
 const ANGLE = 28; // 画面の長辺からの角度(度)
-const PULL = 120; // 行き先の帯を、これだけ引き出すと移動する(px)
+const PULL = 120; // 出口の帯を、これだけ引き伸ばして離すと移動する(px)
 
 export function mountDraw(root: HTMLElement): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
@@ -91,8 +90,35 @@ export function mountDraw(root: HTMLElement): () => void {
   let moved = false;
   let releasing = false;
   let downAt: Pt = { x: 0, y: 0 };
-  let pull = ''; // 帯の切れ端から引っぱっているときの行き先
-  let navWord = '';
+  // ---- 出口の帯 ----
+  // 右下の角の外に根があり、紙の流れと同じ向きに画面へ差し込まれている、ゴムのような白い帯。
+  // つまんで引くと、根の形ごと伸びる(細くなる)。離すと、ぷるんと戻るか、太って次のページになる。
+  const exit = root.querySelector<HTMLAnchorElement>('[data-band]');
+  const exitWord = exit?.textContent?.trim() || '';
+  const tape = {
+    rx: 0, // 根(画面の外)
+    ry: 0,
+    hx: 0, // 休んでいるときの先端
+    hy: 0,
+    ux: 1, // 根から先端へ向かう向き
+    uy: 0,
+    len0: 240,
+    wt: 46,
+    x: 0, // 先端
+    y: 0,
+    vx: 0,
+    vy: 0,
+    mx: 0, // 胴の中ほど(先端より遅れて動く)
+    my: 0,
+    mvx: 0,
+    mvy: 0,
+    grab: false,
+    gx: 0,
+    gy: 0,
+    moved: false,
+    nudge: 3.2,
+    gone: false,
+  };
   let suppressClick = 0;
   const finger: Pt = { x: 0, y: 0 };
   const pen: Pt = { x: 0, y: 0 };
@@ -120,16 +146,31 @@ export function mountDraw(root: HTMLElement): () => void {
       dx = -Math.cos(a);
       dy = -Math.sin(a);
     }
+    // 出口の帯: 右の縁の下のほうから、紙の流れの向きへ差し込む。
+    tape.ux = dx;
+    tape.uy = dy;
+    const ex = w;
+    const ey = h - 52;
+    tape.rx = ex - dx * 72;
+    tape.ry = ey - dy * 72;
+    tape.hx = tape.rx + dx * tape.len0;
+    tape.hy = tape.ry + dy * tape.len0;
+    if (!tape.grab) {
+      tape.x = tape.hx;
+      tape.y = tape.hy;
+      tape.mx = (tape.rx + tape.hx) / 2;
+      tape.my = (tape.ry + tape.hy) / 2;
+      tape.vx = tape.vy = tape.mvx = tape.mvy = 0;
+    }
   }
 
   // ---- ペン ----
-  function newSeg(p: Pt, n: Pt, nav = ''): Seg {
+  function newSeg(p: Pt, n: Pt): Seg {
     const s: Seg = {
       pts: [p],
       nrm: [n],
       len: 0,
       work: nextWork,
-      nav,
       pat: null,
       big: false,
       k: 1,
@@ -143,7 +184,7 @@ export function mountDraw(root: HTMLElement): () => void {
       x1: p.x,
       y1: p.y,
     };
-    if (!nav) nextWork = (nextWork + 1) % works.length;
+    nextWork = (nextWork + 1) % works.length;
     segs.push(s);
     return s;
   }
@@ -165,8 +206,8 @@ export function mountDraw(root: HTMLElement): () => void {
     s.pat?.setTransform(new DOMMatrix([s.k, 0, 0, s.k, s.tx, s.ty]));
   }
 
-  function penDown(p: Pt, nav = '') {
-    cur = newSeg(p, { x: 0, y: 0 }, nav);
+  function penDown(p: Pt) {
+    cur = newSeg(p, { x: 0, y: 0 });
   }
   function penMove(p: Pt) {
     if (!cur) return;
@@ -194,7 +235,6 @@ export function mountDraw(root: HTMLElement): () => void {
     cur.y0 = Math.min(cur.y0, p.y);
     cur.x1 = Math.max(cur.x1, p.x);
     cur.y1 = Math.max(cur.y1, p.y);
-    if (cur.nav) return; // 行き先の帯は、区切らずに1本で続ける
     if (!cur.pat && cur.len >= 20) lock(cur);
     if (cur.len >= 20) setLabel(works[cur.work].title);
     if (cur.len >= L) {
@@ -205,21 +245,11 @@ export function mountDraw(root: HTMLElement): () => void {
   }
   function dropSeg(s: Seg) {
     segs = segs.filter((x) => x !== s);
-    if (!s.nav) nextWork = (nextWork - 1 + works.length) % works.length;
+    nextWork = (nextWork - 1 + works.length) % works.length;
   }
   function penUp() {
     if (!cur) return;
     cur.open = false;
-    if (cur.nav) {
-      // 行き先の帯: 十分に引き出していたら、その帯が太って次のページになる。足りなければ巻き戻る。
-      const s = cur;
-      cur = null;
-      if (s.len >= PULL) {
-        coverFromStroke(s.pts, W);
-        navigate(s.nav);
-      } else s.trimming = true;
-      return;
-    }
     if (cur.pts.length < 2) dropSeg(cur); // 点だけで終わったものは残さない
     cur = null;
     // 増えすぎたら、古いものから巻き取る。
@@ -245,7 +275,7 @@ export function mountDraw(root: HTMLElement): () => void {
     const py = y - offY;
     for (let i = segs.length - 1; i >= 0; i--) {
       const s = segs[i];
-      if (s.trimming || s.nav) continue;
+      if (s.trimming) continue;
       if (px < s.x0 - W / 2 || px > s.x1 + W / 2 || py < s.y0 - W / 2 || py > s.y1 + W / 2) continue;
       for (let j = 1; j < s.pts.length; j++) {
         const a = s.pts[j - 1];
@@ -305,7 +335,7 @@ export function mountDraw(root: HTMLElement): () => void {
   const auto = { on: false, x: 0, y: 0, heading: 0, turn: 0, left: 0, wait: 0.15 };
   let autoSide = 1;
   function autoStep(dt: number, now: number) {
-    if (pointerDown || releasing || bloom || now - lastUser < 3500) {
+    if (pointerDown || releasing || bloom || tape.grab || now - lastUser < 3500) {
       if (auto.on) {
         penUp();
         auto.on = false;
@@ -357,59 +387,15 @@ export function mountDraw(root: HTMLElement): () => void {
 
   function paintSeg(s: Seg) {
     if (s.pts.length < 2) return;
-    if (s.nav) {
-      // 画面に固定された帯: 紙のずれを打ち消して描く。
-      ctx.save();
-      ctx.translate(-offX, -offY);
-      paintShape(s);
-      ctx.restore();
-      return;
-    }
-    paintShape(s);
-  }
-  function paintShape(s: Seg) {
-    if (!s.nav && !s.pat) lock(s);
+    if (!s.pat) lock(s);
     const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
     outline(s, from);
-    ctx.fillStyle = s.nav ? '#f4f1ea' : s.pat || '#161614';
+    ctx.fillStyle = s.pat || '#161614';
     ctx.fill('nonzero');
-    if (s.nav) tapeText(s, from);
     // 細い黒の縁。重なりと境目を分ける。
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#000';
     ctx.stroke();
-  }
-
-  // 行き先の帯に、行き先の名前を帯の向きに沿って並べる。
-  function tapeText(s: Seg, from: number) {
-    const word = navWord;
-    if (!word) return;
-    ctx.save();
-    ctx.fillStyle = '#000';
-    ctx.font = `500 ${Math.round(W * 0.17)}px "Helvetica Neue", Arial, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const gap = W * 1.5;
-    let next = gap * 0.45;
-    let run = 0;
-    for (let i = Math.max(1, from + 1); i < s.pts.length; i++) {
-      const a = s.pts[i - 1];
-      const b = s.pts[i];
-      const d = Math.hypot(b.x - a.x, b.y - a.y);
-      while (run + d >= next) {
-        const t = (next - run) / d;
-        let ang = Math.atan2(b.y - a.y, b.x - a.x);
-        if (Math.cos(ang) < 0) ang += Math.PI; // 逆さまにしない
-        ctx.save();
-        ctx.translate(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
-        ctx.rotate(ang);
-        ctx.fillText(word, 0, 0);
-        ctx.restore();
-        next += gap;
-      }
-      run += d;
-    }
-    ctx.restore();
   }
 
   function paintBloom(b: Bloom) {
@@ -451,6 +437,118 @@ export function mountDraw(root: HTMLElement): () => void {
     ctx.restore();
   }
 
+  // ---- 出口の帯: 動きと形 ----
+  function stepTape(dt: number, now: number) {
+    if (!exit || tape.gone) return;
+    // 先端は、つまんでいる指(離していれば休む位置)へ、ばねで寄る。
+    const tx = tape.grab ? finger.x + tape.gx : tape.hx;
+    const ty = tape.grab ? finger.y + tape.gy : tape.hy;
+    const k = tape.grab ? 520 : 150; // 離したときは柔らかく、ぷるんと戻る
+    const c = tape.grab ? 38 : 9;
+    tape.vx += ((tx - tape.x) * k - tape.vx * c) * dt;
+    tape.vy += ((ty - tape.y) * k - tape.vy * c) * dt;
+    tape.x += tape.vx * dt;
+    tape.y += tape.vy * dt;
+    // 胴は、根と先端のあいだの「根から出た向きに寄せた点」へ、遅れて寄る(しなりが出る)。
+    const dist = Math.hypot(tape.x - tape.rx, tape.y - tape.ry);
+    const cx = tape.rx + tape.ux * dist * 0.5;
+    const cy = tape.ry + tape.uy * dist * 0.5;
+    tape.mvx += ((cx - tape.mx) * 110 - tape.mvx * 8) * dt;
+    tape.mvy += ((cy - tape.my) * 110 - tape.mvy * 8) * dt;
+    tape.mx += tape.mvx * dt;
+    tape.my += tape.mvy * dt;
+    // 触られていないあいだは、ときどき少し伸びて「引ける」ことを見せる。
+    if (!tape.grab && !pointerDown && now - lastUser > 2500) {
+      tape.nudge -= dt;
+      if (tape.nudge <= 0) {
+        tape.nudge = 5.5;
+        tape.vx += tape.ux * 520;
+        tape.vy += tape.uy * 520;
+      }
+    }
+  }
+
+  // 帯の芯(根 → 先端)を、なめらかな弧として取り出す。
+  function tapeSpine(n: number): Pt[] {
+    // 胴の点を通るように、2次曲線の制御点を決める。
+    const qx = 2 * tape.mx - (tape.rx + tape.x) / 2;
+    const qy = 2 * tape.my - (tape.ry + tape.y) / 2;
+    const pts: Pt[] = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const a = (1 - t) * (1 - t);
+      const b = 2 * (1 - t) * t;
+      const c2 = t * t;
+      pts.push({ x: a * tape.rx + b * qx + c2 * tape.x, y: a * tape.ry + b * qy + c2 * tape.y });
+    }
+    return pts;
+  }
+
+  function paintTape() {
+    if (!exit || tape.gone) return;
+    const N = 30;
+    const sp = tapeSpine(N);
+    let len = 0;
+    for (let i = 1; i <= N; i++) len += Math.hypot(sp[i].x - sp[i - 1].x, sp[i].y - sp[i - 1].y);
+    // 伸びると細く、縮むと太くなる。先端(つまむところ)は太さを保つ。
+    const f = Math.max(0.4, Math.min(1.25, Math.pow(len / tape.len0, -0.65)));
+    const L1: Pt[] = [];
+    const R1: Pt[] = [];
+    for (let i = 0; i <= N; i++) {
+      const a = sp[Math.max(0, i - 1)];
+      const b = sp[Math.min(N, i + 1)];
+      const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const t = i / N;
+      const e = Math.max(0, Math.min(1, (t - 0.5) / 0.5));
+      const head = e * e * (3 - 2 * e);
+      const hw = (tape.wt / 2) * (f + (1 - f) * head);
+      L1.push({ x: sp[i].x - ((b.y - a.y) / l) * hw, y: sp[i].y + ((b.x - a.x) / l) * hw });
+      R1.push({ x: sp[i].x + ((b.y - a.y) / l) * hw, y: sp[i].y - ((b.x - a.x) / l) * hw });
+    }
+    // 画面に固定された帯なので、紙のずれを打ち消して描く。
+    ctx.save();
+    ctx.translate(-offX, -offY);
+    ctx.beginPath();
+    ctx.moveTo(L1[0].x, L1[0].y);
+    for (let i = 1; i <= N; i++) ctx.lineTo(L1[i].x, L1[i].y);
+    for (let i = N; i >= 0; i--) ctx.lineTo(R1[i].x, R1[i].y);
+    ctx.closePath();
+    ctx.fillStyle = '#f4f1ea';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    // 行き先の名前は、先端のすぐ内側に、帯の向きに沿って置く。
+    if (exitWord) {
+      const i = N - 4;
+      const a = sp[i - 1];
+      const b = sp[i + 1];
+      let ang = Math.atan2(a.y - b.y, a.x - b.x); // 先端から根へ向かって読む
+      if (Math.cos(ang) < 0) ang += Math.PI;
+      ctx.translate(sp[i].x, sp[i].y);
+      ctx.rotate(ang);
+      ctx.fillStyle = '#000';
+      ctx.font = '500 14px "Helvetica Neue", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(exitWord, 0, 1);
+    }
+    ctx.restore();
+  }
+
+  function releaseTape() {
+    if (!tape.grab) return;
+    tape.grab = false;
+    const pulled = Math.hypot(tape.x - tape.hx, tape.y - tape.hy);
+    if (tape.moved && pulled >= PULL && exit) {
+      // 伸びた帯そのものが太って、次のページになる。
+      tape.gone = true;
+      coverFromStroke(tapeSpine(30), tape.wt);
+      navigate(exit.href);
+    }
+    // 足りなければ、ばねで戻る。
+  }
+
   function frame(now: number) {
     raf = requestAnimationFrame(frame);
     const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
@@ -467,20 +565,20 @@ export function mountDraw(root: HTMLElement): () => void {
       const f = 1 - Math.exp(-dt / 0.07);
       pen.x += (finger.x - pen.x) * f;
       pen.y += (finger.y - pen.y) * f;
-      if (moved) penMove(pull ? { x: pen.x, y: pen.y } : { x: pen.x - offX, y: pen.y - offY });
+      if (moved) penMove({ x: pen.x - offX, y: pen.y - offY });
       if (releasing && Math.hypot(finger.x - pen.x, finger.y - pen.y) < 3) {
         releasing = false;
         penUp();
       }
     }
     autoStep(dt, now);
+    stepTape(dt, now);
 
     // 巻き取り。
     for (const s of segs) if (s.trimming) s.trim = Math.min(1, s.trim + dt / 0.45);
     // 画面の外へ出た帯と、巻き取り終えた帯は捨てる。
     segs = segs.filter((s) => {
       if (s.open || s === bloom?.seg) return true;
-      if (s.nav) return s.trim < 1;
       if (s.trim >= 1) return false;
       return !(s.x1 + offX < -W || s.y1 + offY < -W || s.x0 + offX > w + W || s.y0 + offY > h + W);
     });
@@ -499,6 +597,7 @@ export function mountDraw(root: HTMLElement): () => void {
     // ひらいている帯も、まず帯として描く。その上に、ひらいていく面を重ねる。
     for (const s of segs) paintSeg(s);
     if (bloom && bloom.t > 0.001) paintBloom(bloom);
+    paintTape();
 
     // ひらいた作品の下に、題名と入口を出す。
     if (openLink) {
@@ -514,11 +613,22 @@ export function mountDraw(root: HTMLElement): () => void {
   // ---- 入力 ----
   function onDown(e: PointerEvent) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    // 帯の切れ端(出口)から引っぱると、行き先の帯が引き出される。押すだけでも移動できる。
-    const tape = (e.target as HTMLElement).closest<HTMLAnchorElement>('[data-band]');
-    pull = tape ? tape.href : '';
-    navWord = tape ? tape.textContent?.trim() || '' : navWord;
-    if (!tape && (e.target as HTMLElement).closest('[data-keep]')) return;
+    // 出口の帯をつまむ。
+    if (exit && (e.target as HTMLElement).closest('[data-band]') === exit) {
+      if (auto.on) {
+        penUp();
+        auto.on = false;
+      }
+      tape.grab = true;
+      tape.moved = false;
+      tape.gx = tape.x - e.clientX;
+      tape.gy = tape.y - e.clientY;
+      finger.x = downAt.x = e.clientX;
+      finger.y = downAt.y = e.clientY;
+      lastUser = performance.now();
+      return;
+    }
+    if ((e.target as HTMLElement).closest('[data-keep]')) return;
     if (auto.on) {
       penUp();
       auto.on = false;
@@ -535,6 +645,13 @@ export function mountDraw(root: HTMLElement): () => void {
     lastUser = performance.now();
   }
   function onMove(e: PointerEvent) {
+    if (tape.grab) {
+      finger.x = e.clientX;
+      finger.y = e.clientY;
+      lastUser = performance.now();
+      if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 8) tape.moved = true;
+      return;
+    }
     if (!pointerDown) {
       // PC: 帯の上では、押せることを示す。
       if (e.pointerType === 'mouse') {
@@ -554,20 +671,24 @@ export function mountDraw(root: HTMLElement): () => void {
       // 描きはじめる。ひらいていた作品は帯に戻る。
       moved = true;
       closeBloom();
-      // 行き先の帯は紙に乗せず、画面に固定する(出口の切れ端につながったまま)。
-      penDown(pull ? { x: pen.x, y: pen.y } : { x: pen.x - offX, y: pen.y - offY }, pull);
+      penDown({ x: pen.x - offX, y: pen.y - offY });
     }
   }
   function onUp(e: PointerEvent) {
+    if (tape.grab) {
+      lastUser = performance.now();
+      // 引いたあとの誤クリックは止める。押しただけなら、ふつうのリンクとして移動する。
+      if (tape.moved) suppressClick = performance.now();
+      releaseTape();
+      return;
+    }
     if (!pointerDown) return;
     pointerDown = false;
     lastUser = performance.now();
     if (moved) {
       releasing = true; // 筆が指の離れた場所に追いつくまで描く
-      if (pull) suppressClick = performance.now(); // 引っぱったあとの誤クリックを止める
       return;
     }
-    if (pull) return; // 帯の切れ端を押しただけ: ふつうのリンクとして移動する
     // 描かずに押しただけ。
     if (bloom && bloom.dir > 0) {
       if (inBloom(e.clientX, e.clientY)) navigate(works[bloom.seg.work].href);
