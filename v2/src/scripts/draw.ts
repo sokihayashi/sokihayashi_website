@@ -10,6 +10,10 @@
 //   ・重なったところは細い黒の縁で分かれる(紙が重なって見える)
 //   ・帯が増えすぎたら、古いものから巻き取られて消える
 //
+// ゴムの版(data-gum):
+//   描く帯も、出口の帯と同じ「ゴム」でできている。速く引き出すと首が細り、少し遅れて太って落ち着く。
+//   ゆっくり描けば、これまでどおりの硬い帯になる。先端(指がつまんでいるところ)は太さを保つ。
+//
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
@@ -21,6 +25,11 @@ type Pt = { x: number; y: number };
 interface Seg {
   pts: Pt[]; // 帯の芯(紙の上の座標)
   nrm: Pt[]; // 各点での、帯の幅の向き
+  cum: number[]; // 描きはじめからの長さ
+  wf: number[]; // 各点の太さ(1 = もとの太さ)。ゴムの版で使う
+  wv: number[]; // 太さの変わる速さ
+  calm: boolean; // 太さが落ち着いた
+  prev: Seg | null; // ひと続きに描いた、ひとつ前の帯
   len: number;
   work: number;
   pat: CanvasPattern | null;
@@ -50,6 +59,8 @@ interface Bloom {
 
 const ANGLE = 28; // 画面の長辺からの角度(度)
 const PULL = 120; // 出口の帯を、これだけ引き伸ばして離すと移動する(px)
+// ゴムの細り方。出口の帯と描く帯で同じ式を使う(2倍に伸ばすと、約6割の太さ)。
+const thin = (stretch: number) => Math.pow(Math.max(0.01, stretch), -0.65);
 
 export function mountDraw(root: HTMLElement): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
@@ -63,6 +74,7 @@ export function mountDraw(root: HTMLElement): () => void {
     return { title: a.textContent?.trim() || '', href: a.href, img, large: a.dataset.large || '', big: null as HTMLImageElement | null };
   });
   const html = document.documentElement;
+  const gum = root.hasAttribute('data-gum'); // 描く帯もゴムにする版
   const idleLabel = label?.textContent || '';
 
   let w = 0;
@@ -165,10 +177,15 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   // ---- ペン ----
-  function newSeg(p: Pt, n: Pt): Seg {
+  function newSeg(p: Pt, n: Pt, f = 1, v = 0, prev: Seg | null = null): Seg {
     const s: Seg = {
       pts: [p],
       nrm: [n],
+      cum: [0],
+      wf: [f],
+      wv: [v],
+      calm: !gum,
+      prev,
       len: 0,
       work: nextWork,
       pat: null,
@@ -206,10 +223,13 @@ export function mountDraw(root: HTMLElement): () => void {
     s.pat?.setTransform(new DOMMatrix([s.k, 0, 0, s.k, s.tx, s.ty]));
   }
 
+  // 筆が指から遅れている長さ(=ゴムが伸びている長さ)から、いま描く点の太さを決める。
+  const stretchAt = (lag: number) => Math.max(0.42, Math.min(1, thin(1 + lag / (W * 0.4))));
+
   function penDown(p: Pt) {
     cur = newSeg(p, { x: 0, y: 0 });
   }
-  function penMove(p: Pt) {
+  function penMove(p: Pt, f = 1) {
     if (!cur) return;
     const q = cur.pts[cur.pts.length - 1];
     const d = Math.hypot(p.x - q.x, p.y - q.y);
@@ -231,6 +251,10 @@ export function mountDraw(root: HTMLElement): () => void {
     cur.pts.push(p);
     cur.nrm.push({ x: nx, y: ny });
     cur.len += d;
+    cur.cum.push(cur.len);
+    cur.wf.push(f);
+    cur.wv.push(0);
+    if (gum) cur.calm = false;
     cur.x0 = Math.min(cur.x0, p.x);
     cur.y0 = Math.min(cur.y0, p.y);
     cur.x1 = Math.max(cur.x1, p.x);
@@ -240,7 +264,62 @@ export function mountDraw(root: HTMLElement): () => void {
     if (cur.len >= L) {
       // 作品の境目。次の帯は、同じ点・同じ向きから始める(切れ目がまっすぐになる)。
       cur.open = false;
-      cur = newSeg(p, { x: nx, y: ny });
+      cur = newSeg(p, { x: nx, y: ny }, f, 0, cur);
+    }
+  }
+
+  // ---- ゴム: 帯の太さ ----
+  // 先端(指がつまんでいるところ)から、この長さまでは太さを保つ。
+  const headLen = () => W * 0.55;
+  // 先端からの長さ s にある点の、つまみによる太さの持ち上げ(0〜1)。
+  function headAt(s: number) {
+    const e = Math.max(0, Math.min(1, 1 - s / headLen()));
+    return e * e * (3 - 2 * e);
+  }
+  // 描いている帯の先端から、点 i までの長さ。先端に関係ない帯なら -1。
+  function fromTip(s: Seg, i: number) {
+    if (!cur) return -1;
+    if (s === cur) return cur.len - s.cum[i];
+    if (s === cur.prev) return cur.len + s.len - s.cum[i];
+    return -1;
+  }
+  function widthAt(s: Seg, i: number) {
+    let f = s.wf[i];
+    if (!gum) return f;
+    const d = fromTip(s, i);
+    if (d >= 0 && f < 1) f += (1 - f) * headAt(d);
+    return f;
+  }
+  // 細った首が、少し遅れて太り、行きすぎてから落ち着く。
+  function stepGum(dt: number) {
+    for (const s of segs) {
+      if (s.calm) continue;
+      let still = !s.open;
+      for (let i = 0; i < s.wf.length; i++) {
+        s.wv[i] += ((1 - s.wf[i]) * 70 - s.wv[i] * 6) * dt;
+        s.wf[i] += s.wv[i] * dt;
+        if (Math.abs(1 - s.wf[i]) > 0.002 || Math.abs(s.wv[i]) > 0.01) still = false;
+      }
+      if (still) {
+        s.wf.fill(1);
+        s.wv.fill(0);
+        s.calm = true;
+      }
+    }
+  }
+  // 指を離したとき: 先端の太さをそのまま帯に移し、端を「ぷるん」と揺らす。
+  function settleTip() {
+    if (!gum || !cur) return;
+    const reach = headLen() * 1.6;
+    for (const s of [cur, cur.prev]) {
+      if (!s) continue;
+      for (let i = 0; i < s.wf.length; i++) {
+        const d = fromTip(s, i);
+        if (d < 0 || d > reach) continue;
+        s.wf[i] = widthAt(s, i);
+        s.wv[i] = 1.8 * (1 - d / reach);
+      }
+      s.calm = false;
     }
   }
   function dropSeg(s: Seg) {
@@ -249,6 +328,7 @@ export function mountDraw(root: HTMLElement): () => void {
   }
   function penUp() {
     if (!cur) return;
+    settleTip();
     cur.open = false;
     if (cur.pts.length < 2) dropSeg(cur); // 点だけで終わったものは残さない
     cur = null;
@@ -358,14 +438,16 @@ export function mountDraw(root: HTMLElement): () => void {
       penDown({ x: auto.x - offX, y: auto.y - offY });
       return;
     }
-    const v = Math.min(w, h) * 0.62; // ペンの速さ(px/秒)
+    // ペンの速さ(px/秒)。ゴムの版では、ひと筆のなかで緩急をつける(速いところで首が細る)。
+    let v = Math.min(w, h) * 0.62;
+    if (gum) v *= 0.55 + 1.5 * Math.pow(Math.sin(auto.left / (L * 0.9)), 2);
     auto.heading += auto.turn * dt;
     auto.turn += (rnd() - 0.5) * dt * 2;
     auto.turn = Math.max(-0.75, Math.min(0.75, auto.turn));
     auto.x += Math.cos(auto.heading) * v * dt;
     auto.y += Math.sin(auto.heading) * v * dt;
     auto.left -= v * dt;
-    penMove({ x: auto.x - offX, y: auto.y - offY });
+    penMove({ x: auto.x - offX, y: auto.y - offY }, gum ? stretchAt(v * 0.12) : 1);
     const out = auto.x < -W || auto.x > w + W || auto.y < -W || auto.y > h + W;
     if (auto.left <= 0 || out) {
       penUp();
@@ -377,11 +459,12 @@ export function mountDraw(root: HTMLElement): () => void {
   // ---- 描画 ----
   function outline(s: Seg, from: number) {
     const n = s.pts.length;
-    const hw = W / 2;
+    const hw: number[] = [];
+    for (let i = from; i < n; i++) hw.push((W / 2) * widthAt(s, i));
     ctx.beginPath();
-    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw, s.pts[from].y + s.nrm[from].y * hw);
-    for (let i = from + 1; i < n; i++) ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw, s.pts[i].y + s.nrm[i].y * hw);
-    for (let i = n - 1; i >= from; i--) ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw, s.pts[i].y - s.nrm[i].y * hw);
+    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw[0], s.pts[from].y + s.nrm[from].y * hw[0]);
+    for (let i = from + 1; i < n; i++) ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw[i - from], s.pts[i].y + s.nrm[i].y * hw[i - from]);
+    for (let i = n - 1; i >= from; i--) ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw[i - from], s.pts[i].y - s.nrm[i].y * hw[i - from]);
     ctx.closePath();
   }
 
@@ -491,7 +574,7 @@ export function mountDraw(root: HTMLElement): () => void {
     let len = 0;
     for (let i = 1; i <= N; i++) len += Math.hypot(sp[i].x - sp[i - 1].x, sp[i].y - sp[i - 1].y);
     // 伸びると細く、縮むと太くなる。先端(つまむところ)は太さを保つ。
-    const f = Math.max(0.4, Math.min(1.25, Math.pow(len / tape.len0, -0.65)));
+    const f = Math.max(0.4, Math.min(1.25, thin(len / tape.len0)));
     const L1: Pt[] = [];
     const R1: Pt[] = [];
     for (let i = 0; i <= N; i++) {
@@ -562,10 +645,13 @@ export function mountDraw(root: HTMLElement): () => void {
 
     // 筆は指を少し遅れて追う。
     if (pointerDown || releasing) {
-      const f = 1 - Math.exp(-dt / 0.07);
+      const f = 1 - Math.exp(-dt / (gum ? 0.1 : 0.07)); // ゴムの版は、少しねばる
       pen.x += (finger.x - pen.x) * f;
       pen.y += (finger.y - pen.y) * f;
-      if (moved) penMove({ x: pen.x - offX, y: pen.y - offY });
+      if (moved) {
+        const lag = Math.hypot(finger.x - pen.x, finger.y - pen.y);
+        penMove({ x: pen.x - offX, y: pen.y - offY }, gum ? stretchAt(lag) : 1);
+      }
       if (releasing && Math.hypot(finger.x - pen.x, finger.y - pen.y) < 3) {
         releasing = false;
         penUp();
@@ -573,6 +659,7 @@ export function mountDraw(root: HTMLElement): () => void {
     }
     autoStep(dt, now);
     stepTape(dt, now);
+    if (gum) stepGum(dt);
 
     // 巻き取り。
     for (const s of segs) if (s.trimming) s.trim = Math.min(1, s.trim + dt / 0.45);
