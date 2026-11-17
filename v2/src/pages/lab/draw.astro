@@ -39,7 +39,8 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
     <!-- ひらいた作品の下に出る、題名と入口。 -->
     <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
-    <a class="draw-exit" data-keep href={`${base}/works/`}>Works</a>
+    <!-- 出口: 右下から差し込まれた帯の切れ端。押すと、この帯が太って Works になる。 -->
+    <a class="tape draw-exit" data-keep data-band href={`${base}/works/`}>Works</a>
   </div>
 
   <script>
@@ -77,15 +78,6 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     gap: 0.7rem;
     font-size: 1.1rem;
   }
-  .draw-exit {
-    display: inline-flex;
-    align-items: center;
-    min-height: 44px;
-    padding: 0 1.2rem;
-    border: 1px solid var(--fg);
-    font-size: 0.9rem;
-  }
-
   /* ---- 描く(.is-live) ---- */
   html.draw-on,
   html.draw-on body {
@@ -155,9 +147,10 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     left: 0;
     top: 0;
     z-index: 5;
-    padding: 0.55rem 0.8rem;
+    padding: 0.55rem 0.9rem;
     margin-top: -12px;
-    background: #000;
+    background: var(--fg);
+    color: #000;
     font-size: 0.95rem;
     letter-spacing: 0.02em;
     white-space: pre;
@@ -174,13 +167,22 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   .draw.is-live.is-open .draw-label {
     opacity: 0;
   }
-  /* 落ち着いたページへの出口。親指の届く右下に、いつも置いておく。 */
+  /* 出口は、右下の角から紙の流れと同じ向きに差し込まれた帯。画面の外へ続いている。 */
   .draw.is-live .draw-exit {
     position: absolute;
-    right: max(20px, var(--pad));
-    bottom: calc(0.9rem + env(safe-area-inset-bottom));
+    right: 0;
+    bottom: calc(1.6rem + env(safe-area-inset-bottom));
     z-index: 6;
-    background: #000;
+    width: 240px;
+    padding-left: 1.3rem;
+    transform-origin: 100% 50%;
+    /* 回してから、帯の向きに沿って外へ押し出す(端は画面の外)。 */
+    transform: rotate(28deg) translateX(72px);
     cursor: pointer;
+  }
+  @media (orientation: portrait) {
+    .draw.is-live .draw-exit {
+      transform: rotate(62deg) translateX(72px);
+    }
   }
 </style>
