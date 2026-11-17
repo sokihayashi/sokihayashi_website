@@ -22,6 +22,13 @@ let origin: Origin | null = null;
 let wipe: HTMLElement | null = null;
 let geo = { cx: 0, cy: 0, dx: 1, dy: 0, nx: 0, ny: 1, reach: 0 };
 let safety = 0;
+// 引っぱって描いた帯から始めるとき、その軌跡(画面上の座標)と太さ。
+let pulled: { pts: { x: number; y: number }[]; width: number; at: number } | null = null;
+
+/** 次の移動を、いま描いた帯が太って覆う動きで始める(ヒーローの「引っぱって行く」用)。 */
+export function coverFromStroke(pts: { x: number; y: number }[], width: number) {
+  pulled = { pts, width, at: performance.now() };
+}
 
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -89,6 +96,35 @@ function cover(): Promise<void> {
   );
 }
 
+/** 描いた帯そのものが太って、画面を覆う。 */
+function coverStroke(st: { pts: { x: number; y: number }[]; width: number }): Promise<void> {
+  remove();
+  const { w, h, dx, dy, nx, ny, reach } = axis();
+  geo = { cx: w / 2, cy: h / 2, dx, dy, nx, ny, reach };
+  const el = document.createElement('div');
+  el.className = 'band-wipe';
+  el.setAttribute('aria-hidden', 'true');
+  const d = st.pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join('');
+  el.innerHTML =
+    `<svg class="band-stroke" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${d}" fill="none" stroke-linejoin="round" stroke-linecap="round"/></svg>` +
+    '<i class="band-full" style="display:none"></i><i class="band-half"></i><i class="band-half"></i>';
+  document.documentElement.appendChild(el);
+  document.documentElement.classList.add('band-wiping');
+  wipe = el;
+  safety = window.setTimeout(remove, 4000);
+  const path = el.querySelector<SVGPathElement>('path')!;
+  const anim = path.animate(
+    [{ strokeWidth: `${st.width}px` }, { strokeWidth: `${(reach * 2.4).toFixed(0)}px` }],
+    { duration: COVER + 60, easing: 'cubic-bezier(0.6, 0, 0.9, 0.45)', fill: 'forwards' }
+  );
+  const done = () => {
+    // 覆い終えたら、ただの白い面に置き換える(割れる動きにつなぐ)。
+    const full = el.querySelector<HTMLElement>('.band-full');
+    if (full) full.style.display = 'block';
+  };
+  return anim.finished.then(done, done);
+}
+
 /** 同じ線からふたつに割れて、次のページがあらわれる。 */
 function open() {
   const el = wipe;
@@ -111,6 +147,7 @@ function open() {
     hEl.style.display = 'block';
   });
   full.style.display = 'none';
+  el.querySelector<SVGElement>('.band-stroke')?.remove();
   let left = halves.length;
   halves.forEach((hEl, i) => {
     const s = i === 0 ? 1 : -1;
@@ -157,7 +194,9 @@ if (typeof window !== 'undefined' && !(window as any).__band) {
     const e = ev as Event & { loader: () => Promise<void> };
     const load = e.loader;
     e.loader = async () => {
-      await Promise.all([load(), cover()]);
+      const st = pulled && performance.now() - pulled.at < 1500 ? pulled : null;
+      pulled = null;
+      await Promise.all([load(), st ? coverStroke(st) : cover()]);
     };
   });
 

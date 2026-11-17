@@ -14,6 +14,7 @@
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
 import { navigate } from 'astro:transitions/client';
+import { coverFromStroke } from './band';
 
 type Pt = { x: number; y: number };
 
@@ -22,6 +23,7 @@ interface Seg {
   nrm: Pt[]; // 各点での、帯の幅の向き
   len: number;
   work: number;
+  nav: string; // 行き先。空でなければ、作品ではなく「行き先の帯」(白い帯)
   pat: CanvasPattern | null;
   big: boolean; // 大きい画像で塗っているか
   k: number; // 写真の倍率と位置(帯のとき)
@@ -48,6 +50,7 @@ interface Bloom {
 }
 
 const ANGLE = 28; // 画面の長辺からの角度(度)
+const PULL = 120; // 行き先の帯を、これだけ引き出すと移動する(px)
 
 export function mountDraw(root: HTMLElement): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
@@ -88,6 +91,9 @@ export function mountDraw(root: HTMLElement): () => void {
   let moved = false;
   let releasing = false;
   let downAt: Pt = { x: 0, y: 0 };
+  let pull = ''; // 帯の切れ端から引っぱっているときの行き先
+  let navWord = '';
+  let suppressClick = 0;
   const finger: Pt = { x: 0, y: 0 };
   const pen: Pt = { x: 0, y: 0 };
 
@@ -117,12 +123,13 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   // ---- ペン ----
-  function newSeg(p: Pt, n: Pt): Seg {
+  function newSeg(p: Pt, n: Pt, nav = ''): Seg {
     const s: Seg = {
       pts: [p],
       nrm: [n],
       len: 0,
       work: nextWork,
+      nav,
       pat: null,
       big: false,
       k: 1,
@@ -136,7 +143,7 @@ export function mountDraw(root: HTMLElement): () => void {
       x1: p.x,
       y1: p.y,
     };
-    nextWork = (nextWork + 1) % works.length;
+    if (!nav) nextWork = (nextWork + 1) % works.length;
     segs.push(s);
     return s;
   }
@@ -158,8 +165,8 @@ export function mountDraw(root: HTMLElement): () => void {
     s.pat?.setTransform(new DOMMatrix([s.k, 0, 0, s.k, s.tx, s.ty]));
   }
 
-  function penDown(p: Pt) {
-    cur = newSeg(p, { x: 0, y: 0 });
+  function penDown(p: Pt, nav = '') {
+    cur = newSeg(p, { x: 0, y: 0 }, nav);
   }
   function penMove(p: Pt) {
     if (!cur) return;
@@ -187,6 +194,7 @@ export function mountDraw(root: HTMLElement): () => void {
     cur.y0 = Math.min(cur.y0, p.y);
     cur.x1 = Math.max(cur.x1, p.x);
     cur.y1 = Math.max(cur.y1, p.y);
+    if (cur.nav) return; // 行き先の帯は、区切らずに1本で続ける
     if (!cur.pat && cur.len >= 20) lock(cur);
     if (cur.len >= 20) setLabel(works[cur.work].title);
     if (cur.len >= L) {
@@ -197,11 +205,21 @@ export function mountDraw(root: HTMLElement): () => void {
   }
   function dropSeg(s: Seg) {
     segs = segs.filter((x) => x !== s);
-    nextWork = (nextWork - 1 + works.length) % works.length;
+    if (!s.nav) nextWork = (nextWork - 1 + works.length) % works.length;
   }
   function penUp() {
     if (!cur) return;
     cur.open = false;
+    if (cur.nav) {
+      // 行き先の帯: 十分に引き出していたら、その帯が太って次のページになる。足りなければ巻き戻る。
+      const s = cur;
+      cur = null;
+      if (s.len >= PULL) {
+        coverFromStroke(s.pts, W);
+        navigate(s.nav);
+      } else s.trimming = true;
+      return;
+    }
     if (cur.pts.length < 2) dropSeg(cur); // 点だけで終わったものは残さない
     cur = null;
     // 増えすぎたら、古いものから巻き取る。
@@ -227,7 +245,7 @@ export function mountDraw(root: HTMLElement): () => void {
     const py = y - offY;
     for (let i = segs.length - 1; i >= 0; i--) {
       const s = segs[i];
-      if (s.trimming) continue;
+      if (s.trimming || s.nav) continue;
       if (px < s.x0 - W / 2 || px > s.x1 + W / 2 || py < s.y0 - W / 2 || py > s.y1 + W / 2) continue;
       for (let j = 1; j < s.pts.length; j++) {
         const a = s.pts[j - 1];
@@ -339,15 +357,59 @@ export function mountDraw(root: HTMLElement): () => void {
 
   function paintSeg(s: Seg) {
     if (s.pts.length < 2) return;
-    if (!s.pat) lock(s);
+    if (s.nav) {
+      // 画面に固定された帯: 紙のずれを打ち消して描く。
+      ctx.save();
+      ctx.translate(-offX, -offY);
+      paintShape(s);
+      ctx.restore();
+      return;
+    }
+    paintShape(s);
+  }
+  function paintShape(s: Seg) {
+    if (!s.nav && !s.pat) lock(s);
     const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
     outline(s, from);
-    ctx.fillStyle = s.pat || '#161614';
+    ctx.fillStyle = s.nav ? '#f4f1ea' : s.pat || '#161614';
     ctx.fill('nonzero');
+    if (s.nav) tapeText(s, from);
     // 細い黒の縁。重なりと境目を分ける。
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#000';
     ctx.stroke();
+  }
+
+  // 行き先の帯に、行き先の名前を帯の向きに沿って並べる。
+  function tapeText(s: Seg, from: number) {
+    const word = navWord;
+    if (!word) return;
+    ctx.save();
+    ctx.fillStyle = '#000';
+    ctx.font = `500 ${Math.round(W * 0.17)}px "Helvetica Neue", Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const gap = W * 1.5;
+    let next = gap * 0.45;
+    let run = 0;
+    for (let i = Math.max(1, from + 1); i < s.pts.length; i++) {
+      const a = s.pts[i - 1];
+      const b = s.pts[i];
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      while (run + d >= next) {
+        const t = (next - run) / d;
+        let ang = Math.atan2(b.y - a.y, b.x - a.x);
+        if (Math.cos(ang) < 0) ang += Math.PI; // 逆さまにしない
+        ctx.save();
+        ctx.translate(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        ctx.rotate(ang);
+        ctx.fillText(word, 0, 0);
+        ctx.restore();
+        next += gap;
+      }
+      run += d;
+    }
+    ctx.restore();
   }
 
   function paintBloom(b: Bloom) {
@@ -405,7 +467,7 @@ export function mountDraw(root: HTMLElement): () => void {
       const f = 1 - Math.exp(-dt / 0.07);
       pen.x += (finger.x - pen.x) * f;
       pen.y += (finger.y - pen.y) * f;
-      if (moved) penMove({ x: pen.x - offX, y: pen.y - offY });
+      if (moved) penMove(pull ? { x: pen.x, y: pen.y } : { x: pen.x - offX, y: pen.y - offY });
       if (releasing && Math.hypot(finger.x - pen.x, finger.y - pen.y) < 3) {
         releasing = false;
         penUp();
@@ -418,6 +480,7 @@ export function mountDraw(root: HTMLElement): () => void {
     // 画面の外へ出た帯と、巻き取り終えた帯は捨てる。
     segs = segs.filter((s) => {
       if (s.open || s === bloom?.seg) return true;
+      if (s.nav) return s.trim < 1;
       if (s.trim >= 1) return false;
       return !(s.x1 + offX < -W || s.y1 + offY < -W || s.x0 + offX > w + W || s.y0 + offY > h + W);
     });
@@ -451,7 +514,11 @@ export function mountDraw(root: HTMLElement): () => void {
   // ---- 入力 ----
   function onDown(e: PointerEvent) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('[data-keep]')) return;
+    // 帯の切れ端(出口)から引っぱると、行き先の帯が引き出される。押すだけでも移動できる。
+    const tape = (e.target as HTMLElement).closest<HTMLAnchorElement>('[data-band]');
+    pull = tape ? tape.href : '';
+    navWord = tape ? tape.textContent?.trim() || '' : navWord;
+    if (!tape && (e.target as HTMLElement).closest('[data-keep]')) return;
     if (auto.on) {
       penUp();
       auto.on = false;
@@ -487,7 +554,8 @@ export function mountDraw(root: HTMLElement): () => void {
       // 描きはじめる。ひらいていた作品は帯に戻る。
       moved = true;
       closeBloom();
-      penDown({ x: pen.x - offX, y: pen.y - offY });
+      // 行き先の帯は紙に乗せず、画面に固定する(出口の切れ端につながったまま)。
+      penDown(pull ? { x: pen.x, y: pen.y } : { x: pen.x - offX, y: pen.y - offY }, pull);
     }
   }
   function onUp(e: PointerEvent) {
@@ -496,8 +564,10 @@ export function mountDraw(root: HTMLElement): () => void {
     lastUser = performance.now();
     if (moved) {
       releasing = true; // 筆が指の離れた場所に追いつくまで描く
+      if (pull) suppressClick = performance.now(); // 引っぱったあとの誤クリックを止める
       return;
     }
+    if (pull) return; // 帯の切れ端を押しただけ: ふつうのリンクとして移動する
     // 描かずに押しただけ。
     if (bloom && bloom.dir > 0) {
       if (inBloom(e.clientX, e.clientY)) navigate(works[bloom.seg.work].href);
@@ -506,6 +576,12 @@ export function mountDraw(root: HTMLElement): () => void {
     }
     const s = hit(e.clientX, e.clientY);
     if (s && !s.open) openBloom(s);
+  }
+  function onClickCapture(e: MouseEvent) {
+    if (performance.now() - suppressClick < 400) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
   function onWheel(e: WheelEvent) {
     if (e.ctrlKey) return;
@@ -522,6 +598,7 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   measure();
+  root.addEventListener('click', onClickCapture, true);
   root.addEventListener('pointerdown', onDown);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -533,6 +610,7 @@ export function mountDraw(root: HTMLElement): () => void {
 
   return () => {
     cancelAnimationFrame(raf);
+    root.removeEventListener('click', onClickCapture, true);
     root.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);

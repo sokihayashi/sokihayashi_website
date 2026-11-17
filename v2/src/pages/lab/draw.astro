@@ -39,8 +39,8 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
     <!-- ひらいた作品の下に出る、題名と入口。 -->
     <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
-    <!-- 出口: 右下から差し込まれた帯の切れ端。押すと、この帯が太って Works になる。 -->
-    <a class="tape draw-exit" data-keep data-band href={`${base}/works/`}>Works</a>
+    <!-- 出口: 右下から差し込まれた帯の切れ端。引っぱると白い帯が引き出され、離すとその帯が太って Works になる。押すだけでも行ける。 -->
+    <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
   </div>
 
   <script>
@@ -175,6 +175,8 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     z-index: 6;
     width: 240px;
     padding-left: 1.3rem;
+    -webkit-user-drag: none;
+    touch-action: none;
     transform-origin: 100% 50%;
     /* 回してから、帯の向きに沿って外へ押し出す(端は画面の外)。 */
     transform: rotate(28deg) translateX(72px);

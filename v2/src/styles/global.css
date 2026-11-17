@@ -322,6 +322,8 @@ html.lenis body {
 /* ===== ページの移り変わり: 帯がひらく =====
    動きは src/scripts/band.ts。ここは面の見た目だけ。 */
 .band-wipe {
+  /* ページが替わる一瞬も、いちばん上に描かれるようにする(下のページがちらつかない)。 */
+  view-transition-name: band-wipe;
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -336,6 +338,14 @@ html.lenis body {
 }
 .band-wipe .band-half {
   display: none;
+}
+.band-wipe .band-stroke {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.band-wipe .band-stroke path {
+  stroke: var(--fg);
 }
 /* 帯で覆っているあいだは、下で起きるフェードを止める(待ち時間を増やさない)。 */
 html.band-wiping::view-transition-group(*),
