@@ -5,8 +5,9 @@ import { wallSrc } from '../data/wall';
 
 interface Props {
   gum?: boolean; // 描く帯もゴムにする版
+  nav?: 'trace' | 'edge' | 'mix'; // 行き先の案(なぞる / 引き切る / 混ざる)。指定しなければ、右下のゴムの帯
 }
-const { gum = false } = Astro.props;
+const { gum = false, nav } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -18,7 +19,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     なぞると、軌跡が帯になり、帯の中に作品が順に現れる。紙は28°で流れ続ける。
     JS が動かない環境や「動きを減らす」設定では、作品名の一覧として読める。
   -->
-  <div class="draw" data-draw-root data-gum={gum ? '' : undefined}>
+  <div class:list={['draw', nav && 'has-nav', nav && `nav-${nav}`]} data-draw-root data-gum={gum ? '' : undefined} data-nav={nav}>
     <canvas class="draw-canvas" data-canvas aria-hidden="true"></canvas>
 
     <ul class="draw-list">
@@ -41,8 +42,17 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
     <!-- ひらいた作品の下に出る、題名と入口。 -->
     <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
-    <!-- 出口: 右下の角から差し込まれた、ゴムのような白い帯。つまんで引くと根の形ごと伸び、離すと太って Works になる。押すだけでも行ける。 -->
-    <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
+{
+      nav ? (
+        <nav class="draw-nav" data-nav-box aria-label="ページ">
+          <a data-nav draggable="false" href={`${base}/works/`}>Works</a>
+          <a data-nav draggable="false" href={`${base}/about/`}>About</a>
+          <a data-nav draggable="false" href={`${base}/contact/`}>Contact</a>
+        </nav>
+      ) : (
+        <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
+      )
+    }
   </div>
 
   <script>
@@ -186,6 +196,63 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   }
   .draw.is-live .draw-exit:active {
     cursor: grabbing;
+  }
+  /* ---- 行き先の案(なぞる / 引き切る / 混ざる) ---- */
+  .draw-nav {
+    display: flex;
+    gap: 1.5rem;
+  }
+  /* 行き先は文字だけ。帯の上では白黒が反転する。 */
+  .draw.is-live .draw-nav {
+    position: absolute;
+    left: max(8px, calc(var(--pad) - 12px));
+    right: max(8px, calc(var(--pad) - 12px));
+    bottom: calc(0.7rem + env(safe-area-inset-bottom));
+    z-index: 6;
+    justify-content: space-between;
+    gap: 0;
+    mix-blend-mode: difference;
+  }
+  .draw.is-live .draw-nav a {
+    padding: 0.8rem 12px;
+    color: #fff;
+    font-size: 1rem;
+    letter-spacing: 0.03em;
+    text-decoration: none;
+    -webkit-user-drag: none;
+    touch-action: none;
+    transition: opacity 0.2s;
+  }
+  .draw.is-live .draw-nav.is-aiming a:not(.is-aim) {
+    opacity: 0.3;
+  }
+  @media (min-width: 800px) {
+    .draw.is-live .draw-nav {
+      left: auto;
+      gap: 3.5rem;
+    }
+  }
+  /* 混ざる: 行き先は帯の中に出るので、文字の一覧は読み上げとキーボードのためだけに残す。 */
+  .draw.is-live.nav-mix .draw-nav {
+    width: 1px;
+    height: 1px;
+    left: 0;
+    right: auto;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  /* 作品の題名は、行き先の文字の上の行に置く。 */
+  .draw.is-live.nav-trace .draw-label,
+  .draw.is-live.nav-edge .draw-label {
+    right: max(20px, var(--pad));
+    bottom: calc(4rem + env(safe-area-inset-bottom));
+  }
+  .draw.is-live.nav-mix .draw-label {
+    right: max(20px, var(--pad));
+  }
+  /* 試すあいだ、上の文字メニューは隠す(行き先が2か所に出ないように。消してはいない)。 */
+  html.draw-navs .site-bar .mainnav {
+    visibility: hidden;
   }
   @media (orientation: portrait) {
     .draw.is-live .draw-exit {

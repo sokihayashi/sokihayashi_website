@@ -14,6 +14,11 @@
 //   描く帯も、出口の帯と同じ「ゴム」でできている。速く引き出すと首が細り、少し遅れて太って落ち着く。
 //   ゆっくり描けば、これまでどおりの硬い帯になる。先端(指がつまんでいるところ)は太さを保つ。
 //
+// 行き先の案(data-nav)。最初の画面に、帯や棒は置かない。
+//   trace … なぞる。行き先の文字の上から描きはじめた線は白い線になり、離すとその線が太ってページになる
+//   edge  … 引き切る。描いている線を行き先の文字の上で離すと、その線が太ってページになる
+//   mix   … 混ざる。描いた帯の中に、作品に混じって白い区切り(行き先)が出る。押すとページになる
+//
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
@@ -30,6 +35,7 @@ interface Seg {
   wv: number[]; // 太さの変わる速さ
   calm: boolean; // 太さが落ち着いた
   prev: Seg | null; // ひと続きに描いた、ひとつ前の帯
+  nav: number; // 行き先の番号。作品の帯なら -1
   len: number;
   work: number;
   pat: CanvasPattern | null;
@@ -75,6 +81,14 @@ export function mountDraw(root: HTMLElement): () => void {
   });
   const html = document.documentElement;
   const gum = root.hasAttribute('data-gum'); // 描く帯もゴムにする版
+  const mode = root.dataset.nav || ''; // 行き先の案: '' | 'trace' | 'edge' | 'mix'
+  const navBox = root.querySelector<HTMLElement>('[data-nav-box]');
+  const navs = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-nav]')).map((a) => ({
+    a,
+    word: a.textContent?.trim() || '',
+    href: a.href,
+  }));
+  const PAPER = '#f4f1ea'; // 行き先の帯の白
   const idleLabel = label?.textContent || '';
 
   let w = 0;
@@ -132,11 +146,19 @@ export function mountDraw(root: HTMLElement): () => void {
     gone: false,
   };
   let suppressClick = 0;
+  // ---- 行き先 ----
+  let strokeNav = -1; // いま描いている線の行き先(trace)。ふつうの線なら -1
+  let stroke: Seg[] = []; // いま指で描いている線をつくる帯
+  let aim = -1; // 指がいま乗っている行き先(edge)
+  let sinceNav = 0; // 最後の行き先の区切りから、何個の作品を描いたか(mix)
+  let nextNav = 0;
+  let leaving = false;
   const finger: Pt = { x: 0, y: 0 };
   const pen: Pt = { x: 0, y: 0 };
 
   root.classList.add('is-live');
   html.classList.add('draw-on');
+  html.classList.toggle('draw-navs', !!mode);
 
   function measure() {
     w = root.clientWidth;
@@ -186,6 +208,7 @@ export function mountDraw(root: HTMLElement): () => void {
       wv: [v],
       calm: !gum,
       prev,
+      nav: -1,
       len: 0,
       work: nextWork,
       pat: null,
@@ -201,13 +224,63 @@ export function mountDraw(root: HTMLElement): () => void {
       x1: p.x,
       y1: p.y,
     };
-    nextWork = (nextWork + 1) % works.length;
+    if (strokeNav >= 0) {
+      // 行き先の文字から描きはじめた線は、ずっと白い。
+      s.nav = strokeNav;
+    } else if (mode === 'mix' && navs.length && sinceNav >= 3) {
+      // 作品3つごとに、行き先の区切りをはさむ。
+      s.nav = nextNav;
+      nextNav = (nextNav + 1) % navs.length;
+      sinceNav = 0;
+    } else {
+      nextWork = (nextWork + 1) % works.length;
+      sinceNav++;
+    }
     segs.push(s);
+    if (pointerDown || releasing) stroke.push(s);
     return s;
+  }
+  const nameOf = (s: Seg) => (s.nav >= 0 ? navs[s.nav].word : works[s.work].title);
+  // 帯1つぶんの長さ。行き先の区切りは短い。
+  // なぞった行き先の線は、切れ目のない1本にする。
+  const spanOf = (s: Seg) => (s.nav < 0 ? L : mode === 'mix' ? Math.round(L * 0.72) : Infinity);
+
+  // 線(帯の並び)を、画面の座標の点の列にする。ページ移動の「太る線」に渡す。
+  function strokePts(list: Seg[]): Pt[] {
+    const all: Pt[] = [];
+    for (const s of list) for (const p of s.pts) all.push({ x: p.x + offX, y: p.y + offY });
+    const step = Math.max(1, Math.ceil(all.length / 40));
+    const out = all.filter((_, i) => i % step === 0);
+    if (all.length && out[out.length - 1] !== all[all.length - 1]) out.push(all[all.length - 1]);
+    return out;
+  }
+  // 線が太って、行き先のページになる。
+  function leave(list: Seg[], href: string) {
+    if (leaving) return;
+    leaving = true;
+    const pts = strokePts(list);
+    // 線が短すぎるときは、ふつうのページ移動(押した場所から帯が伸びる)に任せる。
+    if (pts.length >= 2) coverFromStroke(pts, W);
+    navigate(href);
+  }
+  // 指がいま乗っている行き先(edge)。文字のまわりに少し余白を取る。
+  function navAt(x: number, y: number) {
+    for (let i = 0; i < navs.length; i++) {
+      const r = navs[i].a.getBoundingClientRect();
+      if (x >= r.left - 22 && x <= r.right + 22 && y >= r.top - 22 && y <= r.bottom + 22) return i;
+    }
+    return -1;
+  }
+  function setAim(i: number) {
+    if (i === aim) return;
+    aim = i;
+    navBox?.classList.toggle('is-aiming', i >= 0);
+    navs.forEach((n, j) => n.a.classList.toggle('is-aim', j === i));
   }
 
   // 帯の中の写真の置き場所を決める。歪めず、正立のまま、帯のまわりを覆う大きさで置く。
   function lock(s: Seg) {
+    if (s.nav >= 0) return;
     const img = works[s.work].img;
     if (!img.complete || !img.naturalWidth) return;
     const a = s.pts[0];
@@ -247,6 +320,16 @@ export function mountDraw(root: HTMLElement): () => void {
     } else {
       // 描きはじめの点には、最初の向きをそのまま入れる。
       cur.nrm[cur.nrm.length - 1] = { x: nx, y: ny };
+      if (strokeNav >= 0) {
+        // なぞる: 線は文字の手前から始める(文字がまるごと線の中に入る)。
+        const back = W * 0.5;
+        q.x -= ((p.x - q.x) / d) * back;
+        q.y -= ((p.y - q.y) / d) * back;
+        cur.x0 = Math.min(cur.x0, q.x);
+        cur.y0 = Math.min(cur.y0, q.y);
+        cur.x1 = Math.max(cur.x1, q.x);
+        cur.y1 = Math.max(cur.y1, q.y);
+      }
     }
     cur.pts.push(p);
     cur.nrm.push({ x: nx, y: ny });
@@ -260,8 +343,8 @@ export function mountDraw(root: HTMLElement): () => void {
     cur.x1 = Math.max(cur.x1, p.x);
     cur.y1 = Math.max(cur.y1, p.y);
     if (!cur.pat && cur.len >= 20) lock(cur);
-    if (cur.len >= 20) setLabel(works[cur.work].title);
-    if (cur.len >= L) {
+    if (cur.len >= 20 && strokeNav < 0) setLabel(nameOf(cur));
+    if (cur.len >= spanOf(cur)) {
       // 作品の境目。次の帯は、同じ点・同じ向きから始める(切れ目がまっすぐになる)。
       cur.open = false;
       cur = newSeg(p, { x: nx, y: ny }, f, 0, cur);
@@ -324,7 +407,15 @@ export function mountDraw(root: HTMLElement): () => void {
   }
   function dropSeg(s: Seg) {
     segs = segs.filter((x) => x !== s);
-    nextWork = (nextWork - 1 + works.length) % works.length;
+    if (s.nav >= 0) {
+      if (strokeNav < 0) {
+        nextNav = (nextNav - 1 + navs.length) % navs.length;
+        sinceNav = 3;
+      }
+    } else {
+      nextWork = (nextWork - 1 + works.length) % works.length;
+      sinceNav = Math.max(0, sinceNav - 1);
+    }
   }
   function penUp() {
     if (!cur) return;
@@ -473,12 +564,29 @@ export function mountDraw(root: HTMLElement): () => void {
     if (!s.pat) lock(s);
     const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
     outline(s, from);
-    ctx.fillStyle = s.pat || '#161614';
+    ctx.fillStyle = s.nav >= 0 ? PAPER : s.pat || '#161614';
     ctx.fill('nonzero');
     // 細い黒の縁。重なりと境目を分ける。
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#000';
     ctx.stroke();
+    // 行き先の区切り(mix)には、帯の向きに沿って名前を置く。
+    if (s.nav >= 0 && mode === 'mix' && s.trim === 0 && s.len > 56) {
+      const i = Math.floor(s.pts.length / 2);
+      const a = s.pts[Math.max(0, i - 2)];
+      const b = s.pts[Math.min(s.pts.length - 1, i + 2)];
+      let ang = Math.atan2(b.y - a.y, b.x - a.x);
+      if (Math.cos(ang) < 0) ang += Math.PI;
+      ctx.save();
+      ctx.translate(s.pts[i].x, s.pts[i].y);
+      ctx.rotate(ang);
+      ctx.fillStyle = '#000';
+      ctx.font = '500 16px "Helvetica Neue", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(navs[s.nav].word, 0, 1);
+      ctx.restore();
+    }
   }
 
   function paintBloom(b: Bloom) {
@@ -639,7 +747,8 @@ export function mountDraw(root: HTMLElement): () => void {
 
     // 紙が流れる。作品をひらいているあいだは、ゆっくりにする。
     boost *= Math.exp(-dt / 0.6);
-    const sp = (base + boost) * (bloom ? 0.3 : 1);
+    // 行き先の文字をなぞっているあいだは、紙を止める(線が文字からずれないように)。
+    const sp = strokeNav >= 0 ? 0 : (base + boost) * (bloom ? 0.3 : 1);
     offX += dx * sp * dt;
     offY += dy * sp * dt;
 
@@ -716,6 +825,7 @@ export function mountDraw(root: HTMLElement): () => void {
       return;
     }
     if ((e.target as HTMLElement).closest('[data-keep]')) return;
+    if (leaving) return;
     if (auto.on) {
       penUp();
       auto.on = false;
@@ -724,6 +834,10 @@ export function mountDraw(root: HTMLElement): () => void {
       releasing = false;
       penUp();
     }
+    // なぞる: 行き先の文字の上から描きはじめた線は、その行き先の線になる。
+    const na = (e.target as HTMLElement).closest('[data-nav]');
+    strokeNav = mode === 'trace' && na ? navs.findIndex((n) => n.a === na) : -1;
+    stroke = [];
     pointerDown = true;
     moved = false;
     downAt = { x: e.clientX, y: e.clientY };
@@ -746,7 +860,7 @@ export function mountDraw(root: HTMLElement): () => void {
         root.classList.toggle('is-over', over);
         if (!bloom) {
           const s = hit(e.clientX, e.clientY);
-          if (s) setLabel(works[s.work].title);
+          if (s) setLabel(nameOf(s));
         }
       }
       return;
@@ -754,6 +868,7 @@ export function mountDraw(root: HTMLElement): () => void {
     finger.x = e.clientX;
     finger.y = e.clientY;
     lastUser = performance.now();
+    if (mode === 'edge' && moved) setAim(navAt(e.clientX, e.clientY));
     if (!moved && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 8) {
       // 描きはじめる。ひらいていた作品は帯に戻る。
       moved = true;
@@ -773,9 +888,29 @@ export function mountDraw(root: HTMLElement): () => void {
     pointerDown = false;
     lastUser = performance.now();
     if (moved) {
+      suppressClick = performance.now(); // 描いたあとの誤クリックは止める
+      const len = stroke.reduce((a, s) => a + s.len, 0);
+      // なぞる: 行き先の線を離すと、その線が太ってページになる。
+      if (strokeNav >= 0) {
+        const href = navs[strokeNav].href;
+        strokeNav = -1;
+        penUp();
+        leave(stroke, href);
+        return;
+      }
+      // 引き切る: 行き先の文字の上で離すと、その線が太ってページになる。
+      if (mode === 'edge' && aim >= 0 && len > 80) {
+        const href = navs[aim].href;
+        penUp();
+        leave(stroke, href);
+        return;
+      }
+      setAim(-1);
+      strokeNav = -1;
       releasing = true; // 筆が指の離れた場所に追いつくまで描く
       return;
     }
+    strokeNav = -1;
     // 描かずに押しただけ。
     if (bloom && bloom.dir > 0) {
       if (inBloom(e.clientX, e.clientY)) navigate(works[bloom.seg.work].href);
@@ -783,7 +918,10 @@ export function mountDraw(root: HTMLElement): () => void {
       return;
     }
     const s = hit(e.clientX, e.clientY);
-    if (s && !s.open) openBloom(s);
+    if (!s || s.open) return;
+    // 混ざる: 行き先の区切りを押すと、その帯が太ってページになる。
+    if (s.nav >= 0) leave([s], navs[s.nav].href);
+    else openBloom(s);
   }
   function onClickCapture(e: MouseEvent) {
     if (performance.now() - suppressClick < 400) {
@@ -829,6 +967,7 @@ export function mountDraw(root: HTMLElement): () => void {
     if (label) label.textContent = idleLabel;
     openLink?.classList.remove('is-on');
     root.classList.remove('is-live', 'is-over', 'is-open');
-    html.classList.remove('draw-on');
+    setAim(-1);
+    html.classList.remove('draw-on', 'draw-navs');
   };
 }
