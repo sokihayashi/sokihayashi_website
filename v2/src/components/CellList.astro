@@ -14,9 +14,10 @@ interface Props {
   curve?: boolean; // 枠の線を、ゆるい曲線にする
   ctl?: 'chain' | 'select' | 'menu' | 'fold';
   keys?: string[]; // menu 版で出す組(d: 領域 / s: 立場 / sort: 並び)。既定は3つとも
+  live?: 'sheet' | 'bands'; // 升目の版の動き。止まっているあいだは直線で、送るとしなる(sheet: 1枚の網 / bands: 列ごとの帯)
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
-const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0 } = Astro.props;
+const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -35,7 +36,7 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
 const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.length === 1 ? { ...g, label: '分類' } : g));
 ---
 
-<section class="cl-page" data-grid={cols || undefined}>
+<section class="cl-page" data-grid={cols || undefined} data-live={live}>
   <h1 class="cl-h">Works <span class="cl-count" data-cl-count>{works.length}</span></h1>
 
   {
@@ -127,7 +128,7 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
     )
   }
 
-  <div class="cl" data-cl data-curve={curve ? '' : undefined}>
+  <div class="cl" data-cl data-curve={curve ? '' : undefined} data-live={live}>
     <svg class="cl-lines" data-cl-lines aria-hidden="true"></svg>
     <ol class="cl-list" data-cl-list>
       {
@@ -516,6 +517,35 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
     .cl-page[data-grid='1'] {
       --cols: 2;
     }
+  }
+  /* 広い画面では、面を大きくせず、列を増やす。 */
+  @media (min-width: 1100px) {
+    .cl-page[data-grid] {
+      --lw: 100%;
+    }
+    .cl-page[data-grid='2'] {
+      --cols: 4;
+    }
+  }
+  @media (min-width: 1600px) {
+    .cl-page[data-grid='2'] {
+      --cols: 5;
+    }
+  }
+  /* 帯の版: 列のあいだに、すき間を空ける(列が1本ずつの帯に見えるように)。 */
+  .cl-page[data-live='bands'] {
+    --g: 12px;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-live='bands'] {
+      --g: 20px;
+    }
+  }
+  .cl-page[data-live='bands'] .cl-list {
+    column-gap: var(--g);
+  }
+  .cl-page[data-live] .cl-text {
+    will-change: transform;
   }
   .cl-page[data-grid] .cl-list {
     display: grid;
