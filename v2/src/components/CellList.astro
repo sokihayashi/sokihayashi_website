@@ -14,7 +14,10 @@ interface Props {
   curve?: boolean; // 枠の線を、ゆるい曲線にする
   ctl?: 'chain' | 'select' | 'menu' | 'fold';
   keys?: string[]; // menu 版で出す組(d: 領域 / s: 立場 / sort: 並び)。既定は3つとも
-  live?: 'sheet' | 'bands'; // 升目の版の動き。止まっているあいだは直線で、送るとしなる(sheet: 1枚の網 / bands: 列ごとの帯)
+  // 升目の版の動き。止まっているあいだは直線。
+  //   sheet: 送ると、1枚の網として線が左右にしなる / bands: 列ごとの帯が左右にしなる
+  //   gather: 送ると、布をたぐるように、画面の上(戻すときは下)にひだが寄って溜まり、少し遅れて流れる(前後の凹凸)
+  live?: 'sheet' | 'bands' | 'gather';
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
 const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
@@ -33,6 +36,9 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
   { key: 'sort', label: '並び', opts: [['order', 'おすすめ順'], ['title', '名前順']] },
 ];
 // menu 版に出す組。1つだけのときは、見出しを「分類」にする。
+// gather 版: 写真を横の細い帯に分けておく(ひだの凹凸に合わせて、帯ごとに縮める)。
+const STRIPS = 12;
+const strips = live === 'gather' ? Array.from({ length: STRIPS }, (_, k) => k) : [];
 const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.length === 1 ? { ...g, label: '分類' } : g));
 ---
 
@@ -142,7 +148,13 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
             data-title={w.data.title}
           >
             <a class="cl-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
-              <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+              {strips.length === 0 && <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />}
+              {strips.map((k) => (
+                <span class="cl-s" data-s style={`--k:${k}`}>
+                  <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+                  <i />
+                </span>
+              ))}
             </a>
             <a class="cl-text" href={`${base}/works/${w.id}/`}>
               <span class="cl-title">{w.data.title}</span>
@@ -546,6 +558,39 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
   }
   .cl-page[data-live] .cl-text {
     will-change: transform;
+  }
+  /* たぐる版: 写真は、横の細い帯の重なり。帯ごとに縦へ縮めて、ひだの凹凸をつくる。 */
+  .cl-page[data-grid][data-live='gather'] .cl-face {
+    width: 100%;
+    height: var(--ph);
+    margin: 0;
+    overflow: visible;
+    clip-path: none !important;
+  }
+  .cl-s {
+    position: absolute;
+    left: 0;
+    top: calc(var(--k) * var(--ph) / 12);
+    width: 100%;
+    height: calc(var(--ph) / 12);
+    overflow: hidden;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  .cl-face .cl-s img {
+    inset: auto;
+    left: 0;
+    top: calc(var(--k) * var(--ph) / -12);
+    width: 100%;
+    height: var(--ph);
+  }
+  .cl-s i {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .cl-page[data-grid][data-live='gather'] .cl-text {
+    transform-origin: 0 0;
   }
   .cl-page[data-grid] .cl-list {
     display: grid;
