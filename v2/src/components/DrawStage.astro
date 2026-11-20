@@ -6,8 +6,9 @@ import { wallSrc } from '../data/wall';
 interface Props {
   gum?: boolean; // 描く帯もゴムにする版
   nav?: 'trace' | 'edge' | 'mix'; // 行き先の案(なぞる / 引き切る / 混ざる)。指定しなければ、右下のゴムの帯
+  paper?: boolean; // 紙の版(浮きと影)。右下のゴムの帯は置かない
 }
-const { gum = false, nav } = Astro.props;
+const { gum = false, nav, paper = false } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -19,7 +20,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     なぞると、軌跡が帯になり、帯の中に作品が順に現れる。紙は28°で流れ続ける。
     JS が動かない環境や「動きを減らす」設定では、作品名の一覧として読める。
   -->
-  <div class:list={['draw', nav && 'has-nav', nav && `nav-${nav}`]} data-draw-root data-gum={gum ? '' : undefined} data-nav={nav}>
+  <div class:list={['draw', nav && 'has-nav', nav && `nav-${nav}`]} data-draw-root data-gum={gum ? '' : undefined} data-paper={paper ? '' : undefined} data-nav={nav}>
     <canvas class="draw-canvas" data-canvas aria-hidden="true"></canvas>
 
     <ul class="draw-list">
@@ -49,7 +50,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
           <a data-nav draggable="false" href={`${base}/about/`}>About</a>
           <a data-nav draggable="false" href={`${base}/contact/`}>Contact</a>
         </nav>
-      ) : (
+      ) : paper ? null : (
         <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
       )
     }

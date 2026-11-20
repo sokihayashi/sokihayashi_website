@@ -20,6 +20,11 @@
 //   mix   … 混ざる。描いた帯の中に、作品に混じって白い区切り(行き先)が出る。押すとページになる。
 //           画面に無い行き先は、次に描かれる線に先に出る(待たせない)。開いた直後は、ペンが続けて2本描く
 //
+// 紙の版(data-paper): 帯に、少しだけ物の感じを足す。
+//   帯は、黒い台の上に置いた薄い紙。ほかの帯をまたぐところにだけ、影が落ちる(黒い地には影は見えない)。
+//   描いているあいだ、先端は指に持ち上げられて浮く(影が広がる)。離すと、すっと降りる。
+//   置かれた帯も、ごくわずかに浮き沈みする。写真そのものは暗くしない・歪めない。
+//
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
@@ -37,6 +42,7 @@ interface Seg {
   calm: boolean; // 太さが落ち着いた
   prev: Seg | null; // ひと続きに描いた、ひとつ前の帯
   nav: number; // 行き先の番号。作品の帯なら -1
+  sid: number; // ひと筆の番号(同じ筆で描いた帯は、同じ番号)
   len: number;
   work: number;
   pat: CanvasPattern | null;
@@ -82,6 +88,11 @@ export function mountDraw(root: HTMLElement): () => void {
   });
   const html = document.documentElement;
   const gum = root.hasAttribute('data-gum'); // 描く帯もゴムにする版
+  const paper = root.hasAttribute('data-paper'); // 紙の版(浮きと影)
+  let strokeId = 0;
+  let liftSid = -1; // いま(または直前に)持ち上げている筆
+  let lift = 0; // 先端の浮き(0〜1)
+  let liftV = 0;
   const mode = root.dataset.nav || ''; // 行き先の案: '' | 'trace' | 'edge' | 'mix'
   const navBox = root.querySelector<HTMLElement>('[data-nav-box]');
   const navs = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-nav]')).map((a) => ({
@@ -210,6 +221,7 @@ export function mountDraw(root: HTMLElement): () => void {
       calm: !gum,
       prev,
       nav: -1,
+      sid: prev ? prev.sid : ++strokeId,
       len: 0,
       work: nextWork,
       pat: null,
@@ -317,6 +329,7 @@ export function mountDraw(root: HTMLElement): () => void {
 
   function penDown(p: Pt) {
     cur = newSeg(p, { x: 0, y: 0 });
+    liftSid = cur.sid;
   }
   function penMove(p: Pt, f = 1) {
     if (!cur) return;
@@ -565,15 +578,60 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   // ---- 描画 ----
-  function outline(s: Seg, from: number) {
+  // 帯の輪郭。high を渡すと、各点をその高さぶん影の向き(流れの上手=右下)へずらす。
+  function outline(s: Seg, from: number, high?: (i: number) => number) {
     const n = s.pts.length;
     const hw: number[] = [];
-    for (let i = from; i < n; i++) hw.push((W / 2) * widthAt(s, i));
+    const ox: number[] = [];
+    const oy: number[] = [];
+    for (let i = from; i < n; i++) {
+      hw.push((W / 2) * widthAt(s, i));
+      const hgt = high ? high(i) : 0;
+      ox.push(-dx * hgt);
+      oy.push(-dy * hgt);
+    }
     ctx.beginPath();
-    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw[0], s.pts[from].y + s.nrm[from].y * hw[0]);
-    for (let i = from + 1; i < n; i++) ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw[i - from], s.pts[i].y + s.nrm[i].y * hw[i - from]);
-    for (let i = n - 1; i >= from; i--) ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw[i - from], s.pts[i].y - s.nrm[i].y * hw[i - from]);
+    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw[0] + ox[0], s.pts[from].y + s.nrm[from].y * hw[0] + oy[0]);
+    for (let i = from + 1; i < n; i++) {
+      const k = i - from;
+      ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw[k] + ox[k], s.pts[i].y + s.nrm[i].y * hw[k] + oy[k]);
+    }
+    for (let i = n - 1; i >= from; i--) {
+      const k = i - from;
+      ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw[k] + ox[k], s.pts[i].y - s.nrm[i].y * hw[k] + oy[k]);
+    }
     ctx.closePath();
+  }
+
+  // ---- 紙: 浮きと影 ----
+  // 持ち上げている筆の、各帯の終わりから筆の先端までの長さ。
+  const tail = new Map<Seg, number>();
+  function measureTail() {
+    tail.clear();
+    let acc = 0;
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const s = segs[i];
+      if (s.sid !== liftSid) continue;
+      tail.set(s, acc);
+      acc += s.len;
+    }
+  }
+  // 帯の点 i の、台からの高さ(px)。
+  function heightAt(s: Seg, i: number, now: number) {
+    // 置かれた帯も、ごくわずかに浮き沈みする。
+    const rest = W * 0.05 * (1 + 0.3 * Math.sin(now / 1100 + s.sid * 1.7));
+    if (s.sid !== liftSid || lift < 0.002) return rest;
+    // 先端は、指に持ち上げられている。
+    const d = (tail.get(s) || 0) + (s.len - s.cum[i]);
+    const e = Math.max(0, 1 - d / (W * 2.4));
+    return rest + lift * W * 0.22 * e * e * (3 - 2 * e);
+  }
+  function paintShadow(s: Seg, now: number) {
+    if (s.pts.length < 2) return;
+    const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
+    outline(s, from, (i) => heightAt(s, i, now));
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fill('nonzero');
   }
 
   function paintSeg(s: Seg) {
@@ -784,6 +842,11 @@ export function mountDraw(root: HTMLElement): () => void {
       }
     }
     autoStep(dt, now);
+    if (paper) {
+      // 先端の浮き。描いているあいだは上がり、離すと少し沈みすぎてから落ち着く。
+      liftV += (((cur ? 1 : 0) - lift) * 90 - liftV * 11) * dt;
+      lift += liftV * dt;
+    }
     if (mode === 'mix') root.dataset.navOn = navs.map((_, i) => (navShown(i) ? '1' : '0')).join('');
     stepTape(dt, now);
     if (gum) stepGum(dt);
@@ -809,7 +872,20 @@ export function mountDraw(root: HTMLElement): () => void {
     ctx.setTransform(dpr, 0, 0, dpr, offX * dpr, offY * dpr);
     ctx.lineJoin = 'round';
     // ひらいている帯も、まず帯として描く。その上に、ひらいていく面を重ねる。
-    for (const s of segs) paintSeg(s);
+    if (paper) {
+      // 筆ごとに、先に影を落としてから帯を描く(影は、先に描かれた帯の上にだけ見える)。
+      measureTail();
+      let i = 0;
+      while (i < segs.length) {
+        let j = i;
+        while (j < segs.length && segs[j].sid === segs[i].sid) j++;
+        for (let k = i; k < j; k++) paintShadow(segs[k], now);
+        for (let k = i; k < j; k++) paintSeg(segs[k]);
+        i = j;
+      }
+    } else {
+      for (const s of segs) paintSeg(s);
+    }
     if (bloom && bloom.t > 0.001) paintBloom(bloom);
     paintTape();
 

@@ -68,7 +68,9 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   }
   .strip {
     --sw: 46vw; /* 面の幅 */
-    --m: 28px; /* しなりの余地 */
+    --m: 28px; /* しなりの余地(横) */
+    --vm: 24px; /* 切れ目が傾くための余地(縦) */
+    --rh: calc(var(--sw) * 1.5); /* 面の長さ */
     list-style: none;
     margin: 0;
     padding: 0 var(--pad);
@@ -77,6 +79,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     .strip {
       --sw: min(30vw, 380px);
       --m: 44px;
+      --vm: 40px;
     }
   }
   /* 面と面は、1本の線(黒い2px)を共有して連なる。すき間や角丸は作らない。 */
@@ -84,19 +87,23 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     position: relative;
     display: grid;
     grid-template-columns: var(--sw) minmax(0, 1fr);
-    height: calc(var(--sw) * 1.5);
-    margin-top: 2px;
+    grid-template-rows: var(--rh);
+    height: var(--rh);
   }
   .strip-face {
     display: block;
     position: relative;
     width: calc(var(--sw) + var(--m) * 2);
-    height: 100%;
-    margin-left: calc(var(--m) * -1);
-    /* 写真は余地のぶんだけ広く置いてあり、見えるのは面の形(窓)の中だけ。 */
-    clip-path: inset(0 var(--m));
+    /* 高さは数字で決める(Safari では 100% が効かず、写真が下の面に被っていた)。 */
+    height: calc(var(--rh) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 0 calc(var(--m) * -1);
+    overflow: hidden;
+    /* 写真は余地のぶんだけ広く置いてあり、見えるのは面の形(窓)の中だけ。面と面のあいだは黒い線1本。 */
+    clip-path: inset(calc(var(--vm) + 1px) var(--m));
   }
   .strip-face img {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
@@ -109,7 +116,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     gap: 0.35rem;
     padding: 0.8rem 0 0 calc(var(--m) + 14px);
     border-top: 1px solid #3a3a37;
-    margin-top: -2px;
+    will-change: transform;
     color: var(--fg);
     text-decoration: none;
   }
