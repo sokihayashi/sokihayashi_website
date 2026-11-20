@@ -216,6 +216,7 @@ export function mountCells(root: HTMLElement): () => void {
     touched = [];
     cellCache = null;
     slack = 0;
+    if (glc) glc.style.display = 'none';
     G = { rows, n, cols, cw, g, m, vm, ph, rowH, R, by };
     if (!n) {
       svg.innerHTML = '';
@@ -380,139 +381,364 @@ export function mountCells(root: HTMLElement): () => void {
     raf = requestAnimationFrame(tick);
   }
   // たぐる版: 送ったぶんの一部が「たるみ」として溜まり、少し遅れて抜ける。
-  // たるみは、画面の上(戻すときは下)の帯状の場所で、ひだになって畳まれる。ひだの山と谷は、布(ページ)の決まった位置にある。
-  let LAMBDA = 104; // ひだの間隔(px)。写真を分けた帯が、ひだ1つに6本は入るようにする
+  // たるみは、画面の上半分(戻すときは下半分)で、くしゃっとした しわ になって畳まれる。
+  // しわの筋は横一直線ではなく、布(一覧)の上の決まった場所を、曲がりくねって走る。
+  // 写真は、動いているあいだだけ canvas(WebGL)に細かい網として描き、網の点を しわ の形に動かす。文字の面と枠の線は、同じ写しで動かす。
+  const LAMBDA = 118; // しわの間隔(px)
   let slack = 0;
   let still = 0;
   let touched: number[] = [];
-  type Cell = { strips: HTMLElement[]; shades: HTMLElement[]; text: HTMLElement | null };
+  type Cell = { img: HTMLImageElement | null; text: HTMLElement | null };
   let cellCache: Cell[] | null = null;
   const cellOf = (idx: number): Cell => {
     if (!cellCache) cellCache = [];
     return (cellCache[idx] ??= {
-      strips: Array.from(G!.rows[idx].querySelectorAll<HTMLElement>('[data-s]')),
-      shades: Array.from(G!.rows[idx].querySelectorAll<HTMLElement>('[data-s] > i')),
+      img: G!.rows[idx].querySelector<HTMLImageElement>('[data-face] img'),
       text: G!.rows[idx].querySelector<HTMLElement>('.cl-text'),
     });
   };
   function clearCell(idx: number) {
     if (!G || !G.rows[idx]) return;
     const c = cellOf(idx);
-    c.strips.forEach((e) => (e.style.transform = ''));
-    c.shades.forEach((e) => (e.style.background = ''));
+    if (c.img) c.img.style.visibility = '';
     if (c.text) {
       c.text.style.transform = '';
       c.text.style.backgroundColor = '';
     }
   }
+
+  // --- WebGL(写真を網として描く)
+  let glc: HTMLCanvasElement | null = null;
+  let gl: WebGLRenderingContext | null = null;
+  let glOK = true;
+  let gl2 = false;
+  let vbuf: WebGLBuffer | null = null;
+  let ibuf: WebGLBuffer | null = null;
+  let uSize: WebGLUniformLocation | null = null;
+  let meshKey = '';
+  let idxN = 0;
+  let verts = new Float32Array(0);
+  const texBySrc = new Map<string, { tex: WebGLTexture; w: number; h: number }>();
+  function initGL(): boolean {
+    if (gl) return true;
+    if (!glOK) return false;
+    glc = document.createElement('canvas');
+    glc.className = 'cl-gl';
+    glc.setAttribute('aria-hidden', 'true');
+    const opt = { alpha: true, antialias: true, premultipliedAlpha: true };
+    gl = (glc.getContext('webgl2', opt) || glc.getContext('webgl', opt)) as WebGLRenderingContext | null;
+    if (!gl) {
+      glOK = false;
+      glc = null;
+      return false;
+    }
+    gl2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
+    const sh = (type: number, src: string) => {
+      const o = gl!.createShader(type)!;
+      gl!.shaderSource(o, src);
+      gl!.compileShader(o);
+      return o;
+    };
+    const prog = gl.createProgram()!;
+    gl.attachShader(
+      prog,
+      sh(
+        gl.VERTEX_SHADER,
+        'attribute vec2 p;attribute vec2 uv;attribute float sh;uniform vec2 size;varying vec2 vuv;varying float vsh;' +
+          'void main(){vuv=uv;vsh=sh;gl_Position=vec4(p.x/size.x*2.-1.,1.-p.y/size.y*2.,0.,1.);}'
+      )
+    );
+    gl.attachShader(
+      prog,
+      sh(
+        gl.FRAGMENT_SHADER,
+        'precision mediump float;uniform sampler2D t;varying vec2 vuv;varying float vsh;' +
+          'void main(){vec3 c=texture2D(t,vuv).rgb;c=vsh>0.?mix(c,vec3(1.),vsh*.34):mix(c,vec3(0.),-vsh*.72);gl_FragColor=vec4(c,1.);}'
+      )
+    );
+    gl.bindAttribLocation(prog, 0, 'p');
+    gl.bindAttribLocation(prog, 1, 'uv');
+    gl.bindAttribLocation(prog, 2, 'sh');
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      glOK = false;
+      gl = null;
+      glc = null;
+      return false;
+    }
+    gl.useProgram(prog);
+    uSize = gl.getUniformLocation(prog, 'size');
+    vbuf = gl.createBuffer();
+    ibuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibuf);
+    gl.enableVertexAttribArray(0);
+    gl.enableVertexAttribArray(1);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 20, 0);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 8);
+    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 20, 16);
+    root.appendChild(glc);
+    return true;
+  }
+  function texFor(img: HTMLImageElement) {
+    const key = img.currentSrc || img.src;
+    const hit = texBySrc.get(key);
+    if (hit) return hit;
+    if (!img.complete || !img.naturalWidth) return null;
+    try {
+      const tex = gl!.createTexture()!;
+      gl!.bindTexture(gl!.TEXTURE_2D, tex);
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, img);
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE);
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR);
+      if (gl2) {
+        gl!.generateMipmap(gl!.TEXTURE_2D);
+        gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR_MIPMAP_LINEAR);
+      } else gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR);
+      const o = { tex, w: img.naturalWidth, h: img.naturalHeight };
+      texBySrc.set(key, o);
+      return o;
+    } catch {
+      return null;
+    }
+  }
+
+  // しわの場(画面の上か下の帯)の中だけ、横 DX・縦 DY きざみで表を作る。
+  let tabF = new Float32Array(0); // もとの高さ → 描く高さ
+  let tabT = new Float32Array(0); // 面の傾き(陰)
+  let tabI = new Float32Array(0);
   function drawGather() {
     const { n, cols, cw, ph, rowH, R, by } = G!;
     const vh = window.innerHeight;
-    const y = window.scrollY;
-    const sh = ph / 12;
-    LAMBDA = Math.max(104, sh * 6);
     const atTop = slack > 0;
-    const S = Math.abs(slack);
-    const zh = Math.min(240, vh * 0.28); // ひだが寄る場所の、半分の高さ(画面の上から半分ほどを使う)
-    const zc = atTop ? zh + 16 : vh - zh - 16; // その中心
-    const dy = 4;
-    const y0 = -S - rowH - 40;
-    const N = Math.ceil((vh + S + rowH + 80 - y0) / dy);
-    const env = (v: number) => {
-      const t = (v - zc) / zh;
-      return Math.abs(t) < 1 ? 0.5 + 0.5 * Math.cos(Math.PI * t) : 0;
-    };
-    const q = (v: number) => (1 - Math.cos((2 * Math.PI * (v + y)) / LAMBDA)) / 2;
-    let I = 0;
-    for (let i = 0; i < N; i++) I += env(y0 + (i + 0.5) * dy) * q(y0 + (i + 0.5) * dy) * dy;
-    const A = I > 0 ? Math.min(0.9, S / I) : 0;
-    // F[i]: もとの高さ y0 + i*dy が、画面のどの高さに描かれるか。
-    const F = new Float32Array(N + 1);
-    if (atTop) {
-      const iA = Math.min(N, Math.ceil((zc + zh - y0) / dy));
-      for (let i = iA; i <= N; i++) F[i] = y0 + i * dy;
-      for (let i = iA - 1; i >= 0; i--) {
-        const v = y0 + (i + 0.5) * dy;
-        F[i] = F[i + 1] - (1 - A * env(v) * q(v)) * dy;
+    const zh = Math.min(250, vh * 0.3); // しわが寄る場所の、半分の高さ
+    const zc = atTop ? zh + 10 : vh - zh - 10;
+    const z0 = zc - zh;
+    const z1 = zc + zh;
+    const listTop = list.getBoundingClientRect().top;
+    const W = list.clientWidth;
+    const DX = 12;
+    const nx = Math.ceil(W / DX) + 1;
+    const ny = Math.ceil((z1 - z0) / 4) + 1;
+    const DY = (z1 - z0) / (ny - 1);
+    if (tabF.length !== nx * ny) {
+      tabF = new Float32Array(nx * ny);
+      tabT = new Float32Array(nx * ny);
+      tabI = new Float32Array(nx);
+    }
+    // 1) 縮みやすさ c と、しわの山のどちら側か t。しわの筋は2組(ほぼ横と、斜め)で、どちらも曲がりくねる。
+    const TAU = Math.PI * 2;
+    let Imin = Infinity;
+    for (let xi = 0; xi < nx; xi++) {
+      const x = xi * DX;
+      let I = 0;
+      let prev = 0;
+      for (let yi = 0; yi < ny; yi++) {
+        const v = z0 + yi * DY;
+        const yp = v - listTop; // 布の上の位置
+        const e = 0.5 - 0.5 * Math.cos((Math.PI * yi) / (ny - 1) * 2);
+        const f1 =
+          yp / LAMBDA +
+          0.78 * Math.sin(x / 96 + 1.7 * Math.sin(yp / 230) + 0.6) +
+          0.4 * Math.sin(x / 43 - yp / 170 + 2.1) +
+          0.13 * Math.sin(x / 21 + yp / 53);
+        const f2 = yp / (LAMBDA * 1.55) - x / 150 + 0.45 * Math.sin(x / 67 + yp / 120 + 4);
+        const q1 = 0.5 - 0.5 * Math.cos(TAU * f1);
+        const q2 = 0.5 - 0.5 * Math.cos(TAU * f2);
+        const q = 0.62 * q1 + 0.38 * q2;
+        const c = e * q;
+        const t =
+          (0.62 * q1 * Math.cos(Math.PI * (f1 - Math.floor(f1))) + 0.38 * q2 * Math.cos(Math.PI * (f2 - Math.floor(f2)))) / (q + 1e-4);
+        tabF[xi * ny + yi] = c;
+        tabT[xi * ny + yi] = t;
+        if (yi) I += ((c + prev) / 2) * DY;
+        prev = c;
       }
-    } else {
-      const iA = Math.max(0, Math.floor((zc - zh - y0) / dy));
-      for (let i = 0; i <= iA; i++) F[i] = y0 + i * dy;
-      for (let i = iA + 1; i <= N; i++) {
-        const v = y0 + (i - 0.5) * dy;
-        F[i] = F[i - 1] + (1 - A * env(v) * q(v)) * dy;
+      tabI[xi] = I;
+      if (I < Imin) Imin = I;
+    }
+    // 2) たるみは、どの列でも同じ量だけ畳む(場の外では、布がまっすぐに戻るように)。
+    const S = Math.min(Math.abs(slack), 0.88 * Imin);
+    for (let xi = 0; xi < nx; xi++) {
+      const A = tabI[xi] > 0 ? S / tabI[xi] : 0;
+      const o = xi * ny;
+      if (atTop) {
+        let next = tabF[o + ny - 1];
+        tabT[o + ny - 1] *= Math.sqrt(Math.max(0, 1 - (1 - A * next) ** 2));
+        tabF[o + ny - 1] = z1;
+        for (let yi = ny - 2; yi >= 0; yi--) {
+          const c = tabF[o + yi];
+          tabT[o + yi] *= Math.sqrt(Math.max(0, 1 - (1 - A * c) ** 2));
+          tabF[o + yi] = tabF[o + yi + 1] - (1 - (A * (c + next)) / 2) * DY;
+          next = c;
+        }
+      } else {
+        let prev = tabF[o];
+        tabT[o] *= Math.sqrt(Math.max(0, 1 - (1 - A * prev) ** 2));
+        tabF[o] = z0;
+        for (let yi = 1; yi < ny; yi++) {
+          const c = tabF[o + yi];
+          tabT[o + yi] *= Math.sqrt(Math.max(0, 1 - (1 - A * c) ** 2));
+          tabF[o + yi] = tabF[o + yi - 1] + (1 - (A * (c + prev)) / 2) * DY;
+          prev = c;
+        }
       }
     }
-    const map = (v: number) => {
-      const f = Math.max(0, Math.min(N - 0.001, (v - y0) / dy));
-      const i = Math.floor(f);
-      return F[i] + (F[i + 1] - F[i]) * (f - i);
+    const look = (tab: Float32Array, x: number, v: number) => {
+      const fx = Math.max(0, Math.min(nx - 1.001, x / DX));
+      const xi = Math.floor(fx);
+      const ax = fx - xi;
+      const fy = Math.max(0, Math.min(ny - 1.001, (v - z0) / DY));
+      const yi = Math.floor(fy);
+      const ay = fy - yi;
+      const a = tab[xi * ny + yi] + (tab[xi * ny + yi + 1] - tab[xi * ny + yi]) * ay;
+      const b = tab[(xi + 1) * ny + yi] + (tab[(xi + 1) * ny + yi + 1] - tab[(xi + 1) * ny + yi]) * ay;
+      return a + (b - a) * ax;
     };
-    // 面の傾き(＋は手前上がりで明るく、－は奥へ倒れて暗い)。
-    // 縮みが強いところほど、面は大きく傾いている。ひだの山(いちばん縮むところ)の手前は明るく、越えると暗い。
-    const tilt = (v: number) => {
-      const sl = 1 - A * env(v) * q(v);
-      const phi = ((((v + y) / LAMBDA) % 1) + 1) % 1;
-      return Math.sqrt(Math.max(0, 1 - sl * sl)) * Math.cos(Math.PI * phi);
+    // もとの高さ v(画面の中での高さ)が、どこに描かれるか。
+    const map = (x: number, v: number) => {
+      if (v >= z1) return atTop ? v : v - S;
+      if (v <= z0) return atTop ? v + S : v;
+      return look(tabF, x, v);
     };
-    const tone = (tl: number) => (tl > 0 ? `rgba(255,255,255,${(tl * 0.3).toFixed(3)})` : `rgba(0,0,0,${(-tl * 0.66).toFixed(3)})`);
-    const listTop = list.getBoundingClientRect().top;
-    const r0 = Math.max(0, Math.min(R - 1, Math.ceil((y0 - listTop) / rowH)));
-    const r1 = Math.max(r0 + 1, Math.min(R, Math.ceil((vh + S + 40 - listTop) / rowH)));
+    const tilt = (x: number, v: number) => (v >= z1 || v <= z0 ? 0 : look(tabT, x, v));
+
+    const r0 = Math.max(0, Math.min(R - 1, Math.floor((-S - listTop) / rowH)));
+    const r1 = Math.max(r0 + 1, Math.min(R, Math.ceil((vh + S - listTop) / rowH)));
+    // 3) 写真: 網にして canvas へ。canvas は一覧と一緒に送られる場所に置く(送りに遅れても、写真と枠がずれない)。
+    const M = 220;
+    const Hc = vh + M * 2;
+    const useGL = initGL();
+    if (useGL && glc && gl) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(6e6 / (W * Hc)));
+      const pw = Math.round(W * dpr);
+      const phx = Math.round(Hc * dpr);
+      if (glc.width !== pw || glc.height !== phx) {
+        glc.width = pw;
+        glc.height = phx;
+        glc.style.width = `${W}px`;
+        glc.style.height = `${Hc}px`;
+      }
+      glc.style.display = '';
+      glc.style.transform = `translate3d(0,${(-listTop - M).toFixed(1)}px,0)`;
+      gl.viewport(0, 0, pw, phx);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniform2f(uSize, W, Hc);
+      const mx = Math.min(40, Math.max(4, Math.ceil(cw / 13)));
+      const my = Math.min(64, Math.max(6, Math.ceil(ph / 7)));
+      if (meshKey !== `${mx}x${my}`) {
+        meshKey = `${mx}x${my}`;
+        const ix = new Uint16Array(mx * my * 6);
+        let k = 0;
+        for (let j = 0; j < my; j++)
+          for (let i = 0; i < mx; i++) {
+            const a = j * (mx + 1) + i;
+            ix[k++] = a;
+            ix[k++] = a + 1;
+            ix[k++] = a + mx + 1;
+            ix[k++] = a + 1;
+            ix[k++] = a + mx + 2;
+            ix[k++] = a + mx + 1;
+          }
+        idxN = k;
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ix, gl.STATIC_DRAW);
+        verts = new Float32Array((mx + 1) * (my + 1) * 5);
+      }
+      for (let idx = r0 * cols; idx < Math.min(n, r1 * cols); idx++) {
+        const c = cellOf(idx);
+        const t = c.img ? texFor(c.img) : null;
+        if (!t || !c.img) continue;
+        const r = Math.floor(idx / cols);
+        const x0 = (idx % cols) * cw;
+        const top = listTop + r * rowH;
+        // object-fit: cover と同じ切り取り。
+        const ab = cw / ph;
+        const ai = t.w / t.h;
+        const fu = ai > ab ? ab / ai : 1;
+        const fv = ai > ab ? 1 : ai / ab;
+        let k = 0;
+        for (let j = 0; j <= my; j++) {
+          const v = top + (ph * j) / my;
+          for (let i = 0; i <= mx; i++) {
+            const x = x0 + (cw * i) / mx;
+            verts[k++] = x;
+            verts[k++] = map(x, v) + M;
+            verts[k++] = 0.5 + (i / mx - 0.5) * fu;
+            verts[k++] = 0.5 + (j / my - 0.5) * fv;
+            verts[k++] = tilt(x, v);
+          }
+        }
+        gl.bindTexture(gl.TEXTURE_2D, t.tex);
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+        gl.drawElements(gl.TRIANGLES, idxN, gl.UNSIGNED_SHORT, 0);
+        c.img.style.visibility = 'hidden';
+      }
+    }
+    // 4) 文字の面: 面ごと、しわに合わせて縮めて傾ける。
     const now: number[] = [];
     for (let idx = r0 * cols; idx < Math.min(n, r1 * cols); idx++) {
-      const r = Math.floor(idx / cols);
-      const top = listTop + r * rowH;
-      const c = cellOf(idx);
       now.push(idx);
-      for (let k = 0; k < c.strips.length; k++) {
-        const t0 = top + k * sh;
-        const d0 = map(t0);
-        const d1 = map(t0 + sh);
-        c.strips[k].style.transform = `translate3d(0,${(d0 - t0).toFixed(2)}px,0) scaleY(${((d1 - d0 + 0.7) / sh).toFixed(4)})`;
-        // 帯の上端と下端で陰の濃さを変え、帯のあいだに段がつかないようにする。
-        const ta = tilt(t0);
-        const tb = tilt(t0 + sh);
-        c.shades[k].style.background = Math.abs(ta) < 0.01 && Math.abs(tb) < 0.01 ? '' : `linear-gradient(${tone(ta)},${tone(tb)})`;
-      }
-      if (c.text) {
-        const t0 = top + ph;
-        const d0 = map(t0);
-        const d1 = map(top + rowH);
-        c.text.style.transform = `translate3d(0,${(d0 - t0).toFixed(2)}px,0) scaleY(${((d1 - d0) / (rowH - ph)).toFixed(4)})`;
-        const tl = tilt(t0 + (rowH - ph) / 2);
-        c.text.style.backgroundColor = tl > 0.01 ? `rgba(244,241,234,${(tl * 0.16).toFixed(3)})` : '';
-      }
+      const c = cellOf(idx);
+      if (!c.text) continue;
+      const r = Math.floor(idx / cols);
+      const x0 = (idx % cols) * cw;
+      const t0 = listTop + r * rowH + ph;
+      const t1 = listTop + (r + 1) * rowH;
+      const a = map(x0, t0);
+      const b = map(x0 + cw, t0);
+      const c2 = map(x0, t1);
+      const d2 = map(x0 + cw, t1);
+      const skew = (b - a + (d2 - c2)) / 2 / cw;
+      const sy = (c2 - a + (d2 - b)) / 2 / (t1 - t0);
+      c.text.style.transform =
+        Math.abs(a - t0) < 0.05 && Math.abs(sy - 1) < 0.002 && Math.abs(skew) < 0.001
+          ? ''
+          : `matrix(1,${skew.toFixed(4)},0,${sy.toFixed(4)},0,${(a - t0).toFixed(2)})`;
+      const tl = tilt(x0 + cw / 2, (t0 + t1) / 2);
+      c.text.style.backgroundColor = tl > 0.01 ? `rgba(244,241,234,${(tl * 0.18).toFixed(3)})` : '';
     }
     for (const idx of touched) if (idx < r0 * cols || idx >= r1 * cols) clearCell(idx);
     touched = now;
-    // 枠の線も、同じ写しで引き直す。
+    // 5) 枠の線も、同じ写しで引き直す。
     const inRow = (r: number) => Math.min(cols, n - r * cols);
-    const Y = (j: number) => (map(listTop + by[j]) - listTop).toFixed(1);
+    const hLine = (j: number, span: number) => {
+      const xe = cw * span;
+      const v = listTop + by[j];
+      let out = '';
+      for (let x = 0; x < xe; x += DX) out += `${out ? 'L' : 'M'}${x.toFixed(1)} ${(map(x, v) - listTop).toFixed(1)}`;
+      return `<path d="${out}L${xe.toFixed(1)} ${(map(xe, v) - listTop).toFixed(1)}"/>`;
+    };
     let paths = '';
     for (let r = r0; r < r1; r++) {
-      paths += `<path d="M0 ${Y(2 * r)}L${(cw * (r ? inRow(r - 1) : inRow(0))).toFixed(1)} ${Y(2 * r)}"/>`;
-      paths += `<path d="M0 ${Y(2 * r + 1)}L${(cw * inRow(r)).toFixed(1)} ${Y(2 * r + 1)}"/>`;
+      paths += hLine(2 * r, r ? inRow(r - 1) : inRow(0));
+      paths += hLine(2 * r + 1, inRow(r));
     }
-    paths += `<path d="M0 ${Y(2 * r1)}L${(cw * inRow(r1 - 1)).toFixed(1)} ${Y(2 * r1)}"/>`;
+    paths += hLine(2 * r1, inRow(r1 - 1));
     for (let k = 0; k <= cols; k++) {
       let last = R;
       while (last > 0 && inRow(last - 1) < k) last--;
       last = Math.min(last, r1);
-      if (last > r0) paths += `<path d="M${(k * cw).toFixed(1)} ${Y(2 * r0)}L${(k * cw).toFixed(1)} ${Y(2 * last)}"/>`;
+      if (last <= r0) continue;
+      const x = k * cw;
+      let out = '';
+      for (let j = 2 * r0; j <= 2 * last; j++) out += `${out ? 'L' : 'M'}${x.toFixed(1)} ${(map(x, listTop + by[j]) - listTop).toFixed(1)}`;
+      paths += `<path d="${out}"/>`;
     }
     svg.innerHTML = paths;
   }
   function tickGather(t: number) {
     raf = 0;
     if (!G || !G.n) return;
-    const dt = Math.min(0.1, Math.max(0.001, (t - lastT) / 1000));
+    const dt = Math.min(0.5, Math.max(0.001, (t - lastT) / 1000)); // 描くのが遅い機械でも、たるみが抜ける時間は同じにする
     lastT = t;
     const y = window.scrollY;
     const moved = y - lastY;
     lastY = y;
-    const max = Math.min(120, window.innerHeight * 0.14); // ひだが吸える量(場所の高さの4割ほど)まで
-    slack = Math.max(-max, Math.min(max, slack + moved * 0.55)) * Math.exp(-dt / 0.3);
+    const max = Math.min(150, window.innerHeight * 0.19);
+    slack = Math.max(-max, Math.min(max, slack + moved * 0.6)) * Math.exp(-dt / 0.34);
     still = moved === 0 ? still + dt * 1000 : 0;
     root.dataset.amp = slack.toFixed(1); // 確認用
     if (Math.abs(slack) < 0.8 && still > 60) {
@@ -521,6 +747,7 @@ export function mountCells(root: HTMLElement): () => void {
       root.dataset.amp = '0';
       touched.forEach(clearCell);
       touched = [];
+      if (glc) glc.style.display = 'none';
       drawGrid(() => 0, 0, 0, G.R);
       return;
     }
@@ -605,5 +832,6 @@ export function mountCells(root: HTMLElement): () => void {
     window.clearTimeout(rt);
     root.classList.remove('is-live');
     page?.style.removeProperty('--cw');
+    glc?.remove();
   };
 }
