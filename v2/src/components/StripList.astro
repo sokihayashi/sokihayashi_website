@@ -1,0 +1,137 @@
+---
+// 試作: 連なり(Works の一覧)。写真の面が線を共有して縦に連なる。題名は文字と線だけ。
+import { getCollection } from 'astro:content';
+import { DOMAINS } from '../content.config';
+import { wallSrc } from '../data/wall';
+
+interface Props {
+  mode?: 'sway' | 'drum'; // うねる / 巻く(3D)
+}
+const { mode = 'sway' } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<section class="strip-page">
+  <h1 class="strip-h">Works</h1>
+  <ol class:list={['strip', `strip-${mode}`]} data-strip-root data-strip={mode}>
+    {
+      works.map((w) => (
+        <li class="strip-row" data-row>
+          <a class="strip-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
+            <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+          </a>
+          <a class="strip-text" href={`${base}/works/${w.id}/`}>
+            <span class="strip-title">{w.data.title}</span>
+            <span class="strip-meta">
+              {w.data.domain.map((k) => DOMAINS[k]).join(' / ')}
+              {w.data.year ? ` — ${w.data.year}` : ''}
+            </span>
+          </a>
+        </li>
+      ))
+    }
+  </ol>
+</section>
+
+<script>
+  import { mountStrip } from '../scripts/strip';
+
+  let dispose: (() => void) | null = null;
+  const start = () => {
+    dispose?.();
+    dispose = null;
+    const root = document.querySelector<HTMLElement>('[data-strip-root]');
+    if (!root) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    dispose = mountStrip(root);
+  };
+  document.addEventListener('astro:page-load', start);
+  document.addEventListener('astro:before-swap', () => {
+    dispose?.();
+    dispose = null;
+  });
+</script>
+
+<style is:global>
+  .strip-page {
+    padding: 6.5rem 0 6rem;
+  }
+  .strip-h {
+    margin: 0 var(--pad) 2.2rem;
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .strip {
+    --sw: 46vw; /* 面の幅 */
+    --m: 28px; /* しなりの余地 */
+    list-style: none;
+    margin: 0;
+    padding: 0 var(--pad);
+  }
+  @media (min-width: 800px) {
+    .strip {
+      --sw: min(30vw, 380px);
+      --m: 44px;
+    }
+  }
+  /* 面と面は、1本の線(黒い2px)を共有して連なる。すき間や角丸は作らない。 */
+  .strip-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--sw) minmax(0, 1fr);
+    height: calc(var(--sw) * 1.5);
+    margin-top: 2px;
+  }
+  .strip-face {
+    display: block;
+    position: relative;
+    width: calc(var(--sw) + var(--m) * 2);
+    height: 100%;
+    margin-left: calc(var(--m) * -1);
+    /* 写真は余地のぶんだけ広く置いてあり、見えるのは面の形(窓)の中だけ。 */
+    clip-path: inset(0 var(--m));
+  }
+  .strip-face img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* 題名は文字と線だけ。区切りの線は、面の切れ目からそのまま横へ伸びる。 */
+  .strip-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.8rem 0 0 calc(var(--m) + 14px);
+    border-top: 1px solid #3a3a37;
+    margin-top: -2px;
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .strip-row:first-child .strip-text {
+    border-top-color: transparent;
+  }
+  .strip-title {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .strip-meta {
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  /* 巻く(3D): 連なりを、奥へ曲がる面に載せる。 */
+  .strip-drum.is-live {
+    perspective: 1100px;
+  }
+  .strip-drum.is-live .strip-row {
+    transform-origin: 50% 50%;
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+</style>
