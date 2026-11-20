@@ -776,10 +776,19 @@ export function mountCells(root: HTMLElement): () => void {
     if (i < 0) return 0;
     return trace[i] + (trace[i + 1] - trace[i]) * Math.min(1, f - i);
   };
-  let px = 0; // いまの指 / カーソルの横位置
-  let pBase = 0; // その、ゆっくり追う基準(基準からのずれだけを書く。置きっぱなしのカーソルは、まっすぐ)
-  let pHas = false;
-  let pTouch = false;
+  // ペンの横位置 px は、3つの入力の「横に動いたぶん」を足し込んだもの:
+  //   指(スマホ)の横の動き / トラックパッドの2本指の横の動き(wheel の deltaX) / マウスのカーソルの横の動き
+  // 指を離したあとも、はじいた向きへ少し流れ続ける(送りの慣性と同じ)。
+  let px = 0;
+  let pBase = 0; // その、ゆっくり追う基準(基準からのずれだけを書く。動かさなければ、まっすぐへ戻る)
+  let lastMX: number | null = null;
+  let lastTX: number | null = null;
+  let lastTT = 0;
+  let vx = 0; // 指の横の速さ(px/秒、倍率こみ)
+  let coast = false;
+  const GAIN_TOUCH = 2.6;
+  const GAIN_WHEEL = 1.3;
+  const GAIN_MOUSE = 0.55;
   let pv = 0; // ペンの横ずれ
   let prevYl: number | null = null;
   let prevPv = 0;
@@ -797,8 +806,13 @@ export function mountCells(root: HTMLElement): () => void {
     const moved = y - lastY;
     lastY = y;
     const max = G.m - 6;
-    pBase += (px - pBase) * (1 - Math.exp(-dt / 1.1));
-    const target = pHas ? Math.max(-max, Math.min(max, (px - pBase) * (pTouch ? 1.7 : 0.55))) : 0;
+    if (coast) {
+      px += vx * dt;
+      vx *= Math.exp(-dt / 0.42);
+      if (Math.abs(vx) < 4) coast = false;
+    }
+    pBase += (px - pBase) * (1 - Math.exp(-dt / 1.3));
+    const target = Math.max(-max, Math.min(max, px - pBase));
     pv += (target - pv) * (1 - Math.exp(-dt / 0.09));
     const dir = moved > 0 ? 1 : moved < 0 ? -1 : 0;
     if (dir) {
@@ -848,16 +862,35 @@ export function mountCells(root: HTMLElement): () => void {
     raf = requestAnimationFrame(tickTrace);
   }
   function onPointer(e: MouseEvent | TouchEvent) {
-    const tch = 'touches' in e;
-    if (tch && !e.touches.length) {
-      pHas = false; // 指を離したら、ペンは中央へ戻る
+    if (!('touches' in e)) {
+      if (lastMX !== null) px += (e.clientX - lastMX) * GAIN_MOUSE;
+      lastMX = e.clientX;
       return;
     }
-    const x = tch ? e.touches[0].clientX : e.clientX;
-    if (!pHas || (tch && e.type === 'touchstart')) pBase = x;
-    px = x;
-    pHas = true;
-    pTouch = tch;
+    if (!e.touches.length) {
+      // 指を離した。はじいた向きへ流す。
+      lastTX = null;
+      coast = Math.abs(vx) > 30;
+      return;
+    }
+    const x = e.touches[0].clientX;
+    const now = performance.now();
+    if (e.type === 'touchstart' || lastTX === null) {
+      vx = 0;
+      coast = false;
+    } else {
+      const d = (x - lastTX) * GAIN_TOUCH;
+      px += d;
+      const dt = Math.max(0.004, (now - lastTT) / 1000);
+      vx += (d / dt - vx) * 0.35;
+    }
+    lastTX = x;
+    lastTT = now;
+  }
+  function onWheel(e: WheelEvent) {
+    if (e.ctrlKey || !e.deltaX) return;
+    // 2本指を右へ動かすと deltaX は負(標準の設定)。指の向きに帯が動くようにする。
+    px -= e.deltaX * (e.deltaMode === 1 ? 16 : 1) * GAIN_WHEEL;
   }
 
   function onScroll() {
@@ -932,6 +965,7 @@ export function mountCells(root: HTMLElement): () => void {
   if (live) window.addEventListener('scroll', onScroll, { passive: true });
   if (live === 'trace') {
     window.addEventListener('mousemove', onPointer, { passive: true });
+    window.addEventListener('wheel', onWheel, { passive: true });
     window.addEventListener('touchstart', onPointer, { passive: true });
     window.addEventListener('touchmove', onPointer, { passive: true });
     window.addEventListener('touchend', onPointer, { passive: true });
@@ -946,6 +980,7 @@ export function mountCells(root: HTMLElement): () => void {
     window.removeEventListener('resize', onResize);
     window.removeEventListener('scroll', onScroll);
     window.removeEventListener('mousemove', onPointer);
+    window.removeEventListener('wheel', onWheel);
     window.removeEventListener('touchstart', onPointer);
     window.removeEventListener('touchmove', onPointer);
     window.removeEventListener('touchend', onPointer);
