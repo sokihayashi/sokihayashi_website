@@ -21,9 +21,11 @@
 //           画面に無い行き先は、次に描かれる線に先に出る(待たせない)。開いた直後は、ペンが続けて2本描く
 //
 // 紙の版(data-paper): 帯に、少しだけ物の感じを足す。
-//   帯は、黒い台の上に置いた薄い紙。ほかの帯をまたぐところにだけ、影が落ちる(黒い地には影は見えない)。
-//   描いているあいだ、先端は指に持ち上げられて浮く(影が広がる)。離すと、すっと降りる。
-//   置かれた帯も、ごくわずかに浮き沈みする。写真そのものは暗くしない・歪めない。
+//   帯は、台の上にゆるく置いたリボン。平らに貼りついているのではなく、長さに沿って、浮いたところと
+//   台についたところが交互にある(その山は、ゆっくり帯の上を移っていく)。
+//   浮いたところは、少し手前に寄って幅がわずかに広がり、山の斜面に明るい側と暗い側ができる。
+//   ほかの帯をまたぐところには影が落ちる(黒い地には影は見えない)。
+//   描いているあいだ、先端は指に持ち上げられて浮く。離すと、すっと降りる。写真は歪めない。
 //
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
@@ -43,6 +45,7 @@ interface Seg {
   prev: Seg | null; // ひと続きに描いた、ひとつ前の帯
   nav: number; // 行き先の番号。作品の帯なら -1
   sid: number; // ひと筆の番号(同じ筆で描いた帯は、同じ番号)
+  u0: number; // 筆の描きはじめから、この帯の始まりまでの長さ
   len: number;
   work: number;
   pat: CanvasPattern | null;
@@ -222,6 +225,7 @@ export function mountDraw(root: HTMLElement): () => void {
       prev,
       nav: -1,
       sid: prev ? prev.sid : ++strokeId,
+      u0: prev ? prev.u0 + prev.len : 0,
       len: 0,
       work: nextWork,
       pat: null,
@@ -578,32 +582,7 @@ export function mountDraw(root: HTMLElement): () => void {
   }
 
   // ---- 描画 ----
-  // 帯の輪郭。high を渡すと、各点をその高さぶん影の向き(流れの上手=右下)へずらす。
-  function outline(s: Seg, from: number, high?: (i: number) => number) {
-    const n = s.pts.length;
-    const hw: number[] = [];
-    const ox: number[] = [];
-    const oy: number[] = [];
-    for (let i = from; i < n; i++) {
-      hw.push((W / 2) * widthAt(s, i));
-      const hgt = high ? high(i) : 0;
-      ox.push(-dx * hgt);
-      oy.push(-dy * hgt);
-    }
-    ctx.beginPath();
-    ctx.moveTo(s.pts[from].x + s.nrm[from].x * hw[0] + ox[0], s.pts[from].y + s.nrm[from].y * hw[0] + oy[0]);
-    for (let i = from + 1; i < n; i++) {
-      const k = i - from;
-      ctx.lineTo(s.pts[i].x + s.nrm[i].x * hw[k] + ox[k], s.pts[i].y + s.nrm[i].y * hw[k] + oy[k]);
-    }
-    for (let i = n - 1; i >= from; i--) {
-      const k = i - from;
-      ctx.lineTo(s.pts[i].x - s.nrm[i].x * hw[k] + ox[k], s.pts[i].y - s.nrm[i].y * hw[k] + oy[k]);
-    }
-    ctx.closePath();
-  }
-
-  // ---- 紙: 浮きと影 ----
+  // ---- 紙: 浮き ----
   // 持ち上げている筆の、各帯の終わりから筆の先端までの長さ。
   const tail = new Map<Seg, number>();
   function measureTail() {
@@ -616,21 +595,103 @@ export function mountDraw(root: HTMLElement): () => void {
       acc += s.len;
     }
   }
-  // 帯の点 i の、台からの高さ(px)。
-  function heightAt(s: Seg, i: number, now: number) {
-    // 置かれた帯も、ごくわずかに浮き沈みする。
-    const rest = W * 0.05 * (1 + 0.3 * Math.sin(now / 1100 + s.sid * 1.7));
-    if (s.sid !== liftSid || lift < 0.002) return rest;
-    // 先端は、指に持ち上げられている。
-    const d = (tail.get(s) || 0) + (s.len - s.cum[i]);
-    const e = Math.max(0, 1 - d / (W * 2.4));
-    return rest + lift * W * 0.22 * e * e * (3 - 2 * e);
+  let clock = 0; // 浮きの山を動かす時計(ミリ秒)
+  // 帯の点 i の、台からの高さ(px)。0 は台についている。
+  function heightAt(s: Seg, i: number) {
+    // 長さに沿って、浮いた山と、台についた谷が交互に来る。山は、ゆっくり帯の上を移っていく。
+    const u = s.u0 + s.cum[i];
+    const a = u / (W * 0.62) + s.sid * 2.1 + clock / 4200;
+    const b = u / (W * 1.7) - s.sid * 0.7 - clock / 9000; // 山の高さを不ぞろいにする、長い波
+    const w = Math.max(0, Math.sin(a));
+    let hgt = W * 0.17 * w * w * (0.55 + 0.45 * Math.sin(b));
+    if (s.sid === liftSid && lift > 0.002) {
+      // 先端は、指に持ち上げられている。
+      const d = (tail.get(s) || 0) + (s.len - s.cum[i]);
+      const e = Math.max(0, 1 - d / (W * 2.4));
+      hgt += lift * W * 0.2 * e * e * (3 - 2 * e);
+    }
+    return hgt;
   }
-  function paintShadow(s: Seg, now: number) {
+
+  // 帯の輪郭。kind: 0=そのまま / 1=紙の帯(浮いたぶん手前に寄り、わずかに広がる) / 2=その影。
+  // 計算した左右の縁と高さは、陰影をつけるために残しておく。
+  let EL: Pt[] = [];
+  let ER: Pt[] = [];
+  let EH: number[] = [];
+  function outline(s: Seg, from: number, kind = 0) {
+    const n = s.pts.length;
+    EL = [];
+    ER = [];
+    EH = [];
+    for (let i = from; i < n; i++) {
+      let hw = (W / 2) * widthAt(s, i);
+      let ox = 0;
+      let oy = 0;
+      let hgt = 0;
+      if (kind) {
+        hgt = heightAt(s, i);
+        hw *= 1 + hgt / (W * 2.6);
+        // 浮いた帯は流れの下手(左上)へ寄り、影は上手(右下)へ落ちる。
+        const k = kind === 1 ? 0.45 : -0.75;
+        ox = dx * hgt * k;
+        oy = dy * hgt * k;
+      }
+      EL.push({ x: s.pts[i].x + s.nrm[i].x * hw + ox, y: s.pts[i].y + s.nrm[i].y * hw + oy });
+      ER.push({ x: s.pts[i].x - s.nrm[i].x * hw + ox, y: s.pts[i].y - s.nrm[i].y * hw + oy });
+      EH.push(hgt);
+    }
+    ctx.beginPath();
+    ctx.moveTo(EL[0].x, EL[0].y);
+    for (let k = 1; k < EL.length; k++) ctx.lineTo(EL[k].x, EL[k].y);
+    for (let k = ER.length - 1; k >= 0; k--) ctx.lineTo(ER[k].x, ER[k].y);
+    ctx.closePath();
+  }
+  function paintShadow(s: Seg) {
     if (s.pts.length < 2) return;
     const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
-    outline(s, from, (i) => heightAt(s, i, now));
+    outline(s, from, 2);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fill('nonzero');
+  }
+  // 山の斜面の陰影。上りの斜面は明るく、下りの斜面は暗くする(台についたところは、そのまま)。
+  // 帯1つを、長さに沿った1枚のぼかしで塗る(小分けに塗ると、継ぎ目に筋が出る)。直前に作った輪郭をそのまま使う。
+  const tone = (l: number) => (l > 0 ? `rgba(255,255,255,${(l * 0.16).toFixed(3)})` : `rgba(0,0,0,${(-l * 0.34).toFixed(3)})`);
+  const clear = (l: number) => (l > 0 ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)');
+  function paintShade(s: Seg, from: number) {
+    const m = EL.length;
+    const lit: number[] = [];
+    let any = false;
+    for (let k = 0; k < m; k++) {
+      const a = Math.max(0, k - 1);
+      const b = Math.min(m - 1, k + 1);
+      const du = s.cum[from + b] - s.cum[from + a] || 1;
+      const l = Math.max(-1, Math.min(1, ((EH[b] - EH[a]) / du) * 3.2));
+      lit.push(Math.abs(l) < 0.015 ? 0 : l);
+      if (lit[k]) any = true;
+    }
+    if (!any) return;
+    const ax = (EL[0].x + ER[0].x) / 2;
+    const ay = (EL[0].y + ER[0].y) / 2;
+    const bx = (EL[m - 1].x + ER[m - 1].x) / 2;
+    const by = (EL[m - 1].y + ER[m - 1].y) / 2;
+    const len2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1;
+    const g = ctx.createLinearGradient(ax, ay, bx, by);
+    let tPrev = 0;
+    for (let k = 0; k < m; k++) {
+      const mx = (EL[k].x + ER[k].x) / 2;
+      const my = (EL[k].y + ER[k].y) / 2;
+      let t = ((mx - ax) * (bx - ax) + (my - ay) * (by - ay)) / len2;
+      t = Math.max(tPrev, Math.min(1, t));
+      if (k > 0 && lit[k - 1] * lit[k] < 0) {
+        // 明るい側と暗い側の境目は、いったん無色にする。
+        const z = tPrev + (t - tPrev) * (Math.abs(lit[k - 1]) / (Math.abs(lit[k - 1]) + Math.abs(lit[k])));
+        g.addColorStop(z, clear(lit[k - 1]));
+        g.addColorStop(z, clear(lit[k]));
+      }
+      g.addColorStop(t, lit[k] ? tone(lit[k]) : clear(k > 0 && lit[k - 1] ? lit[k - 1] : lit[Math.min(m - 1, k + 1)] || 1));
+      tPrev = t;
+    }
+    ctx.fillStyle = g;
     ctx.fill('nonzero');
   }
 
@@ -638,9 +699,10 @@ export function mountDraw(root: HTMLElement): () => void {
     if (s.pts.length < 2) return;
     if (!s.pat) lock(s);
     const from = Math.min(s.pts.length - 2, Math.floor(s.trim * (s.pts.length - 1)));
-    outline(s, from);
+    outline(s, from, paper ? 1 : 0);
     ctx.fillStyle = s.nav >= 0 ? PAPER : s.pat || '#161614';
     ctx.fill('nonzero');
+    if (paper) paintShade(s, from);
     // 細い黒の縁。重なりと境目を分ける。
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#000';
@@ -875,11 +937,12 @@ export function mountDraw(root: HTMLElement): () => void {
     if (paper) {
       // 筆ごとに、先に影を落としてから帯を描く(影は、先に描かれた帯の上にだけ見える)。
       measureTail();
+      clock = now;
       let i = 0;
       while (i < segs.length) {
         let j = i;
         while (j < segs.length && segs[j].sid === segs[i].sid) j++;
-        for (let k = i; k < j; k++) paintShadow(segs[k], now);
+        for (let k = i; k < j; k++) paintShadow(segs[k]);
         for (let k = i; k < j; k++) paintSeg(segs[k]);
         i = j;
       }
