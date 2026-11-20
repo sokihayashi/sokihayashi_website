@@ -17,7 +17,7 @@ interface Props {
   // 升目の版の動き。止まっているあいだは直線。
   //   sheet: 送ると、1枚の網として線が左右にしなる / bands: 列ごとの帯が左右にしなる
   //   gather: 送ると、布をたぐるように、画面の上(戻すときは下)に、くしゃっとしわが寄って溜まり、少し遅れて流れる(前後の凹凸)
-  //   trace: 列が1本ずつの平らな帯。送りながら指(カーソル)を横に動かすと、その形が帯に書き込まれて残る
+  //   trace: 列が1本ずつの平らな帯。重さと張りのある紐で、指(カーソル)の横の動きで引くと、波になって伝わり、ゆれながら戻る
   live?: 'sheet' | 'bands' | 'gather' | 'trace';
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
@@ -553,13 +553,13 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
   }
   /* 描く版: 帯が大きく横へ動けるよう、写真の箱の余地を広げる。 */
   .cl-page[data-grid][data-live='trace'] {
-    --m: 46px;
-    --vm: 26px;
+    --m: 66px;
+    --vm: 30px;
   }
   @media (min-width: 800px) {
     .cl-page[data-grid][data-live='trace'] {
-      --m: 84px;
-      --vm: 40px;
+      --m: 116px;
+      --vm: 44px;
     }
   }
   .cl-page[data-live] .cl-text {

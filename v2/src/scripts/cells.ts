@@ -218,11 +218,13 @@ export function mountCells(root: HTMLElement): () => void {
     slack = 0;
     if (glc) glc.style.display = 'none';
     if (live === 'trace') {
-      // 並びや幅が変わったら、描いた形は消す。高さが同じなら残す(スマホは、送るたびに画面の高さが変わって、ここを通る)。
-      const len = Math.ceil((R * rowH) / STEP) + 2;
-      if (trace.length !== len) trace = new Float32Array(len);
-      prevYl = null;
-      regrab = true;
+      // 並びや幅が変わったら、帯はまっすぐに戻す。高さが同じなら、そのまま(スマホは、送るたびに画面の高さが変わって、ここを通る)。
+      const len = Math.ceil((R * rowH) / H) + 2;
+      if (X.length !== len) {
+        X = new Float32Array(len);
+        V = new Float32Array(len);
+      }
+      dirty.clear();
     }
     G = { rows, n, cols, cw, g, m, vm, ph, rowH, R, by };
     if (!n) {
@@ -769,26 +771,37 @@ export function mountCells(root: HTMLElement): () => void {
     raf = requestAnimationFrame(tickGather);
   }
 
-  // 描く版(trace): 帯は、置いたところに留まる紐。指(PC ではカーソル)の下の一点を、横の動きで直接ひっぱる。
-  //   - ひっぱった点は、その場ですぐ動く(遅れない)。まわりは、帯が折れない範囲で一緒についてくる。
-  //   - 指を置いたまま送るあいだ、指の下の点は変わらない。離して流れているあいだは、指のあった高さを通る帯に書き込まれる。
-  //   - 形は残る。ペンは少しずつ中央へ戻るので、動かさずに送った所は、まっすぐへ寄っていく。
-  const STEP = 6; // 記録のきざみ(px、一覧の上からの位置)
-  let trace = new Float32Array(0);
-  const rawAt = (i: number) => trace[i < 0 ? 0 : i >= trace.length ? trace.length - 1 : i];
-  // 描くときは、角を丸めて読む(前後 24px をならす)。
-  const traceAt = (y: number) => {
-    if (!trace.length) return 0;
-    const f = Math.max(0, Math.min(trace.length - 1, y / STEP));
-    const i = Math.floor(f);
-    const k = f - i;
-    const at = (j: number) => (rawAt(j - 4) + 4 * rawAt(j - 2) + 6 * rawAt(j) + 4 * rawAt(j + 2) + rawAt(j + 4)) / 16;
-    return at(i) + (at(i + 1) - at(i)) * k;
+  // 描く版(trace): 帯は、重さと張りのある紐。
+  //   - 指(PC ではカーソル)の下の一点を、横の動きでその場で引く。
+  //   - 引いた動きは、波になって帯を上下へ伝わる。速く動かせば鋭く短い波、ゆっくり動かせば大きくゆるい波になる。
+  //   - 手を離しても、帯は勢いで動き続け、ゆれながら、ゆっくりまっすぐへ戻る(その場で止まらない)。
+  const H = 20; // 紐の点のあいだ(px、一覧の上からの位置)
+  const WAVE = 1050; // 波が帯を伝わる速さ(px/秒)
+  const GAMMA = 1.9; // 動きの減り方(大きいほど早く静まる)
+  const KS = 2.6; // 中央へ戻す弱いばね
+  const ETA = 2600; // 細かい折れをならす
+  let X = new Float32Array(0); // 点の横位置
+  let V = new Float32Array(0); // 点の横の速さ
+  let lim = 40; // 画面の上で動ける幅(端は壁にせず、近づくほどゆるやかに)
+  // 点のあいだは、なめらかな曲線でつなぐ。
+  const phys = (y: number) => {
+    const n = X.length;
+    if (n < 2) return 0;
+    const f = Math.max(0, Math.min(n - 1, y / H));
+    const i = Math.min(n - 2, Math.floor(f));
+    const t = f - i;
+    const p0 = X[Math.max(0, i - 1)];
+    const p1 = X[i];
+    const p2 = X[i + 1];
+    const p3 = X[Math.min(n - 1, i + 2)];
+    return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
   };
-  // 描く版の描画。線は作品ごとに1本の path にして、形が変わった段だけ書き換える(毎コマ全部を作り直さない)。
-  // 帯の形はどの列も同じなので、段ごとに1回だけ計算して、列のぶん横へずらす。
+  const traceAt = (y: number) => lim * Math.tanh(phys(y) / lim);
+
+  // 描画。線は作品ごとに1本の path。帯の形はどの列も同じなので、段ごとに1回だけ計算して、列のぶん横へずらす。
   let cellPaths: SVGPathElement[] = [];
   let cellEls: { f: HTMLElement | null; tx: HTMLElement | null }[] = [];
+  const dirty = new Set<number>(); // まっすぐでない形で描いてある段
   function drawTrace(r0: number, r1: number, rebuild: boolean) {
     const { rows, n, cols, cw, g, m, vm, rowH, R, by } = G!;
     if (rebuild) {
@@ -798,10 +811,10 @@ export function mountCells(root: HTMLElement): () => void {
       r0 = 0;
       r1 = R;
     }
-    const slope = (y: number) => (traceAt(y + 4) - traceAt(y - 4)) / 8;
+    const tmax = vm - 3;
     // 切り口 j の、左右の端(列0の位置で)。切り口は帯に直角。
     const cut = (j: number): [Pt, Pt] => {
-      const t = (cw / 2) * slope(by[j]);
+      const t = Math.max(-tmax, Math.min(tmax, ((cw / 2) * (traceAt(by[j] + 6) - traceAt(by[j] - 6))) / 12));
       return [
         [traceAt(by[j] + t), by[j] + t],
         [cw + traceAt(by[j] - t), by[j] - t],
@@ -843,164 +856,142 @@ export function mountCells(root: HTMLElement): () => void {
       }
     }
   }
-  // ペンの横位置 px は、3つの入力の「横に動いたぶん」を足し込んだもの:
-  //   指(スマホ)の横の動き / トラックパッドの2本指の横の動き(wheel の deltaX) / マウスのカーソルの横の動き
-  let px = 0;
-  let pBase = 0; // ゆっくり px を追う基準。px - pBase がペンの横ずれ
-  let penY = -1; // ペンの高さ(画面の中。指やカーソルのある高さ)
-  let lastMX: number | null = null;
-  let lastTX: number | null = null;
-  let lastTT = 0;
-  let lastTY = 0;
-  let vx = 0; // 指の横の速さ(px/秒、倍率こみ)
-  let vy = 0; // 指の縦の速さ(px/秒)
-  let lean = 0; // 指を離したときの、線の向き(縦に1進むあいだに横へ進む量)。流れているあいだ、この向きに少し伸びる
+
+  // 入力。
+  let penY = -1; // 指やカーソルのある高さ(画面の中)
   let touching = false;
-  let regrab = true; // 次の一手で、ペンを「いま帯がある位置」から始める(帯を飛ばさない)
-  let prevYl: number | null = null;
-  let prevPen = 0;
-  let quietT = 0;
-  const GAIN_TOUCH = 1.25; // ほぼ指の動きどおり(大きくしすぎると、すぐ端に当たって、指についてこなくなる)
-  const GAIN_WHEEL = 1.3;
-  const GAIN_MOUSE = 0.55;
+  let grabX = 0; // つかんだ点の、つかんだ瞬間の横位置
+  let startTX = 0;
+  let target = 0; // つかんだ点を、いま置きたい横位置
+  let prevTarget = 0;
+  let lastMX: number | null = null;
+  let holdUntil = 0; // トラックパッドとマウスは、横に動かしているあいだ(と、その直後)だけ、カーソルの下を持っている扱いにする
+  const GAIN_TOUCH = 1; // 指の動きどおり
+  const GAIN_WHEEL = 0.9;
+  const GAIN_MOUSE = 0.4;
   const penAt = () => (penY < 0 ? window.innerHeight * 0.5 : penY) - list.getBoundingClientRect().top;
+  // 高さ yl の点のまわりを、横へ d だけ動かす。vel は速さ(add: 足す / そうでなければ、その速さにそろえる)。
+  function push(yl: number, d: number, vel: number, add: boolean) {
+    const c = Math.floor(yl / H);
+    for (let j = Math.max(0, c - 2); j <= Math.min(X.length - 1, c + 3); j++) {
+      const w = Math.exp(-(((j * H - yl) / 26) ** 2));
+      X[j] += d * w;
+      V[j] += add ? vel * w : (vel - V[j]) * w;
+    }
+  }
   function tickTrace(t: number) {
     raf = 0;
     if (!G || !G.n) return;
-    const dt = Math.min(0.1, Math.max(0.001, (t - lastT) / 1000));
+    const dt = Math.min(0.05, Math.max(0.001, (t - lastT) / 1000));
     lastT = t;
-    const y = window.scrollY;
-    const moved = y - lastY;
-    lastY = y;
-    const max = G.m - 6;
+    lim = G.m - 6;
+    const N = X.length;
     const yl = penAt();
-    if (regrab) {
-      // ペンを、いま帯がある位置から始める(帯を飛ばさない)。
-      const at = Math.max(-0.98, Math.min(0.98, traceAt(yl) / max));
-      pBase = px - max * 0.5 * Math.log((1 + at) / (1 - at));
-      prevYl = null;
-      regrab = false;
-    }
-    // ペンが帯の上を進んだ長さ。帯は、手か送りが動いたぶんしか変わらない(時間では動かさない)。
-    const slid = prevYl === null ? 0 : Math.min(80, Math.abs(yl - prevYl));
-    if (!touching && slid) {
-      px += lean * slid; // はじいた向きへ、少し伸びる
-      lean *= Math.exp(-slid / 200);
-      pBase = px - (px - pBase) * Math.exp(-slid / 520); // 進むにつれて、中央へ戻る
-    }
-    // 端は壁にしない。遠くへ引くほど、ゆるやかに動かなくなる。
-    let raw = px - pBase;
-    if (Math.abs(raw) > max * 1.7) {
-      raw = Math.sign(raw) * max * 1.7;
-      pBase = px - raw;
-    }
-    const pen = max * Math.tanh(raw / max);
-    const last = trace.length - 1;
-    let cLo = Infinity;
-    let cHi = -Infinity;
-    const put = (i: number, v: number) => {
-      if (Math.abs(trace[i] - v) > 0.02) {
-        if (i < cLo) cLo = i;
-        if (i > cHi) cHi = i;
+    const inList = yl >= 0 && yl <= (N - 1) * H;
+    const held = touching || t < holdUntil;
+    const vT = (target - prevTarget) / dt;
+    // 波を進める(1コマを、数え方が安定する細かさに割る)。
+    const sub = Math.max(1, Math.ceil((WAVE * dt) / (0.6 * H)));
+    const h = dt / sub;
+    const k2 = (WAVE * WAVE) / (H * H);
+    const e2 = ETA / (H * H);
+    let maxV = 0;
+    let maxX = 0;
+    for (let s = 0; s < sub; s++) {
+      // 指で持っている点は、指の位置に合わせ続ける。
+      if (held && inList) push(yl, prevTarget + ((target - prevTarget) * (s + 1)) / sub - phys(yl), vT, false);
+      let xm = X[0];
+      let vm0 = V[0];
+      for (let i = 0; i < N; i++) {
+        const ip = i + 1 < N ? i + 1 : i;
+        const xi = X[i];
+        const vi = V[i];
+        V[i] = vi + (k2 * (xm - 2 * xi + X[ip]) + e2 * (vm0 - 2 * vi + V[ip]) - GAMMA * vi - KS * xi) * h;
+        xm = xi;
+        vm0 = vi;
       }
-      trace[i] = v;
-    };
-    if (yl >= 0 && yl <= last * STEP) {
-      const from = prevYl === null ? yl : prevYl;
-      const iA = Math.max(0, Math.round(Math.min(from, yl) / STEP));
-      const iB = Math.min(last, Math.round(Math.max(from, yl) / STEP));
-      for (let i = iA; i <= iB; i++) {
-        const f = yl === from ? 1 : Math.max(0, Math.min(1, (i * STEP - from) / (yl - from)));
-        put(i, prevPen + (pen - prevPen) * f);
+      maxV = 0;
+      maxX = 0;
+      for (let i = 0; i < N; i++) {
+        X[i] += V[i] * h;
+        const av = V[i] < 0 ? -V[i] : V[i];
+        const ax = X[i] < 0 ? -X[i] : X[i];
+        if (av > maxV) maxV = av;
+        if (ax > maxX) maxX = ax;
       }
-      // まわりは、帯が折れない傾きまで、ついてくる。
-      const lim = 0.26 * STEP;
-      for (let i = iB + 1; i <= last; i++) {
-        if (trace[i] > trace[i - 1] + lim) put(i, trace[i - 1] + lim);
-        else if (trace[i] < trace[i - 1] - lim) put(i, trace[i - 1] - lim);
-        else break;
-      }
-      for (let i = iA - 1; i >= 0; i--) {
-        if (trace[i] > trace[i + 1] + lim) put(i, trace[i + 1] + lim);
-        else if (trace[i] < trace[i + 1] - lim) put(i, trace[i + 1] - lim);
-        else break;
-      }
-      prevYl = yl;
-      prevPen = pen;
-    } else prevYl = null;
-    root.dataset.amp = pen.toFixed(1); // 確認用
-    if (cHi >= cLo) {
-      // 形が変わった所にかかる段だけ、描き直す。
-      const yA = cLo * STEP - 40 - G.vm;
-      const yB = cHi * STEP + 40 + G.vm;
-      drawTrace(Math.floor(yA / G.rowH), Math.floor(yB / G.rowH) + 1, false);
     }
-    quietT = moved || cHi >= cLo ? 0 : quietT + dt * 1000;
-    if (quietT > 200 && !touching) {
-      regrab = true;
+    prevTarget = target;
+    root.dataset.amp = traceAt(yl).toFixed(1); // 確認用
+    if (!held && maxV < 1.2 && maxX < 0.2) {
+      // 静まった。まっすぐに戻して、止める。
+      X.fill(0);
+      V.fill(0);
+      root.dataset.amp = '0';
+      dirty.forEach((r) => drawTrace(r, r + 1, false));
+      dirty.clear();
       return;
     }
+    const top = list.getBoundingClientRect().top;
+    const r0 = Math.max(0, Math.min(G.R - 1, Math.floor(-top / G.rowH) - 1));
+    const r1 = Math.max(r0 + 1, Math.min(G.R, Math.ceil((window.innerHeight - top) / G.rowH) + 1));
+    drawTrace(r0, r1, false);
+    for (let r = r0; r < r1; r++) dirty.add(r);
     raf = requestAnimationFrame(tickTrace);
   }
   function kickTrace() {
-    quietT = 0;
     if (raf || !G) return;
     lastT = performance.now() - 16;
-    lastY = window.scrollY;
     raf = requestAnimationFrame(tickTrace);
+  }
+  // トラックパッドとマウス: 横に d だけ動かした。カーソルの下の点を、そのぶん引く。
+  function nudge(d: number) {
+    const now = performance.now();
+    if (!touching && now >= holdUntil) {
+      grabX = phys(penAt()); // いまある位置からつかむ
+      target = prevTarget = grabX;
+    }
+    const m = lim * 1.5;
+    target = Math.max(-m, Math.min(m, target + d));
+    holdUntil = now + 140; // 動かすのをやめたら、すぐ離す(帯は勢いで動き続ける)
+    kickTrace();
   }
   function onPointer(e: MouseEvent | TouchEvent) {
     if (!('touches' in e)) {
-      if (lastMX !== null) px += (e.clientX - lastMX) * GAIN_MOUSE;
+      const d = lastMX === null ? 0 : (e.clientX - lastMX) * GAIN_MOUSE;
       lastMX = e.clientX;
-      if (Math.abs(e.clientY - penY) > 2) prevYl = null; // ペンの高さが変わったら、あいだは埋めない
       penY = e.clientY;
+      if (d && !touching) nudge(d);
       return;
     }
     if (!e.touches.length) {
-      // 指を離した。線の向きを覚えておく(流れているあいだ、その向きに少し伸びる)。
-      touching = false;
-      lastTX = null;
-      lean = Math.abs(vy) > 150 ? Math.max(-0.4, Math.min(0.4, vx / Math.abs(vy))) : 0;
+      touching = false; // 離した。帯は、そのときの勢いで動き続ける
+      holdUntil = 0;
       kickTrace();
       return;
     }
     const x = e.touches[0].clientX;
-    const now = performance.now();
     penY = e.touches[0].clientY;
-    if (e.type === 'touchstart' || lastTX === null) {
-      vx = 0;
-      vy = 0;
-      lean = 0;
+    if (e.type === 'touchstart' || !touching) {
+      // 触れた点を、いまある位置からつかむ。
       touching = true;
-      regrab = true; // 触れた点を、いまある位置からつかむ
+      startTX = x;
+      grabX = phys(penAt());
+      target = prevTarget = grabX;
     } else {
-      const d = (x - lastTX) * GAIN_TOUCH;
-      px += d;
-      const dt = Math.max(0.004, (now - lastTT) / 1000);
-      vx += (d / dt - vx) * 0.35;
-      vy += ((e.touches[0].clientY - lastTY) / dt - vy) * 0.35;
-      kickTrace(); // 横に動かしただけでも、帯は動く
+      const m = lim * 1.5;
+      target = Math.max(-m, Math.min(m, grabX + (x - startTX) * GAIN_TOUCH));
     }
-    lastTX = x;
-    lastTY = e.touches[0].clientY;
-    lastTT = now;
+    kickTrace();
   }
   function onWheel(e: WheelEvent) {
     if (e.ctrlKey) return;
-    if (Math.abs(e.clientY - penY) > 2) prevYl = null;
     penY = e.clientY;
-    if (!e.deltaX) return;
     // 2本指を右へ動かすと deltaX は負(標準の設定)。指の向きに帯が動くようにする。
-    px -= e.deltaX * (e.deltaMode === 1 ? 16 : 1) * GAIN_WHEEL;
-    kickTrace();
+    if (e.deltaX && !touching) nudge(-e.deltaX * (e.deltaMode === 1 ? 16 : 1) * GAIN_WHEEL);
   }
 
   function onScroll() {
-    if (live === 'trace') {
-      kickTrace();
-      return;
-    }
+    if (live === 'trace') return; // 描く版は、送りではなく、手の横の動きで動く
     if (raf || !G) return;
     if (live === 'gather') {
       if (slack === 0) {
