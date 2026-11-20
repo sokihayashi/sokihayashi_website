@@ -4,6 +4,7 @@
 //   data-curve があると、枠の線をまっすぐではなく、ゆるい曲線にする(写真も、その曲線で裁つ)。
 //   曲線は場所で決まる(毎回同じ形)。長い波と短い波を重ねて、同じ形が繰り返して見えないようにしている。
 // 分類(領域・立場)と並び替えで行が入れ替わるたびに、枠を引き直す。
+// 分類の欄は4通り(面を並べる / 端末の選択メニュー / 面が下へ伸びる / 1つにたたむ)。どれも data-k と値で、同じ状態を書き換える。
 
 type Pt = [number, number];
 
@@ -14,26 +15,81 @@ export function mountCells(root: HTMLElement): () => void {
   const all = Array.from(root.querySelectorAll<HTMLElement>('[data-row]'));
   const ctl = document.querySelector<HTMLElement>('[data-cl-ctl]');
   const count = document.querySelector<HTMLElement>('[data-cl-count]');
-  let domain = 'all';
-  let stance = 'all';
-  let sort = 'order';
+  type Group = { key: string; label: string; opts: [string, string][] };
+  const groups: Group[] = ctl?.dataset.groups ? JSON.parse(ctl.dataset.groups) : [];
+  const state: Record<string, string> = { d: 'all', s: 'all', sort: 'order' };
+  const labelOf = (k: string, v: string) => groups.find((g) => g.key === k)?.opts.find((o) => o[0] === v)?.[1] ?? v;
+  const match = (r: HTMLElement, d: string, st: string) =>
+    (d === 'all' || (r.dataset.domain || '').split(' ').includes(d)) && (st === 'all' || r.dataset.stance === st);
+  // その値を選んだら、何件になるか(もう片方の分類は、いまのまま)。
+  const countFor = (k: string, v: string) =>
+    all.filter((r) => match(r, k === 'd' ? v : state.d, k === 's' ? v : state.s)).length;
 
   function apply() {
     const rows = all.slice().sort((a, b) => {
-      if (sort === 'title') return (a.dataset.title || '').localeCompare(b.dataset.title || '', 'ja');
+      if (state.sort === 'title') return (a.dataset.title || '').localeCompare(b.dataset.title || '', 'ja');
       return Number(a.dataset.order) - Number(b.dataset.order);
     });
     let shown = 0;
     for (const r of rows) {
-      const ok =
-        (domain === 'all' || (r.dataset.domain || '').split(' ').includes(domain)) &&
-        (stance === 'all' || r.dataset.stance === stance);
+      const ok = match(r, state.d, state.s);
       r.hidden = !ok;
       if (ok) shown++;
       list.appendChild(r);
     }
     if (count) count.textContent = String(shown);
+    sync();
     layout();
+  }
+
+  // 分類の欄を、いまの状態に合わせる(選択中の面、いまの値、件数、選べない値)。
+  function sync() {
+    if (!ctl) return;
+    ctl.querySelectorAll<HTMLButtonElement>('button[data-k]').forEach((b) => {
+      const k = b.dataset.k!;
+      const v = b.dataset.val!;
+      const on = state[k] === v;
+      b.setAttribute('aria-pressed', String(on));
+      if (k !== 'sort') {
+        const n = countFor(k, v);
+        b.disabled = n === 0 && !on;
+        const tag = b.querySelector<HTMLElement>('[data-n]');
+        if (tag) tag.textContent = String(n);
+      }
+    });
+    ctl.querySelectorAll<HTMLSelectElement>('select[data-k]').forEach((sel) => {
+      const k = sel.dataset.k!;
+      for (const o of Array.from(sel.options)) {
+        const on = state[k] === o.value;
+        if (k !== 'sort') {
+          const n = countFor(k, o.value);
+          o.textContent = `${labelOf(k, o.value)} (${n})`;
+          o.disabled = n === 0 && !on;
+        }
+      }
+      sel.value = state[k];
+    });
+    ctl.querySelectorAll<HTMLElement>('[data-v]').forEach((el) => {
+      el.textContent = labelOf(el.dataset.v!, state[el.dataset.v!]);
+    });
+    const sum = ctl.querySelector<HTMLElement>('[data-sum]');
+    if (sum) {
+      const parts = [state.d !== 'all' ? labelOf('d', state.d) : '', state.s !== 'all' ? labelOf('s', state.s) : ''].filter(Boolean);
+      sum.textContent = (parts.length ? parts : ['すべて']).concat(labelOf('sort', state.sort)).join(' / ');
+    }
+  }
+
+  // menu 版: 開いている面は1つだけ。
+  function openPop(k: string | null, refocus = false) {
+    if (!ctl) return;
+    ctl.querySelectorAll<HTMLButtonElement>('[data-open]').forEach((b) => {
+      const pop = ctl.querySelector<HTMLElement>(`[data-pop="${b.dataset.open}"]`);
+      const was = b.getAttribute('aria-expanded') === 'true';
+      const on = b.dataset.open === k;
+      b.setAttribute('aria-expanded', String(on));
+      if (pop) pop.hidden = !on;
+      if (was && !on && refocus) b.focus();
+    });
   }
 
   function layout() {
@@ -117,17 +173,34 @@ export function mountCells(root: HTMLElement): () => void {
   function onClick(e: Event) {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!b || !ctl) return;
-    const set = (attr: 'd' | 's' | 'sort', v: string) => {
-      ctl.querySelectorAll<HTMLButtonElement>(`button[data-${attr}]`).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      if (attr === 'd') domain = v;
-      else if (attr === 's') stance = v;
-      else sort = v;
-    };
-    if (b.dataset.d) set('d', b.dataset.d);
-    else if (b.dataset.s) set('s', b.dataset.s);
-    else if (b.dataset.sort) set('sort', b.dataset.sort);
-    else return;
+    if (b.dataset.open) {
+      openPop(b.getAttribute('aria-expanded') === 'true' ? null : b.dataset.open);
+      return;
+    }
+    if (b.hasAttribute('data-fold-btn')) {
+      const body = ctl.querySelector<HTMLElement>('.cl-fold-body');
+      const on = b.getAttribute('aria-expanded') !== 'true';
+      b.setAttribute('aria-expanded', String(on));
+      if (body) body.hidden = !on;
+      return;
+    }
+    if (!b.dataset.k || b.dataset.val === undefined) return;
+    state[b.dataset.k] = b.dataset.val;
+    if (b.closest('[data-pop]')) openPop(null, true);
     apply();
+  }
+  function onChange(e: Event) {
+    const sel = e.target as HTMLSelectElement;
+    if (!sel.matches?.('select[data-k]')) return;
+    state[sel.dataset.k!] = sel.value;
+    apply();
+  }
+  // 欄の外を押すか Esc で、開いている面を閉じる。
+  function onDocClick(e: Event) {
+    if (ctl && !ctl.contains(e.target as Node)) openPop(null);
+  }
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') openPop(null, true);
   }
   let rt = 0;
   function onResize() {
@@ -137,12 +210,18 @@ export function mountCells(root: HTMLElement): () => void {
 
   root.classList.add('is-live');
   ctl?.addEventListener('click', onClick);
+  ctl?.addEventListener('change', onChange);
+  document.addEventListener('click', onDocClick);
+  document.addEventListener('keydown', onKey);
   window.addEventListener('resize', onResize);
   window.addEventListener('load', layout);
   apply();
 
   return () => {
     ctl?.removeEventListener('click', onClick);
+    ctl?.removeEventListener('change', onChange);
+    document.removeEventListener('click', onDocClick);
+    document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('load', layout);
     window.clearTimeout(rt);
