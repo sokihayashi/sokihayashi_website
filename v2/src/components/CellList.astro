@@ -1,0 +1,627 @@
+---
+// 試作: Works の一覧(枠と面)。黒い地に、紙色の細い線で枠を引く。枠の中に、写真か文字が入る。
+// 上に、分類(領域・立場)と並び替えを置く。動きはない。
+// 分類と並び替えの見せ方は ctl で選ぶ:
+//   chain  … 面を並べて折り返す(最初の試作)
+//   select … 3つの面。押すと、端末の選択メニューが開く
+//   menu   … 3つの面。押すと、その面が下へ連なって伸びる
+//   fold   … 1つの面にたたむ。押すと、3組がまとめて開く
+import { getCollection } from 'astro:content';
+import { DOMAINS } from '../content.config';
+import { wallSrc } from '../data/wall';
+
+interface Props {
+  curve?: boolean; // 枠の線を、ゆるい曲線にする
+  ctl?: 'chain' | 'select' | 'menu' | 'fold';
+  keys?: string[]; // menu 版で出す組(d: 領域 / s: 立場 / sort: 並び)。既定は3つとも
+  // 升目の版の動き。止まっているあいだは直線。
+  //   sheet: 送ると、1枚の網として線が左右にしなる / bands: 列ごとの帯が左右にしなる
+  //   gather: 送ると、布をたぐるように、画面の上(戻すときは下)に、くしゃっとしわが寄って溜まり、少し遅れて流れる(前後の凹凸)
+  //   trace: 列が1本ずつの平らな帯。送りながら指(カーソル)を横に動かすと、その形が帯に書き込まれて残る
+  live?: 'sheet' | 'bands' | 'gather' | 'trace';
+  cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
+}
+const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
+  works.some((w) => w.data.domain.includes(k))
+);
+// 分類と並び替えの組。key は data-k、opts は [値, 表示名]。
+const groups: { key: string; label: string; opts: [string, string][] }[] = [
+  { key: 'd', label: '領域', opts: [['all', 'All'], ...usedDomains.map((k): [string, string] => [k, DOMAINS[k]])] },
+  { key: 's', label: '立場', opts: [['all', 'All'], ['client', 'Client'], ['original', 'Original']] },
+  { key: 'sort', label: '並び', opts: [['order', 'おすすめ順'], ['title', '名前順']] },
+];
+// menu 版に出す組。1つだけのときは、見出しを「分類」にする。
+const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.length === 1 ? { ...g, label: '分類' } : g));
+---
+
+<section class="cl-page" data-grid={cols || undefined} data-live={live}>
+  <h1 class="cl-h">Works <span class="cl-count" data-cl-count>{works.length}</span></h1>
+
+  {
+    ctl === 'chain' && (
+      <div class="cl-ctl" data-cl-ctl data-groups={JSON.stringify(groups)}>
+        <div class="cl-chain" role="group" aria-label={groups[0].label}>
+          {groups[0].opts.map(([v, l], i) => (
+            <button type="button" data-k="d" data-val={v} aria-pressed={i === 0 ? 'true' : 'false'}>{l}</button>
+          ))}
+        </div>
+        <div class="cl-ctl-row">
+          {groups.slice(1).map((g) => (
+            <div class="cl-chain" role="group" aria-label={g.label}>
+              {g.opts.map(([v, l], i) => (
+                <button type="button" data-k={g.key} data-val={v} aria-pressed={i === 0 ? 'true' : 'false'}>{l}</button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+  {
+    ctl === 'select' && (
+      <div class="cl-bar" data-cl-ctl data-groups={JSON.stringify(groups)}>
+        {groups.map((g) => (
+          <label class="cl-slot cl-cell">
+            <span class="cl-k">{g.label}</span>
+            <span class="cl-v">
+              <span data-v={g.key}>{g.opts[0][1]}</span>
+              <svg class="cl-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>
+            </span>
+            <select data-k={g.key} aria-label={g.label}>
+              {g.opts.map(([v, l]) => <option value={v}>{l}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+    )
+  }
+  {
+    ctl === 'menu' && (
+      <div class="cl-bar" data-cl-ctl data-n={shown.length} data-groups={JSON.stringify(shown)}>
+        {shown.map((g) => (
+          <div class="cl-slot">
+            <button type="button" class="cl-cell" data-open={g.key} aria-expanded="false" aria-controls={`cl-pop-${g.key}`}>
+              <span class="cl-k">{g.label}</span>
+              <span class="cl-v">
+                <span data-v={g.key}>{g.opts[0][1]}</span>
+                <svg class="cl-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>
+              </span>
+            </button>
+            <div class="cl-pop" id={`cl-pop-${g.key}`} data-pop={g.key} role="group" aria-label={g.label} hidden>
+              {g.opts.map(([v, l], i) => (
+                <button type="button" class="cl-opt" data-k={g.key} data-val={v} aria-pressed={i === 0 ? 'true' : 'false'}>
+                  <span>{l}</span>
+                  <span class="cl-n" data-n />
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  {
+    ctl === 'fold' && (
+      <div class="cl-fold" data-cl-ctl data-groups={JSON.stringify(groups)}>
+        <button type="button" class="cl-cell" data-fold-btn aria-expanded="false" aria-controls="cl-fold-body">
+          <span class="cl-k">絞り込み・並び</span>
+          <span class="cl-v">
+            <span data-sum>すべて / {groups[2].opts[0][1]}</span>
+            <svg class="cl-chev" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" /></svg>
+          </span>
+        </button>
+        <div class="cl-fold-body" id="cl-fold-body" hidden>
+          {groups.map((g) => (
+            <div class="cl-fold-g">
+              <span class="cl-k">{g.label}</span>
+              <div class="cl-chain" role="group" aria-label={g.label}>
+                {g.opts.map(([v, l], i) => (
+                  <button type="button" data-k={g.key} data-val={v} aria-pressed={i === 0 ? 'true' : 'false'}>{l}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  <div class="cl" data-cl data-curve={curve ? '' : undefined} data-live={live}>
+    <svg class="cl-lines" data-cl-lines aria-hidden="true"></svg>
+    <ol class="cl-list" data-cl-list>
+      {
+        works.map((w) => (
+          <li
+            class="cl-row"
+            data-row
+            data-domain={w.data.domain.join(' ')}
+            data-stance={w.data.stance}
+            data-order={w.data.order}
+            data-title={w.data.title}
+          >
+            <a class="cl-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
+              <img src={wallSrc(w.data.images[0], 560)} alt="" loading={live === 'gather' ? 'eager' : 'lazy'} decoding="async" />
+            </a>
+            <a class="cl-text" href={`${base}/works/${w.id}/`}>
+              <span class="cl-title">{w.data.title}</span>
+              <span class="cl-meta">{w.data.domain.map((k) => DOMAINS[k]).join(' / ')}</span>
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<script>
+  import { mountCells } from '../scripts/cells';
+
+  let dispose: (() => void) | null = null;
+  const start = () => {
+    dispose?.();
+    dispose = null;
+    const root = document.querySelector<HTMLElement>('[data-cl]');
+    if (root) dispose = mountCells(root);
+  };
+  document.addEventListener('astro:page-load', start);
+  document.addEventListener('astro:before-swap', () => {
+    dispose?.();
+    dispose = null;
+  });
+</script>
+
+<style is:global>
+  .cl-page {
+    padding: 6.5rem var(--pad) 6rem;
+    /* どの部品がはみ出しても、ページの横幅は広げない。 */
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: clip;
+    --sw: 46vw; /* 写真の面の幅 */
+    --m: 28px; /* 線がゆれるための余地(横) */
+    --vm: 24px; /* 同(縦) */
+    --rh: calc(var(--sw) * 1.5);
+    --lw: 100%; /* 一覧の幅。分類の面も、これに合わせる */
+  }
+  @media (min-width: 800px) {
+    .cl-page {
+      --sw: min(30vw, 380px);
+      --m: 44px;
+      --vm: 40px;
+      --lw: calc(var(--sw) * 2);
+    }
+  }
+  .cl-h {
+    margin: 0 0 1.4rem;
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .cl-count {
+    margin-left: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* 分類と並び替え: 細い線で区切られた、小さな面の連なり。選ばれている面だけが紙色になる。 */
+  /* 並びは grid にしない(Safari では、横に流せるはずの列が画面の外へはみ出し、ページ全体が縮んで表示された)。 */
+  .cl-ctl {
+    display: block;
+    max-width: 100%;
+    margin-bottom: 2rem;
+  }
+  .cl-ctl > * + * {
+    margin-top: 0.6rem;
+  }
+  .cl-ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .cl-chain {
+    /* 横に流さず、入りきらないぶんは次の行へ折り返す(流せることが伝わらなかったため)。 */
+    display: flex;
+    flex-wrap: wrap;
+    box-sizing: border-box;
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
+    padding: 0 0 1px 1px;
+  }
+  .cl-chain button {
+    flex: none;
+    padding: 0.62rem 0.8rem;
+    /* 面どうしが線を共有するよう、1px ずつ重ねる。 */
+    margin: 0 0 -1px -1px;
+    border: 1px solid var(--fg);
+    border-radius: 0;
+    background: #000;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .cl-chain button[aria-pressed='true'] {
+    background: var(--fg);
+    color: #000;
+  }
+  /* 分類と並び替え(たたむ版): 一覧と同じ幅の、線で区切られた面。面の中は、小さな見出しと、いまの値。 */
+  .cl-bar {
+    position: relative;
+    z-index: 5;
+    display: grid;
+    /* 幅は、入る言葉の長さに合わせる(Photography / Original / おすすめ順)。幅360でも切れない割合。 */
+    grid-template-columns: minmax(0, 1.16fr) minmax(0, 0.86fr) minmax(0, 1.04fr);
+    box-sizing: border-box;
+    max-width: var(--lw);
+    margin-bottom: 2rem;
+    /* 外枠は欄が、仕切りは面の左の線が持つ(面どうしを1pxずつ重ねると、幅が端数のときに線が二重に見えた)。 */
+    border: 1px solid var(--fg);
+  }
+  /* 組が1つだけのとき: 升目の1列ぶんの幅にして、一覧の左の列と縦にそろえる。 */
+  .cl-bar[data-n='1'] {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(var(--cw, 50%), 13rem);
+  }
+  .cl-slot {
+    position: relative;
+    min-width: 0;
+  }
+  .cl-slot + .cl-slot {
+    border-left: 1px solid var(--fg);
+  }
+  .cl-cell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 0.6rem 0.55rem 0.7rem;
+    border: 0;
+    border-radius: 0;
+    background: #000;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .cl-k {
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .cl-v {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    min-width: 0;
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+  }
+  .cl-v > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cl-chev {
+    flex: none;
+    width: 9px;
+    height: 6px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  [aria-expanded='true'] .cl-chev {
+    transform: rotate(180deg);
+  }
+  /* select 版: 面の上に、見えない選択欄を重ねる。押すと端末のメニューが開く。 */
+  .cl-cell select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    appearance: none;
+    font-size: 16px; /* 16px 未満だと、iPhone が押したときに画面を拡大する */
+    cursor: pointer;
+  }
+  /* 枠の二重線は、キーボードで動かしているときだけ出す。 */
+  .cl-cell:has(select:focus-visible),
+  .cl-cell:focus-visible,
+  .cl-opt:focus-visible,
+  .cl-chain button:focus-visible {
+    outline: 1px solid var(--fg);
+    outline-offset: 2px;
+  }
+  /* menu 版: 押した面が、下へ連なって伸びる。 */
+  .cl-pop {
+    position: absolute;
+    top: 100%;
+    left: -1px;
+    min-width: calc(100% + 2px);
+    width: max-content;
+    max-width: calc(100vw - var(--pad) * 2);
+    background: #000;
+  }
+  .cl-slot:last-child .cl-pop {
+    left: auto;
+    right: -1px;
+  }
+  .cl-pop[hidden] {
+    display: none;
+  }
+  .cl-opt {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1.1rem;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0.72rem 0.55rem;
+    margin-top: -1px;
+    border: 1px solid var(--fg);
+    border-radius: 0;
+    background: #000;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .cl-opt:first-child {
+    margin-top: 0;
+  }
+  .cl-opt[aria-pressed='true'] {
+    background: var(--fg);
+    color: #000;
+  }
+  .cl-n {
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .cl-opt[aria-pressed='true'] .cl-n {
+    color: inherit;
+  }
+  .cl-opt:disabled,
+  .cl-chain button:disabled {
+    color: var(--muted);
+    border-color: var(--fg);
+    cursor: default;
+  }
+  /* fold 版: 1つの面にたたむ。開くと、その下に3組が並ぶ。 */
+  .cl-fold {
+    max-width: var(--lw);
+    margin-bottom: 2rem;
+  }
+  .cl-fold > .cl-cell {
+    border: 1px solid var(--fg);
+  }
+  .cl-fold-body {
+    display: grid;
+    gap: 0.9rem;
+    box-sizing: border-box;
+    margin-top: -1px;
+    padding: 0.9rem 0.55rem 1rem;
+    border: 1px solid var(--fg);
+  }
+  .cl-fold-body[hidden] {
+    display: none;
+  }
+  .cl-fold-g {
+    display: grid;
+    gap: 0.45rem;
+  }
+  /* 一覧: 黒い地に、紙色の細い線の枠。枠の中に、写真か文字。 */
+  .cl {
+    position: relative;
+    max-width: var(--lw);
+  }
+  .cl-lines {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .cl-lines path {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .cl-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .cl-row {
+    display: grid;
+    grid-template-columns: var(--sw) minmax(0, 1fr);
+    grid-template-rows: var(--rh);
+    height: var(--rh);
+  }
+  .cl-row[hidden] {
+    display: none;
+  }
+  .cl-face {
+    display: block;
+    position: relative;
+    width: calc(var(--sw) + var(--m) * 2);
+    height: calc(var(--rh) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 0 calc(var(--m) * -1);
+    overflow: hidden;
+    clip-path: inset(var(--vm) var(--m));
+  }
+  .cl-face img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .cl-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 1.3rem 1.2rem 1rem calc(var(--m) * 0.5 + 12px);
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .cl-title {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .cl-meta {
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  /* 升目の版: 写真の面の下に、文字の面。スマホで2列(または1列)。 */
+  .cl-page[data-grid] {
+    --cols: 2;
+    --ar: 1.3; /* 写真の面の縦横比(縦 ÷ 横) */
+    --ch: 5.3rem; /* 文字の面の高さ(題名2行と分類1行) */
+    --m: 20px;
+    --vm: 18px;
+    --cw: calc((100vw - var(--pad) * 2) / var(--cols)); /* 1列の幅。JS が実寸で上書きする */
+    --ph: calc(var(--cw) * var(--ar));
+  }
+  .cl-page[data-grid='1'] {
+    --cols: 1;
+    --ar: 1;
+    --ch: 4.6rem;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-grid] {
+      --lw: min(100%, 1140px);
+      --m: 30px;
+      --vm: 26px;
+    }
+    .cl-page[data-grid='2'] {
+      --cols: 3;
+    }
+    .cl-page[data-grid='1'] {
+      --cols: 2;
+    }
+  }
+  /* 広い画面では、面を大きくせず、列を増やす。 */
+  @media (min-width: 1100px) {
+    .cl-page[data-grid] {
+      --lw: 100%;
+    }
+    .cl-page[data-grid='2'] {
+      --cols: 4;
+    }
+  }
+  @media (min-width: 1600px) {
+    .cl-page[data-grid='2'] {
+      --cols: 5;
+    }
+  }
+  /* 帯の版: 列のあいだに、すき間を空ける(列が1本ずつの帯に見えるように)。 */
+  .cl-page[data-live='bands'],
+  .cl-page[data-live='trace'] {
+    --g: 12px;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-live='bands'],
+    .cl-page[data-live='trace'] {
+      --g: 20px;
+    }
+  }
+  .cl-page[data-live='bands'] .cl-list,
+  .cl-page[data-live='trace'] .cl-list {
+    column-gap: var(--g);
+  }
+  /* 描く版: 帯が大きく横へ動けるよう、写真の箱の余地を広げる。 */
+  .cl-page[data-grid][data-live='trace'] {
+    --m: 46px;
+    --vm: 26px;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-grid][data-live='trace'] {
+      --m: 84px;
+      --vm: 40px;
+    }
+  }
+  .cl-page[data-live] .cl-text {
+    will-change: transform;
+  }
+  /* たぐる版: 動いているあいだ、写真は上に重ねた canvas に、しわの形で描く(もとの写真は隠す)。 */
+  .cl-page[data-grid][data-live='gather'] .cl-face {
+    width: 100%;
+    height: var(--ph);
+    margin: 0;
+    clip-path: none !important;
+  }
+  .cl-gl {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .cl-page[data-grid][data-live='gather'] .cl-text {
+    transform-origin: 0 0;
+  }
+  .cl-page[data-grid] .cl-list {
+    display: grid;
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  }
+  .cl-page[data-grid] .cl-row {
+    display: block;
+    height: calc(var(--ph) + var(--ch));
+  }
+  .cl-page[data-grid] .cl-row[hidden] {
+    display: none;
+  }
+  .cl-page[data-grid] .cl-face {
+    width: calc(var(--cw) + var(--m) * 2);
+    height: calc(var(--ph) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 calc(var(--vm) * -1) calc(var(--m) * -1);
+  }
+  .cl-page[data-grid] .cl-text {
+    position: relative;
+    box-sizing: border-box;
+    height: var(--ch);
+    gap: 0.25rem;
+    padding: 0.8rem 0.9rem 0 calc(var(--m) * 0.32 + 9px);
+  }
+  .cl-page[data-grid] .cl-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: 0.84rem;
+    line-height: 1.4;
+  }
+  .cl-page[data-grid] .cl-meta {
+    font-size: 0.66rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* JS が動かないときは、まっすぐな枠を CSS で引く。 */
+  .cl:not(.is-live) .cl-row {
+    border: 1px solid var(--fg);
+    margin-top: -1px;
+  }
+</style>

@@ -1,0 +1,263 @@
+---
+// 「描く」ヒーローの舞台。試作ページ(/lab/draw/, /lab/gum/)で共有する。
+import { getCollection } from 'astro:content';
+import { wallSrc } from '../data/wall';
+
+interface Props {
+  gum?: boolean; // 描く帯もゴムにする版
+  nav?: 'trace' | 'edge' | 'mix'; // 行き先の案(なぞる / 引き切る / 混ざる)。指定しなければ、右下のゴムの帯
+  paper?: boolean; // 紙の版(浮きと影)。右下のゴムの帯は置かない
+}
+const { gum = false, nav, paper = false } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+  <!--
+    なぞると、軌跡が帯になり、帯の中に作品が順に現れる。紙は28°で流れ続ける。
+    JS が動かない環境や「動きを減らす」設定では、作品名の一覧として読める。
+  -->
+  <div class:list={['draw', nav && 'has-nav', nav && `nav-${nav}`]} data-draw-root data-gum={gum ? '' : undefined} data-paper={paper ? '' : undefined} data-nav={nav}>
+    <canvas class="draw-canvas" data-canvas aria-hidden="true"></canvas>
+
+    <ul class="draw-list">
+      {
+        works.map((w) => (
+          <li>
+            <a
+              data-work
+              data-src={wallSrc(w.data.images[0], 560)}
+              data-large={wallSrc(w.data.images[0], 1500)}
+              href={`${base}/works/${w.id}/`}
+            >
+              {w.data.title}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <p class="draw-label" data-label aria-hidden="true">Soki Hayashi</p>
+    <!-- ひらいた作品の下に出る、題名と入口。 -->
+    <a class="draw-open" data-open data-keep href={`${base}/works/`}></a>
+{
+      nav ? (
+        <nav class="draw-nav" data-nav-box aria-label="ページ">
+          <a data-nav draggable="false" href={`${base}/works/`}>Works</a>
+          <a data-nav draggable="false" href={`${base}/about/`}>About</a>
+          <a data-nav draggable="false" href={`${base}/contact/`}>Contact</a>
+        </nav>
+      ) : paper ? null : (
+        <a class="tape draw-exit" data-keep data-band draggable="false" href={`${base}/works/`}>Works</a>
+      )
+    }
+  </div>
+
+  <script>
+    import { mountDraw } from '../scripts/draw';
+
+    let dispose: (() => void) | undefined;
+    document.addEventListener('astro:page-load', () => {
+      dispose?.();
+      dispose = undefined;
+      const root = document.querySelector<HTMLElement>('[data-draw-root]');
+      if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      dispose = mountDraw(root);
+    });
+    document.addEventListener('astro:before-swap', () => {
+      dispose?.();
+      dispose = undefined;
+    });
+  </script>
+
+<style is:global>
+  /* ---- ふつうのページ(JS なし / 動きを減らす設定): 作品名の一覧 ---- */
+  .draw {
+    padding: 7rem var(--pad) 4rem;
+  }
+  .draw-canvas,
+  .draw-label {
+    display: none;
+  }
+  .draw-list {
+    list-style: none;
+    margin: 0 0 2.5rem;
+    padding: 0;
+    display: grid;
+    gap: 0.7rem;
+    font-size: 1.1rem;
+  }
+  /* ---- 描く(.is-live) ---- */
+  html.draw-on,
+  html.draw-on body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html.draw-on .site-foot {
+    display: none;
+  }
+  .draw.is-live {
+    position: fixed;
+    inset: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: crosshair;
+  }
+  .draw.is-live.is-over {
+    cursor: pointer;
+  }
+  .draw.is-live .draw-canvas {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  /* 作品名の一覧は、読み上げとキーボードのために残す(見た目には出さない)。 */
+  .draw.is-live .draw-list {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .draw.is-live .draw-label {
+    display: block;
+    position: absolute;
+    left: max(20px, var(--pad));
+    right: 8.5rem;
+    bottom: calc(1.5rem + env(safe-area-inset-bottom));
+    z-index: 5;
+    margin: 0;
+    font-size: 0.9rem;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #fff;
+    mix-blend-mode: difference;
+    pointer-events: none;
+  }
+  .draw-open {
+    display: none;
+  }
+  /* ひらいた作品の題名と入口。作品の左下に付いて、紙と一緒に流れる。 */
+  .draw.is-live .draw-open {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 5;
+    padding: 0.55rem 0.9rem;
+    margin-top: -12px;
+    background: var(--fg);
+    color: #000;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+    white-space: pre;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    cursor: pointer;
+  }
+  .draw.is-live .draw-open.is-on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* ひらいているあいだ、左下の題名は消す(作品の下に出ているので)。 */
+  .draw.is-live.is-open .draw-label {
+    opacity: 0;
+  }
+  /* 出口の帯は、キャンバスに描く(ゴムのように伸びるので)。
+     このリンクは同じ場所に重ねた透明な「つまむところ」で、押すだけでも移動できる。 */
+  .draw.is-live .draw-exit {
+    position: absolute;
+    right: 0;
+    bottom: 29px;
+    z-index: 6;
+    width: 240px;
+    padding: 0;
+    opacity: 0;
+    -webkit-user-drag: none;
+    touch-action: none;
+    transform-origin: 100% 50%;
+    transform: rotate(28deg) translateX(72px);
+    cursor: grab;
+  }
+  .draw.is-live .draw-exit:active {
+    cursor: grabbing;
+  }
+  /* ---- 行き先の案(なぞる / 引き切る / 混ざる) ---- */
+  .draw-nav {
+    display: flex;
+    gap: 1.5rem;
+  }
+  /* 行き先は文字だけ。帯の上では白黒が反転する。 */
+  .draw.is-live .draw-nav {
+    position: absolute;
+    left: max(8px, calc(var(--pad) - 12px));
+    right: max(8px, calc(var(--pad) - 12px));
+    bottom: calc(0.7rem + env(safe-area-inset-bottom));
+    z-index: 6;
+    justify-content: space-between;
+    gap: 0;
+    mix-blend-mode: difference;
+  }
+  .draw.is-live .draw-nav a {
+    padding: 0.8rem 12px;
+    color: #fff;
+    font-size: 1rem;
+    letter-spacing: 0.03em;
+    text-decoration: none;
+    -webkit-user-drag: none;
+    touch-action: none;
+    transition: opacity 0.2s;
+  }
+  .draw.is-live .draw-nav.is-aiming a:not(.is-aim) {
+    opacity: 0.3;
+  }
+  @media (min-width: 800px) {
+    .draw.is-live .draw-nav {
+      left: auto;
+      gap: 3.5rem;
+    }
+  }
+  /* 混ざる: 行き先は帯の中に出るので、文字の一覧は読み上げとキーボードのためだけに残す。 */
+  .draw.is-live.nav-mix .draw-nav {
+    width: 1px;
+    height: 1px;
+    left: 0;
+    right: auto;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  /* 作品の題名は、行き先の文字の上の行に置く。 */
+  .draw.is-live.nav-trace .draw-label,
+  .draw.is-live.nav-edge .draw-label {
+    right: max(20px, var(--pad));
+    bottom: calc(4rem + env(safe-area-inset-bottom));
+  }
+  .draw.is-live.nav-mix .draw-label {
+    right: max(20px, var(--pad));
+  }
+  /* 試すあいだ、上の文字メニューは隠す(行き先が2か所に出ないように。消してはいない)。 */
+  html.draw-navs .site-bar .mainnav {
+    visibility: hidden;
+  }
+  @media (orientation: portrait) {
+    .draw.is-live .draw-exit {
+      transform: rotate(62deg) translateX(72px);
+    }
+  }
+</style>

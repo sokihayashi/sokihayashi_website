@@ -1,0 +1,9 @@
+---
+// 試作: Works の一覧(枠と面) — 列が1本ずつの帯。止まっているあいだは直線。送ると、帯が順にしなる。
+import Base from '../../layouts/Base.astro';
+import CellList from '../../components/CellList.astro';
+---
+
+<Base title="Soki Hayashi — cells-bands (試作)">
+  <CellList ctl="menu" keys={['d']} cols={2} live="bands" />
+</Base>

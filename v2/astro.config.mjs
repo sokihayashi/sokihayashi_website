@@ -1,11 +1,14 @@
 import { defineConfig } from 'astro/config';
 
-// GitHub Pages(プロジェクトページ)用の設定。
-// 公開URL: https://sokihayashi.github.io/sokihayashi_website/
+// 公開先ごとに URL が変わるので、環境変数で切り替えられるようにしてある。
 //
-// ▼独自ドメインに移行するとき
-//   base を '/' に変えて、site を本番ドメイン(例 https://soki-hayashi.com)にする。
+//   何も指定しない … GitHub Pages(確認用)
+//     https://sokihayashi.github.io/sokihayashi_website/
+//
+//   Cloudflare Pages / 独自ドメイン … ビルド時に次の2つを指定する
+//     SITE_URL=https://www.soki-hayashi.com
+//     BASE_PATH=/
 export default defineConfig({
-  site: 'https://sokihayashi.github.io',
-  base: '/sokihayashi_website',
+  site: process.env.SITE_URL ?? 'https://sokihayashi.github.io',
+  base: process.env.BASE_PATH ?? '/sokihayashi_website',
 });

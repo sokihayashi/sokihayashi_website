@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - claude/eager-franklin-MN2Xv
+      - claude/diagonal-cut
     paths:
       - 'v2/**'
       - '.github/workflows/deploy-v2-pages.yml'
