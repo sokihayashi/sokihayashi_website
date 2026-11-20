@@ -120,25 +120,21 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
     gap: 0.6rem;
   }
   .cl-chain {
+    /* 横に流さず、入りきらないぶんは次の行へ折り返す(流せることが伝わらなかったため)。 */
     display: flex;
+    flex-wrap: wrap;
     box-sizing: border-box;
     width: fit-content;
     max-width: 100%;
     min-width: 0;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    border: 1px solid var(--fg);
-    scrollbar-width: none;
-  }
-  .cl-chain::-webkit-scrollbar {
-    display: none;
+    padding: 0 0 1px 1px;
   }
   .cl-chain button {
     flex: none;
-    margin: 0;
     padding: 0.62rem 0.8rem;
-    border: 0;
-    border-left: 1px solid var(--fg);
+    /* 面どうしが線を共有するよう、1px ずつ重ねる。 */
+    margin: 0 0 -1px -1px;
+    border: 1px solid var(--fg);
     border-radius: 0;
     background: #000;
     color: var(--fg);
@@ -147,9 +143,6 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
     letter-spacing: 0.02em;
     white-space: nowrap;
     cursor: pointer;
-  }
-  .cl-chain button:first-child {
-    border-left: 0;
   }
   .cl-chain button[aria-pressed='true'] {
     background: var(--fg);
