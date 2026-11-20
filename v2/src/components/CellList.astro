@@ -1,0 +1,230 @@
+---
+// 試作: Works の一覧(枠と面)。黒い地に、紙色の細い線で枠を引く。枠の中に、写真か文字が入る。
+// 上に、分類(領域・立場)と並び替えを置く。動きはない。
+import { getCollection } from 'astro:content';
+import { DOMAINS } from '../content.config';
+import { wallSrc } from '../data/wall';
+
+interface Props {
+  curve?: boolean; // 枠の線を、ゆるい曲線にする
+}
+const { curve = false } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
+  works.some((w) => w.data.domain.includes(k))
+);
+---
+
+<section class="cl-page">
+  <h1 class="cl-h">Works <span class="cl-count" data-cl-count>{works.length}</span></h1>
+
+  <div class="cl-ctl" data-cl-ctl>
+    <div class="cl-chain" role="group" aria-label="領域">
+      <button type="button" data-d="all" aria-pressed="true">All</button>
+      {usedDomains.map((k) => <button type="button" data-d={k} aria-pressed="false">{DOMAINS[k]}</button>)}
+    </div>
+    <div class="cl-ctl-row">
+      <div class="cl-chain" role="group" aria-label="立場">
+        <button type="button" data-s="all" aria-pressed="true">All</button>
+        <button type="button" data-s="client" aria-pressed="false">Client</button>
+        <button type="button" data-s="original" aria-pressed="false">Original</button>
+      </div>
+      <div class="cl-chain" role="group" aria-label="並び替え">
+        <button type="button" data-sort="order" aria-pressed="true">おすすめ順</button>
+        <button type="button" data-sort="title" aria-pressed="false">名前順</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="cl" data-cl data-curve={curve ? '' : undefined}>
+    <svg class="cl-lines" data-cl-lines aria-hidden="true"></svg>
+    <ol class="cl-list" data-cl-list>
+      {
+        works.map((w) => (
+          <li
+            class="cl-row"
+            data-row
+            data-domain={w.data.domain.join(' ')}
+            data-stance={w.data.stance}
+            data-order={w.data.order}
+            data-title={w.data.title}
+          >
+            <a class="cl-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
+              <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+            </a>
+            <a class="cl-text" href={`${base}/works/${w.id}/`}>
+              <span class="cl-title">{w.data.title}</span>
+              <span class="cl-meta">{w.data.domain.map((k) => DOMAINS[k]).join(' / ')}</span>
+            </a>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<script>
+  import { mountCells } from '../scripts/cells';
+
+  let dispose: (() => void) | null = null;
+  const start = () => {
+    dispose?.();
+    dispose = null;
+    const root = document.querySelector<HTMLElement>('[data-cl]');
+    if (root) dispose = mountCells(root);
+  };
+  document.addEventListener('astro:page-load', start);
+  document.addEventListener('astro:before-swap', () => {
+    dispose?.();
+    dispose = null;
+  });
+</script>
+
+<style is:global>
+  .cl-page {
+    padding: 6.5rem var(--pad) 6rem;
+  }
+  .cl-h {
+    margin: 0 0 1.4rem;
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .cl-count {
+    margin-left: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  /* 分類と並び替え: 細い線で区切られた、小さな面の連なり。選ばれている面だけが紙色になる。 */
+  .cl-ctl {
+    display: grid;
+    gap: 0.6rem;
+    margin-bottom: 2rem;
+  }
+  .cl-ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .cl-chain {
+    display: flex;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--fg);
+    scrollbar-width: none;
+  }
+  .cl-chain::-webkit-scrollbar {
+    display: none;
+  }
+  .cl-chain button {
+    flex: none;
+    margin: 0;
+    padding: 0.62rem 0.8rem;
+    border: 0;
+    border-left: 1px solid var(--fg);
+    border-radius: 0;
+    background: #000;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .cl-chain button:first-child {
+    border-left: 0;
+  }
+  .cl-chain button[aria-pressed='true'] {
+    background: var(--fg);
+    color: #000;
+  }
+  /* 一覧: 黒い地に、紙色の細い線の枠。枠の中に、写真か文字。 */
+  .cl {
+    --sw: 46vw; /* 写真の面の幅 */
+    --m: 28px; /* 線がゆれるための余地(横) */
+    --vm: 24px; /* 同(縦) */
+    --rh: calc(var(--sw) * 1.5);
+    position: relative;
+  }
+  @media (min-width: 800px) {
+    .cl {
+      --sw: min(30vw, 380px);
+      --m: 44px;
+      --vm: 40px;
+      max-width: calc(var(--sw) * 2);
+    }
+  }
+  .cl-lines {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .cl-lines path {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .cl-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .cl-row {
+    display: grid;
+    grid-template-columns: var(--sw) minmax(0, 1fr);
+    grid-template-rows: var(--rh);
+    height: var(--rh);
+  }
+  .cl-row[hidden] {
+    display: none;
+  }
+  .cl-face {
+    display: block;
+    position: relative;
+    width: calc(var(--sw) + var(--m) * 2);
+    height: calc(var(--rh) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 0 calc(var(--m) * -1);
+    overflow: hidden;
+    clip-path: inset(var(--vm) var(--m));
+  }
+  .cl-face img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .cl-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 1.3rem 1.2rem 1rem calc(var(--m) * 0.5 + 12px);
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .cl-title {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .cl-meta {
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  /* JS が動かないときは、まっすぐな枠を CSS で引く。 */
+  .cl:not(.is-live) .cl-row {
+    border: 1px solid var(--fg);
+    margin-top: -1px;
+  }
+</style>
