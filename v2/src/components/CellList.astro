@@ -13,8 +13,10 @@ import { wallSrc } from '../data/wall';
 interface Props {
   curve?: boolean; // 枠の線を、ゆるい曲線にする
   ctl?: 'chain' | 'select' | 'menu' | 'fold';
+  keys?: string[]; // menu 版で出す組(d: 領域 / s: 立場 / sort: 並び)。既定は3つとも
+  cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
-const { curve = false, ctl = 'chain' } = Astro.props;
+const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0 } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -29,9 +31,11 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
   { key: 's', label: '立場', opts: [['all', 'All'], ['client', 'Client'], ['original', 'Original']] },
   { key: 'sort', label: '並び', opts: [['order', 'おすすめ順'], ['title', '名前順']] },
 ];
+// menu 版に出す組。1つだけのときは、見出しを「分類」にする。
+const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.length === 1 ? { ...g, label: '分類' } : g));
 ---
 
-<section class="cl-page">
+<section class="cl-page" data-grid={cols || undefined}>
   <h1 class="cl-h">Works <span class="cl-count" data-cl-count>{works.length}</span></h1>
 
   {
@@ -74,8 +78,8 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
   }
   {
     ctl === 'menu' && (
-      <div class="cl-bar" data-cl-ctl data-groups={JSON.stringify(groups)}>
-        {groups.map((g) => (
+      <div class="cl-bar" data-cl-ctl data-n={shown.length} data-groups={JSON.stringify(shown)}>
+        {shown.map((g) => (
           <div class="cl-slot">
             <button type="button" class="cl-cell" data-open={g.key} aria-expanded="false" aria-controls={`cl-pop-${g.key}`}>
               <span class="cl-k">{g.label}</span>
@@ -256,6 +260,11 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
     margin-bottom: 2rem;
     /* 外枠は欄が、仕切りは面の左の線が持つ(面どうしを1pxずつ重ねると、幅が端数のときに線が二重に見えた)。 */
     border: 1px solid var(--fg);
+  }
+  /* 組が1つだけのとき: 升目の1列ぶんの幅にして、一覧の左の列と縦にそろえる。 */
+  .cl-bar[data-n='1'] {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(var(--cw, 50%), 13rem);
   }
   .cl-slot {
     position: relative;
@@ -479,6 +488,71 @@ const groups: { key: string; label: string; opts: [string, string][] }[] = [
     font-size: 0.72rem;
     letter-spacing: 0.03em;
     color: var(--muted);
+  }
+  /* 升目の版: 写真の面の下に、文字の面。スマホで2列(または1列)。 */
+  .cl-page[data-grid] {
+    --cols: 2;
+    --ar: 1.3; /* 写真の面の縦横比(縦 ÷ 横) */
+    --ch: 5.3rem; /* 文字の面の高さ(題名2行と分類1行) */
+    --m: 20px;
+    --vm: 18px;
+    --cw: calc((100vw - var(--pad) * 2) / var(--cols)); /* 1列の幅。JS が実寸で上書きする */
+    --ph: calc(var(--cw) * var(--ar));
+  }
+  .cl-page[data-grid='1'] {
+    --cols: 1;
+    --ar: 1;
+    --ch: 4.6rem;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-grid] {
+      --lw: min(100%, 1140px);
+      --m: 30px;
+      --vm: 26px;
+    }
+    .cl-page[data-grid='2'] {
+      --cols: 3;
+    }
+    .cl-page[data-grid='1'] {
+      --cols: 2;
+    }
+  }
+  .cl-page[data-grid] .cl-list {
+    display: grid;
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  }
+  .cl-page[data-grid] .cl-row {
+    display: block;
+    height: calc(var(--ph) + var(--ch));
+  }
+  .cl-page[data-grid] .cl-row[hidden] {
+    display: none;
+  }
+  .cl-page[data-grid] .cl-face {
+    width: calc(var(--cw) + var(--m) * 2);
+    height: calc(var(--ph) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 calc(var(--vm) * -1) calc(var(--m) * -1);
+  }
+  .cl-page[data-grid] .cl-text {
+    position: relative;
+    box-sizing: border-box;
+    height: var(--ch);
+    gap: 0.25rem;
+    padding: 0.8rem 0.9rem 0 calc(var(--m) * 0.32 + 9px);
+  }
+  .cl-page[data-grid] .cl-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: 0.84rem;
+    line-height: 1.4;
+  }
+  .cl-page[data-grid] .cl-meta {
+    font-size: 0.66rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   /* JS が動かないときは、まっすぐな枠を CSS で引く。 */
   .cl:not(.is-live) .cl-row {

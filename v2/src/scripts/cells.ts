@@ -15,6 +15,7 @@ export function mountCells(root: HTMLElement): () => void {
   const all = Array.from(root.querySelectorAll<HTMLElement>('[data-row]'));
   const ctl = document.querySelector<HTMLElement>('[data-cl-ctl]');
   const count = document.querySelector<HTMLElement>('[data-cl-count]');
+  const page = root.closest<HTMLElement>('.cl-page');
   type Group = { key: string; label: string; opts: [string, string][] };
   const groups: Group[] = ctl?.dataset.groups ? JSON.parse(ctl.dataset.groups) : [];
   const state: Record<string, string> = { d: 'all', s: 'all', sort: 'order' };
@@ -92,36 +93,17 @@ export function mountCells(root: HTMLElement): () => void {
     });
   }
 
-  function layout() {
-    const rows = all.filter((r) => !r.hidden).sort((a, b) => a.offsetTop - b.offsetTop);
-    const n = rows.length;
-    const cs = getComputedStyle(root);
-    const m = parseFloat(cs.getPropertyValue('--m')) || 28;
-    const vm = parseFloat(cs.getPropertyValue('--vm')) || 24;
-    const W = list.clientWidth;
-    const rh = rows[0]?.offsetHeight || 0;
-    const face0 = rows[0]?.querySelector<HTMLElement>('[data-face]');
-    const sw = face0 ? face0.offsetWidth - m * 2 : W / 2;
-    const H = n * rh;
-    svg.setAttribute('width', String(W));
-    svg.setAttribute('height', String(H));
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    if (!n) {
-      svg.innerHTML = '';
-      return;
-    }
-    const AV = curve ? m * 0.5 : 0; // 縦の線のゆれ幅
-    const AH = curve ? vm * 0.34 : 0; // 横の線のゆれ幅
-    const bx = [0, sw, W]; // 縦の線の、もとの位置
+  // 線の網。bx は縦の線の、by は横の線の、もとの位置。AV / AH は、ゆれ幅。
+  function mesh(bx: number[], by: number[], AV: number, AH: number) {
     // 縦の線 k の、高さ y での位置。
     const X = (k: number, y: number) =>
       bx[k] + AV * (0.62 * Math.sin(y / 260 + k * 1.9 + 0.4) + 0.38 * Math.sin(y / 97 + k * 4.1 + 1.3));
     // 横の線 i の、横位置 x での高さ。
     const Y = (i: number, x: number) =>
-      i * rh + AH * (0.62 * Math.sin(x / 170 + i * 2.3) + 0.38 * Math.sin(x / 61 + i * 0.7 + 2));
+      by[i] + AH * (0.62 * Math.sin(x / 170 + i * 2.3) + 0.38 * Math.sin(x / 61 + i * 0.7 + 2));
     // 線の交点。
     const corner = (i: number, k: number): Pt => {
-      const y = Y(i, X(k, i * rh));
+      const y = Y(i, X(k, by[i]));
       return [X(k, y), y];
     };
     const step = 10;
@@ -149,14 +131,47 @@ export function mountCells(root: HTMLElement): () => void {
       out.push(b);
       return out;
     };
-    const d = (pts: Pt[]) => 'M' + pts.map((p) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('L');
+    // 縦の線 k を、横の線 i0 から i1 まで、ひと続きで。
+    const vRun = (k: number, i0: number, i1: number): Pt[] => {
+      let pts: Pt[] = [];
+      for (let i = i0; i < i1; i++) pts = pts.concat(vEdge(k, i, i + 1).slice(i > i0 ? 1 : 0));
+      return pts;
+    };
+    return { hEdge, vEdge, vRun };
+  }
+  const d = (pts: Pt[]) => 'M' + pts.map((p) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('L');
+  const sizeSvg = (W: number, H: number) => {
+    svg.setAttribute('width', String(W));
+    svg.setAttribute('height', String(H));
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  };
+
+  function layout() {
+    if (page?.hasAttribute('data-grid')) layoutGrid();
+    else layoutRows();
+  }
+
+  // 最初の版: 1行が「写真の面 | 文字の面」。
+  function layoutRows() {
+    const rows = all.filter((r) => !r.hidden).sort((a, b) => a.offsetTop - b.offsetTop);
+    const n = rows.length;
+    const cs = getComputedStyle(root);
+    const m = parseFloat(cs.getPropertyValue('--m')) || 28;
+    const vm = parseFloat(cs.getPropertyValue('--vm')) || 24;
+    const W = list.clientWidth;
+    const rh = rows[0]?.offsetHeight || 0;
+    const face0 = rows[0]?.querySelector<HTMLElement>('[data-face]');
+    const sw = face0 ? face0.offsetWidth - m * 2 : W / 2;
+    sizeSvg(W, n * rh);
+    if (!n) {
+      svg.innerHTML = '';
+      return;
+    }
+    const by = Array.from({ length: n + 1 }, (_, i) => i * rh);
+    const { hEdge, vEdge, vRun } = mesh([0, sw, W], by, curve ? m * 0.5 : 0, curve ? vm * 0.34 : 0);
     let paths = '';
     for (let i = 0; i <= n; i++) paths += `<path d="${d(hEdge(i, 0, 2))}"/>`;
-    for (let k = 0; k < 3; k++) {
-      let pts: Pt[] = [];
-      for (let i = 0; i < n; i++) pts = pts.concat(vEdge(k, i, i + 1).slice(i ? 1 : 0));
-      paths += `<path d="${d(pts)}"/>`;
-    }
+    for (let k = 0; k < 3; k++) paths += `<path d="${d(vRun(k, 0, n))}"/>`;
     svg.innerHTML = paths;
     // 写真は、枠の形で裁つ(写真そのものは歪めない)。
     rows.forEach((r, i) => {
@@ -167,6 +182,57 @@ export function mountCells(root: HTMLElement): () => void {
         .concat(hEdge(i + 1, 0, 1).reverse().slice(1))
         .concat(vEdge(0, i, i + 1).reverse().slice(1, -1));
       f.style.clipPath = `polygon(${poly.map((p) => `${(p[0] + m).toFixed(1)}px ${(p[1] - i * rh + vm).toFixed(1)}px`).join(',')})`;
+    });
+  }
+
+  // 升目の版: 1つの作品が「写真の面」と、その下の「文字の面」。横に cols 列。
+  // 横の線は1段につき2本(写真の上、文字の上)。最後の段が欠けるときは、作品のあるところまでしか線を引かない。
+  function layoutGrid() {
+    const rows = all.filter((r) => !r.hidden);
+    const n = rows.length;
+    const W = list.clientWidth;
+    const cols = Math.max(1, getComputedStyle(list).gridTemplateColumns.split(' ').filter(Boolean).length);
+    const cw = W / cols;
+    page!.style.setProperty('--cw', `${cw}px`);
+    const cs = getComputedStyle(root);
+    const m = parseFloat(cs.getPropertyValue('--m')) || 20;
+    const vm = parseFloat(cs.getPropertyValue('--vm')) || 18;
+    const ph = cw * (parseFloat(cs.getPropertyValue('--ar')) || 1.3);
+    const rowH = rows[0]?.getBoundingClientRect().height || 0; // 端数のまま使う(丸めると、下の段ほど線がずれる)
+    const R = Math.ceil(n / cols);
+    sizeSvg(W, R * rowH);
+    if (!n) {
+      svg.innerHTML = '';
+      return;
+    }
+    const inRow = (r: number) => Math.min(cols, n - r * cols); // その段にある作品の数
+    const bx = Array.from({ length: cols + 1 }, (_, k) => k * cw);
+    const by: number[] = [];
+    for (let r = 0; r < R; r++) by.push(r * rowH, r * rowH + ph);
+    by.push(R * rowH);
+    const { hEdge, vEdge, vRun } = mesh(bx, by, curve ? m * 0.32 : 0, curve ? vm * 0.25 : 0);
+    let paths = '';
+    for (let r = 0; r < R; r++) {
+      paths += `<path d="${d(hEdge(2 * r, 0, r ? inRow(r - 1) : inRow(0)))}"/>`;
+      paths += `<path d="${d(hEdge(2 * r + 1, 0, inRow(r)))}"/>`;
+    }
+    paths += `<path d="${d(hEdge(2 * R, 0, inRow(R - 1)))}"/>`;
+    for (let k = 0; k <= cols; k++) {
+      let last = R;
+      while (last > 0 && inRow(last - 1) < k) last--;
+      if (last > 0) paths += `<path d="${d(vRun(k, 0, 2 * last))}"/>`;
+    }
+    svg.innerHTML = paths;
+    rows.forEach((row, idx) => {
+      const f = row.querySelector<HTMLElement>('[data-face]');
+      if (!f) return;
+      const r = Math.floor(idx / cols);
+      const c = idx % cols;
+      const poly = hEdge(2 * r, c, c + 1)
+        .concat(vEdge(c + 1, 2 * r, 2 * r + 1).slice(1))
+        .concat(hEdge(2 * r + 1, c, c + 1).reverse().slice(1))
+        .concat(vEdge(c, 2 * r, 2 * r + 1).reverse().slice(1, -1));
+      f.style.clipPath = `polygon(${poly.map((p) => `${(p[0] - c * cw + m).toFixed(1)}px ${(p[1] - r * rowH + vm).toFixed(1)}px`).join(',')})`;
     });
   }
 
@@ -226,5 +292,6 @@ export function mountCells(root: HTMLElement): () => void {
     window.removeEventListener('load', layout);
     window.clearTimeout(rt);
     root.classList.remove('is-live');
+    page?.style.removeProperty('--cw');
   };
 }
