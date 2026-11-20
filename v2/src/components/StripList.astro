@@ -5,9 +5,14 @@ import { DOMAINS } from '../content.config';
 import { wallSrc } from '../data/wall';
 
 interface Props {
-  mode?: 'sway' | 'drum'; // うねる / 巻く(3D)
+  mode?: 'sway' | 'drum' | 'still'; // うねる / 巻く(3D) / 動かさない
+  // 題名の側の形。指定すると、題名も「枠で区切られた面」になる(トップの帯と同じ決まり)。
+  //   dark  … 写真の面の右に、暗い面。白い文字
+  //   paper … 写真の面の右に、紙色の面。黒い文字
+  //   chain … 1本の連なり。写真の面の下に、題名の短い面が続く
+  cell?: 'dark' | 'paper' | 'chain';
 }
-const { mode = 'sway' } = Astro.props;
+const { mode = 'sway', cell } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -17,7 +22,11 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
 
 <section class="strip-page">
   <h1 class="strip-h">Works</h1>
-  <ol class:list={['strip', `strip-${mode}`]} data-strip-root data-strip={mode}>
+  <ol
+    class:list={['strip', `strip-${mode}`, cell && 'strip-cells', cell && `strip-cell-${cell}`]}
+    data-strip-root={mode === 'still' ? undefined : ''}
+    data-strip={mode}
+  >
     {
       works.map((w) => (
         <li class="strip-row" data-row>
@@ -131,6 +140,49 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     font-size: 0.72rem;
     letter-spacing: 0.03em;
     color: var(--muted);
+  }
+  /* ---- 題名も面にする版 ----
+     すべての要素を、黒い線2pxで区切られた、不透明な面にする。面の中に、写真か文字が入る。 */
+  .strip-cells .strip-text {
+    margin: 1px 0 1px 2px;
+    padding: 0.85rem 0.9rem;
+    border-top: 0;
+    background: var(--line);
+  }
+  @media (min-width: 800px) {
+    /* 広い画面では、題名の面を写真の面と同じ幅にする(横いっぱいの板にしない)。 */
+    .strip-cells .strip-text {
+      max-width: var(--sw);
+      box-sizing: border-box;
+    }
+  }
+  .strip-cell-paper .strip-text {
+    background: var(--fg);
+    color: #000;
+  }
+  .strip-cell-paper .strip-meta {
+    color: #5c5952;
+  }
+  /* 1本の連なり: 写真の面の下に、題名の短い面が続く。 */
+  .strip-cell-chain {
+    --sw: 64vw;
+  }
+  @media (min-width: 800px) {
+    .strip-cell-chain {
+      --sw: min(34vw, 420px);
+    }
+  }
+  .strip-cell-chain .strip-row {
+    display: block;
+    height: auto;
+  }
+  .strip-cell-chain .strip-face {
+    margin-bottom: calc(var(--vm) * -1);
+  }
+  .strip-cell-chain .strip-text {
+    width: var(--sw);
+    margin: 1px 0;
+    box-sizing: border-box;
   }
   /* 巻く(3D): 連なりを、奥へ曲がる面に載せる。 */
   .strip-drum.is-live {
