@@ -87,6 +87,10 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
 <style is:global>
   .cl-page {
     padding: 6.5rem var(--pad) 6rem;
+    /* どの部品がはみ出しても、ページの横幅は広げない。 */
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: clip;
   }
   .cl-h {
     margin: 0 0 1.4rem;
@@ -101,10 +105,14 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
     font-variant-numeric: tabular-nums;
   }
   /* 分類と並び替え: 細い線で区切られた、小さな面の連なり。選ばれている面だけが紙色になる。 */
+  /* 並びは grid にしない(Safari では、横に流せるはずの列が画面の外へはみ出し、ページ全体が縮んで表示された)。 */
   .cl-ctl {
-    display: grid;
-    gap: 0.6rem;
+    display: block;
+    max-width: 100%;
     margin-bottom: 2rem;
+  }
+  .cl-ctl > * + * {
+    margin-top: 0.6rem;
   }
   .cl-ctl-row {
     display: flex;
@@ -113,9 +121,12 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
   }
   .cl-chain {
     display: flex;
-    width: max-content;
+    box-sizing: border-box;
+    width: fit-content;
     max-width: 100%;
+    min-width: 0;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border: 1px solid var(--fg);
     scrollbar-width: none;
   }
