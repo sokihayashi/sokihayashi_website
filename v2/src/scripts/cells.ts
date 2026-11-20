@@ -217,6 +217,10 @@ export function mountCells(root: HTMLElement): () => void {
     cellCache = null;
     slack = 0;
     if (glc) glc.style.display = 'none';
+    if (live === 'trace') {
+      trace = new Float32Array(Math.ceil((R * rowH) / STEP) + 2); // 並びが変わったら、描いた形は消す
+      prevYl = null;
+    }
     G = { rows, n, cols, cw, g, m, vm, ph, rowH, R, by };
     if (!n) {
       svg.innerHTML = '';
@@ -228,7 +232,7 @@ export function mountCells(root: HTMLElement): () => void {
   // 升目を描く。amp(c) は列 c のゆれの強さ(-1〜1)、phase は波の位置、r0〜r1 は描く段の範囲。
   function drawGrid(amp: (c: number) => number, phase: number, r0: number, r1: number) {
     if (!G || !G.n) return;
-    if (live === 'bands') drawBands(amp, phase, r0, r1);
+    if (live === 'bands' || live === 'trace') drawBands(amp, phase, r0, r1);
     else drawSheet(amp(0), phase, r0, r1);
   }
 
@@ -279,10 +283,16 @@ export function mountCells(root: HTMLElement): () => void {
       const xL = c * (cw + g);
       const xR = xL + cw;
       // 帯の横ずれと、その傾き。
-      const off = (y: number) =>
-        A * a * (0.62 * Math.sin(y / 260 + c * 0.9 + phase) + 0.38 * Math.sin(y / 97 + c * 2.3 - phase * 1.7));
-      const slope = (y: number) =>
-        A * a * ((0.62 / 260) * Math.cos(y / 260 + c * 0.9 + phase) + (0.38 / 97) * Math.cos(y / 97 + c * 2.3 - phase * 1.7));
+      // trace 版では、形は式ではなく、送りながら手で描いた記録(traceAt)から取る。どの列も同じ形。
+      const off =
+        live === 'trace'
+          ? traceAt
+          : (y: number) => A * a * (0.62 * Math.sin(y / 260 + c * 0.9 + phase) + 0.38 * Math.sin(y / 97 + c * 2.3 - phase * 1.7));
+      const slope =
+        live === 'trace'
+          ? (y: number) => (traceAt(y + 4) - traceAt(y - 4)) / 8
+          : (y: number) =>
+              A * a * ((0.62 / 260) * Math.cos(y / 260 + c * 0.9 + phase) + (0.38 / 97) * Math.cos(y / 97 + c * 2.3 - phase * 1.7));
       // 切り口 j の、左右の端。
       const cut = (j: number): [Pt, Pt] => {
         const t = (cw / 2) * slope(by[j]);
@@ -755,8 +765,110 @@ export function mountCells(root: HTMLElement): () => void {
     raf = requestAnimationFrame(tickGather);
   }
 
+  // 描く版(trace): 一覧は記録紙、指(PC ではカーソル)の横の動きがペン。
+  // 送って画面に入ってくる端にペンがあり、そこを通った帯に、そのときの横の位置が書き込まれて残る。まっすぐ送れば、まっすぐのまま。
+  const STEP = 6; // 記録のきざみ(px、一覧の上からの位置)
+  let trace = new Float32Array(0);
+  const traceAt = (y: number) => {
+    const f = y / STEP;
+    if (!(f > 0) || !trace.length) return 0;
+    const i = Math.min(trace.length - 2, Math.floor(f));
+    if (i < 0) return 0;
+    return trace[i] + (trace[i + 1] - trace[i]) * Math.min(1, f - i);
+  };
+  let px = 0; // いまの指 / カーソルの横位置
+  let pBase = 0; // その、ゆっくり追う基準(基準からのずれだけを書く。置きっぱなしのカーソルは、まっすぐ)
+  let pHas = false;
+  let pTouch = false;
+  let pv = 0; // ペンの横ずれ
+  let prevYl: number | null = null;
+  let prevPv = 0;
+  let dirPrev = 0;
+  let quietT = 0;
+  let s1 = 0;
+  let s2 = 0;
+  let fresh = true;
+  function tickTrace(t: number) {
+    raf = 0;
+    if (!G || !G.n) return;
+    const dt = Math.min(0.1, Math.max(0.001, (t - lastT) / 1000));
+    lastT = t;
+    const y = window.scrollY;
+    const moved = y - lastY;
+    lastY = y;
+    const max = G.m - 6;
+    pBase += (px - pBase) * (1 - Math.exp(-dt / 1.1));
+    const target = pHas ? Math.max(-max, Math.min(max, (px - pBase) * (pTouch ? 1.7 : 0.55))) : 0;
+    pv += (target - pv) * (1 - Math.exp(-dt / 0.09));
+    const dir = moved > 0 ? 1 : moved < 0 ? -1 : 0;
+    if (dir) {
+      const vh = window.innerHeight;
+      const listTop = list.getBoundingClientRect().top;
+      // ペンは、作品が入ってくる側の、画面のすぐ外。
+      const yl = (dir > 0 ? vh + G.rowH * 0.25 : -G.rowH * 0.25) - listTop;
+      if (dir !== dirPrev || prevYl === null) fresh = true;
+      if (dir !== dirPrev) prevYl = null;
+      dirPrev = dir;
+      if (prevYl !== null && yl !== prevYl) {
+        const lim = 0.24 * STEP; // 帯が急に折れないよう、傾きを抑える
+        const k = 1 - Math.exp(-STEP / 44); // 進んだ距離でならす(送る速さによらず、角が丸くなる)
+        const i0 = dir > 0 ? Math.ceil(prevYl / STEP) : Math.floor(prevYl / STEP);
+        const i1 = dir > 0 ? Math.floor(yl / STEP) : Math.ceil(yl / STEP);
+        for (let i = i0; dir > 0 ? i <= i1 : i >= i1; i += dir) {
+          if (i < 0 || i >= trace.length) continue;
+          const raw = prevPv + ((pv - prevPv) * (i * STEP - prevYl)) / (yl - prevYl);
+          const nb = i - dir;
+          const has = nb >= 0 && nb < trace.length;
+          if (fresh) {
+            // 向きを変えた直後は、すでに描いてある形から続ける。
+            s1 = s2 = has ? trace[nb] : 0;
+            fresh = false;
+          }
+          s1 += (raw - s1) * k;
+          s2 += (s1 - s2) * k;
+          if (has) s2 = Math.max(trace[nb] - lim, Math.min(trace[nb] + lim, s2));
+          trace[i] = s2;
+        }
+      }
+      prevYl = yl;
+      prevPv = pv;
+      root.dataset.amp = pv.toFixed(1); // 確認用
+    }
+    quietT = dir ? 0 : quietT + dt * 1000;
+    if (quietT > 160) {
+      // 止まったら、全体を描き直して終わる(形は残す)。
+      prevYl = null;
+      drawGrid(() => 0, 0, 0, G.R);
+      return;
+    }
+    const top = list.getBoundingClientRect().top;
+    const r0 = Math.max(0, Math.min(G.R - 1, Math.floor(-top / G.rowH) - 1));
+    const r1 = Math.max(r0 + 1, Math.min(G.R, Math.ceil((window.innerHeight - top) / G.rowH) + 1));
+    drawGrid(() => 0, 0, r0, r1);
+    raf = requestAnimationFrame(tickTrace);
+  }
+  function onPointer(e: MouseEvent | TouchEvent) {
+    const tch = 'touches' in e;
+    if (tch && !e.touches.length) {
+      pHas = false; // 指を離したら、ペンは中央へ戻る
+      return;
+    }
+    const x = tch ? e.touches[0].clientX : e.clientX;
+    if (!pHas || (tch && e.type === 'touchstart')) pBase = x;
+    px = x;
+    pHas = true;
+    pTouch = tch;
+  }
+
   function onScroll() {
     if (raf || !G) return;
+    if (live === 'trace') {
+      lastT = performance.now() - 16;
+      lastY = window.scrollY;
+      quietT = 0;
+      raf = requestAnimationFrame(tickTrace);
+      return;
+    }
     if (live === 'gather') {
       if (slack === 0) {
         lastT = performance.now() - 16;
@@ -818,6 +930,12 @@ export function mountCells(root: HTMLElement): () => void {
   window.addEventListener('resize', onResize);
   window.addEventListener('load', layout);
   if (live) window.addEventListener('scroll', onScroll, { passive: true });
+  if (live === 'trace') {
+    window.addEventListener('mousemove', onPointer, { passive: true });
+    window.addEventListener('touchstart', onPointer, { passive: true });
+    window.addEventListener('touchmove', onPointer, { passive: true });
+    window.addEventListener('touchend', onPointer, { passive: true });
+  }
   apply();
 
   return () => {
@@ -827,6 +945,10 @@ export function mountCells(root: HTMLElement): () => void {
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('mousemove', onPointer);
+    window.removeEventListener('touchstart', onPointer);
+    window.removeEventListener('touchmove', onPointer);
+    window.removeEventListener('touchend', onPointer);
     cancelAnimationFrame(raf);
     window.removeEventListener('load', layout);
     window.clearTimeout(rt);

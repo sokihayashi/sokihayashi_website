@@ -17,7 +17,8 @@ interface Props {
   // 升目の版の動き。止まっているあいだは直線。
   //   sheet: 送ると、1枚の網として線が左右にしなる / bands: 列ごとの帯が左右にしなる
   //   gather: 送ると、布をたぐるように、画面の上(戻すときは下)に、くしゃっとしわが寄って溜まり、少し遅れて流れる(前後の凹凸)
-  live?: 'sheet' | 'bands' | 'gather';
+  //   trace: 列が1本ずつの平らな帯。送りながら指(カーソル)を横に動かすと、その形が帯に書き込まれて残る
+  live?: 'sheet' | 'bands' | 'gather' | 'trace';
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
 const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
@@ -536,16 +537,30 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
     }
   }
   /* 帯の版: 列のあいだに、すき間を空ける(列が1本ずつの帯に見えるように)。 */
-  .cl-page[data-live='bands'] {
+  .cl-page[data-live='bands'],
+  .cl-page[data-live='trace'] {
     --g: 12px;
   }
   @media (min-width: 800px) {
-    .cl-page[data-live='bands'] {
+    .cl-page[data-live='bands'],
+    .cl-page[data-live='trace'] {
       --g: 20px;
     }
   }
-  .cl-page[data-live='bands'] .cl-list {
+  .cl-page[data-live='bands'] .cl-list,
+  .cl-page[data-live='trace'] .cl-list {
     column-gap: var(--g);
+  }
+  /* 描く版: 帯が大きく横へ動けるよう、写真の箱の余地を広げる。 */
+  .cl-page[data-grid][data-live='trace'] {
+    --m: 46px;
+    --vm: 26px;
+  }
+  @media (min-width: 800px) {
+    .cl-page[data-grid][data-live='trace'] {
+      --m: 84px;
+      --vm: 40px;
+    }
   }
   .cl-page[data-live] .cl-text {
     will-change: transform;
