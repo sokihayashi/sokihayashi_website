@@ -1431,12 +1431,12 @@ export function mountMorph(root: HTMLElement) {
   const label = mk('a', `${FRAME}left:var(--pad);bottom:calc(2.9rem + env(safe-area-inset-bottom));display:none;max-width:min(calc(100vw - var(--pad)*2),26rem);padding:.6rem .75rem .65rem;text-decoration:none;`) as HTMLAnchorElement;
   const lbT = mk('span', 'display:block;font-size:.9rem;line-height:1.4;');
   const lbM = mk('span', 'display:block;margin-top:.2rem;font-size:.66rem;letter-spacing:.06em;color:var(--muted);');
-  lbM.textContent = 'Open';
+  lbM.textContent = '開く';
   label.append(lbT, lbM);
   const snd = mk('button', `${FRAME}right:var(--pad);${BOTTOM}padding:.5rem .7rem;font-size:.66rem;letter-spacing:.08em;cursor:pointer;border-radius:0;`) as HTMLButtonElement;
   snd.type = 'button';
   const sndText = () => {
-    snd.textContent = sfx.on ? 'Sound on' : 'Sound off';
+    snd.textContent = sfx.on ? '音あり' : '音なし';
     snd.setAttribute('aria-pressed', String(sfx.on));
   };
   sndText();
@@ -1451,17 +1451,16 @@ export function mountMorph(root: HTMLElement) {
   const base = (root.dataset.base || '').replace(/\/$/, '');
   const pf = mk('button', `${FRAME}right:calc(var(--pad) + 6.6rem);${BOTTOM}padding:.5rem .7rem;font-size:.66rem;letter-spacing:.08em;cursor:pointer;border-radius:0;`) as HTMLButtonElement;
   pf.type = 'button';
-  pf.textContent = 'Profile';
+  pf.textContent = 'プロフィール';
   pf.setAttribute('aria-expanded', 'false');
   const panel = mk('section', 'position:absolute;z-index:2;left:calc(14px + 34px + 1.2rem);right:calc(14px + 34px + 1.2rem);top:calc(64px + 34px + 1rem);bottom:calc(14px + 34px + 1rem);overflow:auto;color:var(--fg);opacity:0;pointer-events:none;transition:opacity .35s;display:flex;flex-direction:column;justify-content:center;gap:1.1rem;');
   panel.dataset.panel = '';
   panel.setAttribute('aria-hidden', 'true');
   panel.innerHTML = `
-    <p style="margin:0;font-size:.66rem;letter-spacing:.12em;color:var(--muted)">PROFILE</p>
-    <h2 style="margin:0;font-size:clamp(1.6rem,7vw,2.6rem);font-weight:500;line-height:1.1">Soki Hayashi<br><span style="font-size:.5em;letter-spacing:.04em">林 宋其</span></h2>
+    <h2 style="margin:0;font-size:clamp(1.6rem,7vw,2.6rem);font-weight:500;line-height:1.1">林 宋其<br><span style="font-size:.42em;letter-spacing:.08em;font-weight:400">Soki Hayashi</span></h2>
     <p style="margin:0;font-size:.8rem;line-height:1.7;color:var(--muted)">デザイナー / クリエイティブディレクター / 映像作家 / VJ<br>東京</p>
     <p style="margin:0;font-size:1rem;line-height:1.9;max-width:34em">世界観を作ります。<br>店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。小さなビジュアルの中に、その先の世界を予感させる。</p>
-    <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">Works</a><a href="${base}/about/">About</a><a href="${base}/contact/">Contact</a></p>`;
+    <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">作品一覧</a><a href="${base}/about/">プロフィール</a><a href="${base}/contact/">お問い合わせ</a></p>`;
   // ---------- 画面そのものも曲に合わせて動く: 文字の層、窓になる画面、ドロップの反転とナビの崩れ。
   const typeL = mk('div', 'position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;color:#fff;mix-blend-mode:difference;');
   typeL.dataset.type = '';
@@ -1506,7 +1505,7 @@ export function mountMorph(root: HTMLElement) {
       big.style.transform = '';
       for (const el of navA) el.style.transform = '';
     } else secHook(lastSec, false);
-    pf.textContent = on ? 'Close' : 'Profile';
+    pf.textContent = on ? '閉じる' : 'プロフィール';
     pf.setAttribute('aria-expanded', String(on));
     panel.setAttribute('aria-hidden', String(!on));
     panel.style.pointerEvents = on ? 'auto' : 'none';
@@ -1515,6 +1514,10 @@ export function mountMorph(root: HTMLElement) {
   pf.addEventListener('click', () => setPanel(!panelOpen));
   addEventListener('keydown', (e) => { if (e.key === 'Escape') setPanel(false); });
   root.append(ind, label, snd, pf, panel);
+  // 音のボタンの幅に合わせて、プロフィールのボタンを左に並べる。
+  const placePf = () => { pf.style.right = `calc(var(--pad) + ${snd.offsetWidth}px + 0.5rem)`; };
+  placePf();
+  snd.addEventListener('click', placePf);
 
   // ---------- 入力(指一本)
   let drawing = false;
