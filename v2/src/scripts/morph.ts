@@ -769,6 +769,7 @@ uniform float uW;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
 in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr;
 uniform sampler2D uDAtlas;
+uniform sampler2D uBAtlas; // 被写体を抜いて補った背景
 uniform vec3 uLight;
 uniform vec2 uTilt;
 out vec4 o;
@@ -782,6 +783,7 @@ void main(){
   if (cov <= 0.002) discard;
   vec2 uv = clamp(vUV, vec2(0.004), vec2(0.996));
   float shade = 1.0;
+  vec3 layC = vec3(-1.0);
   if (vPar > 0.01) {
     // 写真を立体に見せる。(1) のぞき込む向きの分だけ、奥行きをたどってずらす。
     // (2) 奥行きから面の向きを出し、指を光にして照らす。(3) 光の方へたどって、自分の影を落とす。
@@ -819,9 +821,24 @@ void main(){
     }
     float lit = 0.28 + 1.15 * dif - 0.5 * sh + 0.55 * spc;
     shade = mix(1.0, lit, clamp(vPar, 0.0, 1.0));
+    // 全画面の写真(par>1.2): 被写体と背景を別の層にして、のぞき込む向きで逆に動かす(3D写真)。
+    // 被写体がずれた跡には、補った背景が見える。被写体は背景に影を落とす。
+    if (vPar > 1.2 && flatW < 0.5) {
+      vec2 uv0 = clamp(vUV, 0.004, 0.996);
+      vec2 sh = uTilt * 0.07;
+      vec2 fq = clamp(uv0 - sh, 0.004, 0.996);
+      float m = smoothstep(0.3, 0.7, texture(uDAtlas, (vCell + fq) / AT2).b);
+      vec2 bq = clamp(uv0 + sh * 0.4, 0.004, 0.996);
+      vec4 bg = texture(uBAtlas, (vCell + bq) / AT2);
+      vec3 fgc = texture(uAtlas, (vCell + fq) / AT2).rgb;
+      vec3 bgc = bg.a > 0.5 ? bg.rgb : texture(uAtlas, (vCell + bq) / AT2).rgb;
+      float ms = smoothstep(0.3, 0.7, texture(uDAtlas, (vCell + clamp(uv0 - sh * 1.6 + normalize(vScr - uLight.xy + 1e-4) * 0.025, 0.004, 0.996)) / AT2).b);
+      bgc *= 0.78 - 0.4 * ms;
+      layC = mix(bgc, fgc * (0.9 + 0.35 * dif + 0.3 * spc), m);
+    }
     #undef HGT
   }
-  vec3 tc = texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
+  vec3 tc = layC.x >= 0.0 ? layC * vTint : texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
   if (vMix.w < 0.0) tc = PAPER;
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
   // 帯のふちと、作品の境目の線。
@@ -958,6 +975,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(U('uAtlas'), 1);
   gl.uniform1i(U('uShadow'), 3);
   gl.uniform1i(U('uDAtlas'), 8);
+  gl.uniform1i(U('uBAtlas'), 9);
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -1049,6 +1067,13 @@ export function mountMorph(root: HTMLElement) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ACOLS * CELL, AROWS * CELL, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(ACOLS * CELL * AROWS * CELL * 4));
   for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.LINEAR);
   for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+  // 被写体を抜いて補った背景(全画面の3D写真で、被写体の後ろに見える層)。
+  const batlas = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE9);
+  gl.bindTexture(gl.TEXTURE_2D, batlas);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ACOLS * CELL, AROWS * CELL, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(ACOLS * CELL * AROWS * CELL * 4));
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.LINEAR);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
   let dead = false;
   const cellCv = document.createElement('canvas');
   cellCv.width = cellCv.height = CELL;
@@ -1083,6 +1108,19 @@ export function mountMorph(root: HTMLElement) {
         gl.texSubImage2D(gl.TEXTURE_2D, 0, (k % ACOLS) * CELL, Math.floor(k / ACOLS) * CELL, gl.RGBA, gl.UNSIGNED_BYTE, c2);
       };
       dm.src = a.dataset.depth;
+      if (a.dataset.bg) {
+        const bm = new Image();
+        bm.onload = () => {
+          if (dead) return;
+          const c3 = document.createElement('canvas');
+          c3.width = c3.height = CELL;
+          c3.getContext('2d')!.drawImage(bm, 0, 0, CELL, CELL);
+          gl.activeTexture(gl.TEXTURE9);
+          gl.bindTexture(gl.TEXTURE_2D, batlas);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, (k % ACOLS) * CELL, Math.floor(k / ACOLS) * CELL, gl.RGBA, gl.UNSIGNED_BYTE, c3);
+        };
+        bm.src = a.dataset.bg;
+      }
     }
   });
   gl.uniform1fv(u.asp, asp);
@@ -1444,10 +1482,12 @@ export function mountMorph(root: HTMLElement) {
         const fx = pick(['is-flash', 'is-hue', 'is-punch', 'is-flash', 'is-mono']);
         root.classList.add(fx);
         setTimeout(() => root.classList.remove(fx), fx === 'is-punch' ? 160 : 90);
+        big.style.opacity = Math.random() < 0.35 ? '1' : '0';
         big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
         for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
       }
     } else {
+      big.style.opacity = '';
       big.style.transform = '';
       for (const el of navA) el.style.transform = '';
     }
