@@ -48,12 +48,14 @@ uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたも�
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
 uniform vec2 uCam;   // 視点の ずれ
+uniform vec2 uTilt;  // 指の位置から決まる傾き(-1..1)
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
 out vec4 vLit;  // x: 明るさ / y: 艶 / z: 写真の色を使う割合 / w: 糸の膨らみ
 out vec4 vAlt;  // rgb: 写真を使わないときの色
 out vec3 vTint; // 写真に掛ける色
 out vec3 vLine; // 線の色
+out float vPar;  // 立体写真の強さ
 const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
@@ -115,13 +117,14 @@ struct O {
   vec2 uv;      // 写真のどこを見せるか
   float work;   // どの作品の写真か
   float gate;   // 出てくる・消える大きさ(負なら、帯のふつうの決まりに従う)
+  float par;    // 写真の奥行きで、平面の写真を立体に見せる強さ
 };
 O base(){
   O o;
   o.corner = gX0; o.centre = gC0; o.col = vec3(0.0); o.tex = 1.0; o.tint = vec3(1.0);
   o.shape = vec2(1.0); o.round = 0.0; o.alpha = 1.0; o.lit = 1.0; o.gloss = 0.0; o.face = 1.0;
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
-  o.uv = gUVb; o.work = gR2.w; o.gate = -1.0;
+  o.uv = gUVb; o.work = gR2.w; o.gate = -1.0; o.par = 0.0;
   return o;
 }
 // 向きのある細長い面(線・糸・札)
@@ -557,6 +560,35 @@ O sRipple(){
   o.line = 1.0;
   return o;
 }
+// 26 立体写真: 帯のまま、写真の中の奥行きで、平面の写真が立体に見える。指の位置で、のぞき込む向きが変わる。
+O sPhoto3D(){
+  O o = base();
+  o.par = 1.0;
+  o.line = 1.0;
+  return o;
+}
+// 27 一枚を大きく: 帯がほどけて、いま描いている作品が画面いっぱいの立体写真になる。指で傾く。
+O sBig(){
+  O o = base();
+  // いちばん新しく描いた所の作品
+  float wk = texelFetch(uPath, ivec2(int(mod(uK - 1.0, Mf)), 2), 0).w;
+  float asp = max(uAsp[int(wk)], 0.2);
+  vec2 box = uView * vec2(0.86, 0.72);
+  vec2 sz = box.x / asp <= box.y ? vec2(box.x, box.x / asp) : vec2(box.y * asp, box.y);
+  float u = (float(gIu) + 0.5 + aQ.x * 0.5) / float(${NU});
+  float uc = (float(gIu) + 0.5) / float(${NU});
+  float v = gVc + 0.5, vc = gV + 0.5;
+  float rx = uTilt.y * 0.42, ry = -uTilt.x * 0.55;
+  mat3 R = mat3(cos(ry), 0.0, -sin(ry), 0.0, 1.0, 0.0, sin(ry), 0.0, cos(ry)) * mat3(1.0, 0.0, 0.0, 0.0, cos(rx), sin(rx), 0.0, -sin(rx), cos(rx));
+  vec3 C = vec3(uView * 0.5, uW * 0.6);
+  o.corner = C + R * vec3((u - 0.5) * sz.x, (v - 0.5) * sz.y, 0.0);
+  o.centre = C + R * vec3((uc - 0.5) * sz.x, (vc - 0.5) * sz.y, 0.0);
+  o.uv = vec2(u, v); o.work = wk; o.gate = 1.0; o.par = 1.4;
+  vec3 n = R * vec3(0.0, 0.0, 1.0);
+  vec3 l = litBy(o.corner, n);
+  o.lit = 0.75 + 0.45 * l.x; o.gloss = 0.12 * l.y;
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -583,7 +615,9 @@ O stateOf(int id){
   if (id == 22) return sShatter();
   if (id == 23) return sCoil();
   if (id == 24) return sPile();
-  return sRipple();
+  if (id == 25) return sRipple();
+  if (id == 26) return sPhoto3D();
+  return sBig();
 }
 
 void main(){
@@ -650,7 +684,7 @@ void main(){
     // 影の地図: 光から見た近さだけを書く。立体の紙だけが影を落とす。
     vec3 m = toShadow(wp);
     vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
-    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER;
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0;
     gl_Position = solidW < 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
     return;
   }
@@ -671,6 +705,7 @@ void main(){
   vLit = vec4(mix(A.lit, B.lit, w), mix(A.gloss, B.gloss, w), mix(A.tex, B.tex, w), mix(A.ridge, B.ridge, w));
   vAlt = vec4(mix(A.col, B.col, w), 1.0);
   vTint = mix(A.tint, B.tint, w);
+  vPar = mix(A.par, B.par, w);
   vLine = mix(A.lineCol, B.lineCol, w);
   vRib = vec2((mod(float(gJ), SEGf) + 0.5 + gTq) * uDp, gVc * uW);
 }`;
@@ -680,7 +715,9 @@ precision highp float;
 uniform sampler2D uAtlas;
 uniform float uW;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
-in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine;
+in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar;
+uniform sampler2D uDAtlas;
+uniform vec2 uTilt;
 out vec4 o;
 const vec3 PAPER = vec3(0.957, 0.945, 0.918);
 void main(){
@@ -691,7 +728,29 @@ void main(){
   float cov = mix(1.0, clamp(r - length(q) + 0.5, 0.0, 1.0), vMix.x);
   if (cov <= 0.002) discard;
   vec2 uv = clamp(vUV, vec2(0.004), vec2(0.996));
-  vec3 tc = texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint;
+  float shade = 1.0;
+  if (vPar > 0.01) {
+    // 奥行きの地図をたどって、のぞき込む向きの分だけ写真をずらす(手前ほど大きく動く)。
+    vec2 AT2 = vec2(${ACOLS}.0, ${AROWS}.0);
+    vec2 dir = uTilt * 0.055 * vPar;
+    const int NS = 14;
+    float lay = 1.0 / float(NS);
+    float cur = 1.0;
+    vec2 q = uv + dir * 0.5;
+    float hgt = texture(uDAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).r;
+    for (int i = 0; i < NS; i++) {
+      if (hgt >= cur) break;
+      cur -= lay; q -= dir * lay;
+      hgt = texture(uDAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).r;
+    }
+    uv = clamp(q, vec2(0.004), vec2(0.996));
+    // 奥ほど少し暗く、段差の縁に陰を入れて、厚みを感じさせる。
+    float e = 0.01;
+    float hx = texture(uDAtlas, (vCell + clamp(uv + vec2(e, 0.0), 0.004, 0.996)) / AT2).r - hgt;
+    float hy = texture(uDAtlas, (vCell + clamp(uv + vec2(0.0, e), 0.004, 0.996)) / AT2).r - hgt;
+    shade = mix(1.0, 0.72 + 0.4 * hgt + clamp(dot(vec2(hx, hy), -normalize(uTilt + vec2(1e-4))) * 6.0, -0.25, 0.25), clamp(vPar, 0.0, 1.0));
+  }
+  vec3 tc = texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
   if (vMix.w < 0.0) tc = PAPER;
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
   // 帯のふちと、作品の境目の線。
@@ -822,7 +881,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1160,15 +1219,15 @@ export function mountMorph(root: HTMLElement) {
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 26;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5]; // アナログらしさ(画面全体の質感に使う)
+  const KINDS = 28;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6]; // アナログらしさ(画面全体の質感に使う)
   // 見た目だけの違い(表面の模様)の表現と、写真が並ぶだけの札(10, 11)は、順番に入れない: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25];
+  const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
   const FAM: Record<number, string> = {
     0: 'flat', 18: 'flat', 25: 'flat', 1: 'paper', 14: 'paper', 21: 'paper', 23: 'paper',
     2: 'dots', 13: 'dots', 17: 'dots', 10: 'cards', 11: 'cards', 12: 'pieces', 22: 'pieces',
-    15: 'bars', 16: 'threads', 19: 'deform', 20: 'deform', 24: 'pile',
+    15: 'bars', 16: 'threads', 19: 'deform', 20: 'deform', 24: 'pile', 26: 'photo3d', 27: 'big',
   };
   const seq: number[] = [0];
   const seqAt = (n: number) => {
@@ -1351,6 +1410,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
+    gl!.uniform2f(u.tilt, Math.max(-1, Math.min(1, ((lightX - vw / 2) / vw) * 2.2)), Math.max(-1, Math.min(1, ((lightY - vh / 2) / vh) * 2.2)));
 
     // 0) 影の地図(立体が少しでもあるとき)
     const shadowOn = K > 0 && (sFrom === 1 || sTo === 1);
