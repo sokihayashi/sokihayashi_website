@@ -20,9 +20,11 @@ interface Props {
   //   trace: 列が1本ずつの平らな帯。重さと張りのある紐で、指(カーソル)の横の動きで引くと、波になって伝わり、ゆれながら戻る
   //   tape: 列が1本ずつの平らなテープ。指(カーソル)の通った跡がテープの通り道になり、作品がそこを流れる。離すと、ばねで まっすぐへ戻る
   live?: 'sheet' | 'bands' | 'gather' | 'trace' | 'tape';
+  // tape のとき: 作品に触れると、その絵が全部のテープに広がる(音つき)。
+  spread?: boolean;
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
-const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
+const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live, spread = false } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -133,7 +135,7 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
     )
   }
 
-  <div class="cl" data-cl data-curve={curve ? '' : undefined} data-live={live}>
+  <div class="cl" data-cl data-curve={curve ? '' : undefined} data-live={live} data-spread={spread ? '' : undefined}>
     <svg class="cl-lines" data-cl-lines aria-hidden="true"></svg>
     <ol class="cl-list" data-cl-list>
       {
@@ -147,7 +149,7 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
             data-title={w.data.title}
           >
             <a class="cl-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
-              <img src={wallSrc(w.data.images[0], 560)} alt="" loading={live === 'gather' || live === 'tape' ? 'eager' : 'lazy'} decoding="async" />
+              <img src={wallSrc(w.data.images[0], 560)} data-large={spread ? wallSrc(w.data.images[0], 1500) : undefined} alt="" loading={live === 'gather' || live === 'tape' ? 'eager' : 'lazy'} decoding="async" />
             </a>
             <a class="cl-text" href={`${base}/works/${w.id}/`}>
               <span class="cl-title">{w.data.title}</span>

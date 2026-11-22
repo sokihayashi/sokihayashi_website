@@ -16,6 +16,15 @@
 //     (もとの写真を毎コマ裁ち直す作りは、機種によって CPU で描かれて詰まる。WebGL は、どの機種でも GPU で描かれる)
 //     写真は、面ごと動かして回すだけ(歪めない)。文字は、もとの要素を動かして回す。
 //   - 静まったら canvas をしまい、もとの写真と線に戻す。何も動かさない、ふつうの升目になる。
+//
+// 作品に触れると、画面全体が変わる(映像表現研究の手札から):
+//   - 触れた作品の絵が、触れた点から波になって広がり、全部のテープがその1枚の絵の「短冊」になる
+//     (nok の帯状コラージュ: 1枚の絵を、帯ごとに切り出して並べる)。
+//   - 波のふちは、なめらかにぼかさず、小さな升目が ばらばらに切り替わる
+//     (Ringwriter: 文字ごとの決まった しきい値で、点に崩れる / 網点: 段階で見せる)。
+//   - 音は sfx.ts(Topographic の操作音の文法)。
+
+import { makeSfx } from './sfx';
 
 export type TapeGrid = {
   rows: HTMLElement[]; // 見えている作品(並び順)
@@ -39,6 +48,7 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     tx: HTMLElement | null;
     o: SVGSVGElement;
     hid: boolean; // もとの写真と線を隠して、canvas に描いている
+    cov: boolean; // 文字を隠している(上に絵が出ている)
   };
   let cls: Cl[] = [];
   const dirty = new Set<number>();
@@ -234,6 +244,7 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
   let uOrg: WebGLUniformLocation | null = null;
   let uKind: WebGLUniformLocation | null = null;
   let uCol: WebGLUniformLocation | null = null;
+  const U: Record<string, WebGLUniformLocation | null> = {};
   const tex = new Map<string, { t: WebGLTexture; w: number; h: number }>();
   function initGL(): boolean {
     if (gl) return true;
@@ -264,12 +275,28 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
           'void main(){vuv=uv;vec2 q=p-org;gl_Position=vec4(q.x/size.x*2.-1.,1.-q.y/size.y*2.,0.,1.);}'
       )
     );
+    // kind 0: 写真の面 / 1: 線(col の色) / 2: 文字の面の地(黒)。
+    // 触れた作品の絵(tu: いま全体に出ている絵 / to: 広がってくる絵)は、画面いっぱいの1枚として読む。
+    // 広がる波の内側かどうかは、小さな升目ごとに、決まった乱数のしきい値で決める(ふちが升目で崩れる)。
     gl.attachShader(
       prog,
       sh(
         gl.FRAGMENT_SHADER,
-        'precision mediump float;uniform sampler2D t;uniform float kind;uniform vec4 col;varying vec2 vuv;' +
-          'void main(){gl_FragColor=kind>.5?col:vec4(texture2D(t,vuv).rgb,1.);}'
+        'precision highp float;uniform sampler2D t;uniform sampler2D tu;uniform sampler2D to;' +
+          'uniform float kind;uniform vec4 col;uniform vec2 view;uniform vec2 cvs;uniform float dpr;uniform float top;' +
+          'uniform float hasU;uniform float hasO;uniform float ua;uniform float oa;uniform vec2 fc;uniform float fr;uniform float band;uniform float cell;' +
+          'varying vec2 vuv;' +
+          'vec2 cover(vec2 px,float a){float s=max(view.x/a,view.y);return .5+(px-view*.5)/(vec2(a,1.)*s);}' +
+          'void main(){' +
+          'if(kind>.5&&kind<1.5){gl_FragColor=col;return;}' +
+          'vec3 base=kind<.5?texture2D(t,vuv).rgb:vec3(0.);' +
+          'if(hasU+hasO<.5){gl_FragColor=vec4(base,1.);return;}' +
+          'vec2 px=vec2(gl_FragCoord.x,cvs.y-gl_FragCoord.y)/dpr-vec2(0.,top);' +
+          'vec2 ce=floor(px/cell);float h=fract(sin(dot(ce,vec2(127.1,311.7)))*43758.5453);' +
+          'float on=step(distance((ce+.5)*cell,fc),fr+(h-.5)*band);' +
+          'vec3 cu=hasU>.5?texture2D(tu,cover(px,ua)).rgb:base;' +
+          'vec3 co=hasO>.5?texture2D(to,cover(px,oa)).rgb:base;' +
+          'gl_FragColor=vec4(mix(cu,co,on),1.);}'
       )
     );
     gl.bindAttribLocation(prog, 0, 'p');
@@ -286,6 +313,10 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     uOrg = gl.getUniformLocation(prog, 'org');
     uKind = gl.getUniformLocation(prog, 'kind');
     uCol = gl.getUniformLocation(prog, 'col');
+    for (const n of ['view', 'cvs', 'dpr', 'top', 'hasU', 'hasO', 'ua', 'oa', 'fc', 'fr', 'band', 'cell']) U[n] = gl.getUniformLocation(prog, n);
+    gl.uniform1i(gl.getUniformLocation(prog, 't'), 0);
+    gl.uniform1i(gl.getUniformLocation(prog, 'tu'), 1);
+    gl.uniform1i(gl.getUniformLocation(prog, 'to'), 2);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.enableVertexAttribArray(0);
     gl.enableVertexAttribArray(1);
@@ -359,11 +390,88 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     if (warmAt < cls.length) warmId = window.setTimeout(warm, made ? 60 : 400);
   }
 
+  // ---------- 触れた作品の絵を、画面全体に広げる
+  type FImg = { t: WebGLTexture; a: number } | null;
+  let fU: FImg = null; // いま全体に出ている絵(null: ふつうの一覧)
+  let fUidx = -1;
+  let fO: FImg = null; // 広がってくる絵(null: ふつうの一覧へ戻る波)
+  let fOidx = -1;
+  let fT = -1; // 波が始まってからの秒(負: 波は出ていない)
+  let fcx = 0; // 波の中心(画面の中)
+  let fcy = 0;
+  let fRad = 0;
+  const F_DUR = 0.85;
+  const F_BAND = 240; // 波のふちで、升目が ばらばらに切り替わる幅
+  const big = new Map<string, { t: WebGLTexture; a: number }>(); // 大きい版の写真(触れたときに読む)
+  const focusOn = () => fU !== null || fO !== null || fT >= 0;
+  const focusIdx = () => (fT >= 0 ? fOidx : fUidx);
+  // 画面の位置 (x, y) に、いま絵が出ているか(文字を隠すかどうかに使う)。
+  const imageAt = (x: number, y: number) => (fT >= 0 && Math.hypot(x - fcx, y - fcy) < fRad ? fO !== null : fU !== null);
+  function focusTex(idx: number): FImg {
+    const img = cls[idx]?.img;
+    if (!img || !gl) return null;
+    const src = img.dataset.large || '';
+    const hit = big.get(src);
+    if (hit) return hit;
+    // 大きい版が届くまでは、小さい版を引き伸ばして出す。届いたら、同じ位置のまま差し替える。
+    if (src) {
+      const L = new Image();
+      L.decoding = 'async';
+      L.onload = () => {
+        if (!gl || glFail) return;
+        const t = gl.createTexture()!;
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, L);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        const o = { t, a: L.naturalWidth / L.naturalHeight };
+        big.set(src, o);
+        // 持ちすぎない(古いものから捨てる)。
+        if (big.size > 5) {
+          const k = big.keys().next().value as string;
+          const old = big.get(k)!;
+          if (old !== fU && old !== fO) {
+            gl.deleteTexture(old.t);
+            big.delete(k);
+          }
+        }
+        if (fOidx === idx && fO) fO = o;
+        if (fUidx === idx && fU) fU = o;
+      };
+      L.src = src;
+    }
+    const sm = texOf(img);
+    return sm ? { t: sm.t, a: sm.w / sm.h } : null;
+  }
+  // 作品 idx の絵を、(x, y) から広げる。idx が負なら、ふつうの一覧へ戻す波。
+  function focus(idx: number, x: number, y: number) {
+    if (!spread || !G || !animate || glFail || !initGL()) return;
+    if (idx === focusIdx()) return;
+    if (fT >= 0) {
+      // 波の途中で次へ移ったら、広がりかけの絵を「いま出ている絵」として、その上に次の波を重ねる。
+      fU = fO;
+      fUidx = fOidx;
+    }
+    fO = idx >= 0 ? focusTex(idx) : null;
+    fOidx = idx >= 0 && fO ? idx : -1;
+    fT = 0;
+    fRad = 0;
+    fcx = x;
+    fcy = y;
+    showLabel(fOidx);
+    if (fOidx >= 0) sfx.pon(1 - y / Math.max(1, window.innerHeight));
+    kick();
+  }
+
   // ---------- 描画
   const eL: number[] = [];
   const eR: number[] = [];
   const fL: number[] = [];
   const fR: number[] = [];
+  let listLeft = 0; // 一覧の左端の、画面の中での位置(このコマ)
   let vb = new Float32Array(4096);
   let vn = 0;
   const need = (n: number) => {
@@ -423,7 +531,13 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       el.o.style.visibility = '';
     }
     if (el.f) el.f.style.transform = '';
-    if (el.tx) el.tx.style.transform = '';
+    if (el.tx) {
+      el.tx.style.transform = '';
+      if (el.cov) {
+        el.cov = false;
+        el.tx.style.opacity = '';
+      }
+    }
   }
   function drawCell(idx: number, r: number, c: number, listTop: number) {
     const el = cls[idx];
@@ -500,8 +614,7 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     outline(eL, eR);
     outline(fL, fR);
     gl.bufferData(gl.ARRAY_BUFFER, vb.subarray(0, vn), gl.DYNAMIC_DRAW);
-    gl.uniform1f(uKind, 1);
-    gl.uniform4f(uCol, 0, 0, 0, 1);
+    gl.uniform1f(uKind, 2);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, capEnd / 4);
     if (t) {
       gl.uniform1f(uKind, 0);
@@ -523,6 +636,12 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       const tmy = (by + cy) / 2;
       const tphi = Math.atan2(cx - bx, cy - by);
       el.tx.style.transform = `translate3d(${(tmx - hx).toFixed(2)}px,${(tmy - (l1 + (rowH - ph) / 2)).toFixed(2)}px,0) rotate(${(-tphi).toFixed(4)}rad)`;
+      // 絵が出ている所では、文字を隠す。
+      const cov = imageAt(tmx + listLeft, tmy + listTop);
+      if (cov !== el.cov) {
+        el.cov = cov;
+        el.tx.style.opacity = cov ? '0' : '';
+      }
     }
   }
   function drawAll(listRect: DOMRect, anchorY: number) {
@@ -536,6 +655,26 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform2f(uSize, cvW, cvH);
     gl.uniform2f(uOrg, -listRect.left, -listRect.top - CM);
+    listLeft = listRect.left;
+    // 触れた作品の絵(画面いっぱいの1枚)と、広がる波。
+    gl.uniform2f(U.view, cvW, vh);
+    gl.uniform2f(U.cvs, cv.width, cv.height);
+    gl.uniform1f(U.dpr, cvD);
+    gl.uniform1f(U.top, CM);
+    gl.uniform1f(U.hasU, fU ? 1 : 0);
+    gl.uniform1f(U.hasO, fT >= 0 && fO ? 1 : fT < 0 && fU ? 1 : 0);
+    gl.uniform1f(U.ua, fU ? fU.a : 1);
+    gl.uniform1f(U.oa, fT >= 0 ? (fO ? fO.a : 1) : fU ? fU.a : 1);
+    gl.uniform2f(U.fc, fcx, fcy);
+    gl.uniform1f(U.fr, fT >= 0 ? fRad : 1e6);
+    gl.uniform1f(U.band, F_BAND);
+    gl.uniform1f(U.cell, 7);
+    gl.activeTexture(gl.TEXTURE1);
+    if (fU) gl.bindTexture(gl.TEXTURE_2D, fU.t);
+    gl.activeTexture(gl.TEXTURE2);
+    const over = fT >= 0 ? fO : fU;
+    if (over) gl.bindTexture(gl.TEXTURE_2D, over.t);
+    gl.activeTexture(gl.TEXTURE0);
     const seen = new Set<number>();
     for (let c = 0; c < cols; c++) {
       buildPath(c, listRect.top, anchorY);
@@ -720,11 +859,27 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       }
     }
     prevTS = tS;
+    // 引いた量に応じて、階段の音。
+    if (hold > 0) sfx.climb(Math.abs(fieldAt(gc, hy)) / lim);
+    // 絵の波を進める。
+    if (fT >= 0) {
+      fT += dt;
+      const u = Math.min(1, fT / F_DUR);
+      const rMax = Math.hypot(Math.max(fcx, document.documentElement.clientWidth - fcx), Math.max(fcy, vh - fcy)) + F_BAND;
+      fRad = rMax * (1 - Math.pow(1 - u, 3)) - F_BAND * 0.5 * (1 - u);
+      if (u >= 1) {
+        fU = fO;
+        fUidx = fOidx;
+        fO = null;
+        fOidx = -1;
+        fT = -1;
+      }
+    }
     // テープを たぐる 中心は、指のある高さ(指の下の作品は、指についてくる)。
     if (touching) anchorY = pyS;
     else if (ghost <= 0) anchorY += (pyS - anchorY) * (1 - Math.exp(-dt / 0.12));
     root.dataset.amp = fieldAt(gc, hy).toFixed(1); // 確認用
-    if (hold <= 0 && maxV < 1 && maxX < 0.15 && !dbg.__tapeForce) {
+    if (hold <= 0 && maxV < 1 && maxX < 0.15 && !dbg.__tapeForce && !focusOn()) {
       // 静まった。まっすぐに戻して、止める。
       for (let c = 0; c < cols; c++) {
         FX[c].fill(0);
@@ -755,6 +910,7 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     target = tS = prevTS = grab;
     pyS = y;
     ghost = 0;
+    sfx.pluck(gc); // つかんだテープの音
   }
   // トラックパッドとマウス: 横に d だけ動かした。カーソルの下のテープを、そのぶん引く。
   // leak: マウスは、ゆっくり動かすあいだは ほとんど引かない(作品を押そうとして狙うとき、的が逃げないように)。速く払うと、大きく引く。
@@ -823,6 +979,92 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     kick();
   }
 
+  // ---------- 音
+  const sfx = makeSfx();
+  // 作品に触れると絵が広がる版かどうか(/lab/cells-strip/)。そうでなければ、名前の枠も音のボタンも出さない。
+  const spread = root.dataset.spread !== undefined;
+
+  // ---------- 触れた作品の名前(左下)と、音の切り替え(右下)。見た目は仮。
+  const mk = (tag: string, css: string) => {
+    const e = document.createElement(tag);
+    e.style.cssText = css;
+    return e;
+  };
+  const FRAME = 'position:fixed;z-index:6;box-sizing:border-box;border:1px solid var(--fg);background:#000;color:var(--fg);font:inherit;';
+  const label = mk('a', `${FRAME}left:var(--pad);bottom:1.1rem;display:none;max-width:min(calc(100vw - var(--pad)*2 - 6.2rem),26rem);padding:.6rem .75rem .65rem;text-decoration:none;`) as HTMLAnchorElement;
+  const lbT = mk('span', 'display:block;font-size:.9rem;line-height:1.4;');
+  const lbM = mk('span', 'display:block;margin-top:.2rem;font-size:.66rem;letter-spacing:.06em;color:var(--muted);');
+  label.append(lbT, lbM);
+  const snd = mk('button', `${FRAME}right:var(--pad);bottom:1.1rem;padding:.5rem .7rem;font-size:.66rem;letter-spacing:.08em;cursor:pointer;border-radius:0;`) as HTMLButtonElement;
+  snd.type = 'button';
+  const sndText = () => {
+    snd.textContent = sfx.on ? 'Sound on' : 'Sound off';
+    snd.setAttribute('aria-pressed', String(sfx.on));
+  };
+  sndText();
+  snd.addEventListener('click', () => {
+    sfx.set(!sfx.on);
+    sndText();
+    if (sfx.on) sfx.click();
+  });
+  if (animate && spread) root.append(label, snd);
+  function showLabel(idx: number) {
+    const el = idx >= 0 ? cls[idx] : null;
+    const li = idx >= 0 && G ? G.rows[idx] : null;
+    if (!el || !li) {
+      label.style.display = 'none';
+      return;
+    }
+    lbT.textContent = li.dataset.title || '';
+    lbM.textContent = `${li.querySelector('.cl-meta')?.textContent?.trim() || ''}  —  Open`;
+    label.href = (el.f as HTMLAnchorElement | null)?.href || '#';
+    label.style.display = 'block';
+  }
+
+  // マウス: 作品の上で少し止まると、その絵が広がる。一覧の外へ出ると、戻る。
+  // 指: 1回目のタップで絵が広がり、同じ作品をもう1回(または左下の名前を)押すと、作品のページへ行く。
+  let ptr = 'mouse';
+  let dwell = 0;
+  const rowOf = (t: EventTarget | null) => (t instanceof Element ? t.closest<HTMLElement>('[data-row]') : null);
+  function onOver(e: PointerEvent) {
+    if (e.pointerType !== 'mouse' || !G) return;
+    const li = rowOf(e.target);
+    clearTimeout(dwell);
+    const idx = li ? G.rows.indexOf(li) : -1;
+    const x = e.clientX;
+    const y = e.clientY;
+    dwell = window.setTimeout(() => focus(idx, x, y), idx >= 0 ? 170 : 260);
+  }
+  function onLeave(e: PointerEvent) {
+    if (e.pointerType !== 'mouse') return;
+    clearTimeout(dwell);
+    const x = e.clientX;
+    const y = e.clientY;
+    dwell = window.setTimeout(() => focus(-1, x, y), 260);
+  }
+  function onDown(e: PointerEvent) {
+    ptr = e.pointerType;
+  }
+  function onClickCap(e: MouseEvent) {
+    if (ptr === 'mouse' || !G || glFail) return;
+    const t = e.target as Element | null;
+    if (t && (label.contains(t) || snd.contains(t))) return;
+    const li = rowOf(t);
+    if (!li) {
+      if (focusOn()) focus(-1, e.clientX, e.clientY);
+      return;
+    }
+    const idx = G.rows.indexOf(li);
+    if (idx >= 0 && idx !== focusIdx()) {
+      e.preventDefault();
+      e.stopPropagation();
+      focus(idx, e.clientX, e.clientY);
+    }
+  }
+  function onKeyEsc(e: KeyboardEvent) {
+    if (e.key === 'Escape' && focusOn()) focus(-1, window.innerWidth / 2, window.innerHeight / 2);
+  }
+
   const html = document.documentElement;
   const prevOver = html.style.overscrollBehaviorX;
   if (animate) {
@@ -833,6 +1075,13 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     window.addEventListener('touchmove', onTouch, { passive: true });
     window.addEventListener('touchend', onTouch, { passive: true });
     window.addEventListener('touchcancel', onTouch, { passive: true });
+    if (spread) {
+      list.addEventListener('pointerover', onOver);
+      list.addEventListener('pointerleave', onLeave);
+      window.addEventListener('pointerdown', onDown, { passive: true });
+      document.addEventListener('click', onClickCap, true);
+      document.addEventListener('keydown', onKeyEsc);
+    }
   }
 
   return {
@@ -862,6 +1111,10 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       ghost = 0;
       holdUntil = 0;
       touching = false;
+      fU = fO = null;
+      fUidx = fOidx = -1;
+      fT = -1;
+      label.style.display = 'none';
       dirty.clear();
       const { cw, ph, rowH } = grid;
       const f1 = (v: number) => v.toFixed(1);
@@ -888,6 +1141,7 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
           tx: li.querySelector<HTMLElement>('.cl-text'),
           o,
           hid: false,
+          cov: false,
         };
       });
       for (let i = 0; i < cls.length; i++) restCell(i);
@@ -907,6 +1161,15 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       window.removeEventListener('touchmove', onTouch);
       window.removeEventListener('touchend', onTouch);
       window.removeEventListener('touchcancel', onTouch);
+      list.removeEventListener('pointerover', onOver);
+      list.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('click', onClickCap, true);
+      document.removeEventListener('keydown', onKeyEsc);
+      clearTimeout(dwell);
+      label.remove();
+      snd.remove();
+      sfx.dispose();
       for (let i = 0; i < cls.length; i++) restCell(i);
       clearTimeout(warmId);
       cv?.remove();

@@ -1,0 +1,11 @@
+---
+// 試作: cells-tape に、「選ぶと画面全体が変わる」を足した版。
+// 作品に触れると(PC: カーソルを少し止める / スマホ: 1回タップ)、その絵が触れた点から広がり、全部のテープが1枚の絵の短冊になる。
+// 右下の Sound で、操作の音が出る。手札は 映像表現研究(nok の帯状コラージュ / Ringwriter の崩れ方 / Topographic の操作音)から。
+import Base from '../../layouts/Base.astro';
+import CellList from '../../components/CellList.astro';
+---
+
+<Base title="Soki Hayashi — cells-strip (試作)">
+  <CellList ctl="menu" keys={['d']} cols={2} live="tape" spread />
+</Base>
