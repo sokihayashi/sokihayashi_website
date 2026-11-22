@@ -1469,6 +1469,8 @@ export function mountMorph(root: HTMLElement) {
   const big = document.createElement('div');
   big.className = 'mt-big';
   big.innerHTML = 'SOKI<br>HAYASHI';
+  // 名前を大きく出すのはやめた(本人判断)。文字・図形は、名前ではなく画面の素材として使う方向で作り直す。
+  big.style.display = 'none';
   typeL.append(big);
   root.append(typeL);
   const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
