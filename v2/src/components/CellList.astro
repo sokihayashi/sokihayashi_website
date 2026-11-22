@@ -147,7 +147,7 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
             data-title={w.data.title}
           >
             <a class="cl-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
-              <img src={wallSrc(w.data.images[0], 560)} alt="" loading={live === 'gather' ? 'eager' : 'lazy'} decoding="async" />
+              <img src={wallSrc(w.data.images[0], 560)} alt="" loading={live === 'gather' || live === 'tape' ? 'eager' : 'lazy'} decoding="async" />
             </a>
             <a class="cl-text" href={`${base}/works/${w.id}/`}>
               <span class="cl-title">{w.data.title}</span>
@@ -556,17 +556,13 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
     column-gap: var(--g);
   }
   /* テープの版: 写真の箱は、面より少しだけ大きい(幅 1.18 倍、高さ 1.1 倍。tape.ts の数字と合わせる)。
-     作品ごとに重なりの順番を持つ(あとの作品が上)。線は作品ごとの SVG、文字はその上。 */
+     動いているあいだは、写真と線を canvas(重なり 1)に描く。文字は、その上(重なり 2)。 */
   .cl-page[data-grid][data-live='tape'] {
     --m: calc(var(--cw) * 0.09);
     --vm: calc(var(--ph) * 0.05);
   }
   .cl-page[data-live='tape'] .cl-row {
     position: relative;
-    isolation: isolate;
-  }
-  .cl-page[data-live='tape'] .cl-face {
-    will-change: transform;
   }
   .cl-page[data-grid][data-live='tape'] .cl-text {
     z-index: 2;

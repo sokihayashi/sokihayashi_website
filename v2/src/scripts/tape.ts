@@ -3,16 +3,19 @@
 // 考え方(トップの「描く帯」と同じ):
 //   - 列は1本ずつの、平らなテープ。幅は一定、伸びない、陰もない。作品は、テープを直角に切った面。
 //   - テープの「通り道」は画面の上にある。ふだんは、まっすぐな縦の線。
-//   - 指(PC ではカーソル)を動かすと、指の通った跡が、そのまま通り道になる。
+//   - 指(PC ではカーソル)でつかめるのは、触れた1本だけ。指の通った跡が、その1本の通り道になる。
 //     指の下のテープは指についてくる。うしろのテープは、指の通った跡をなぞって流れる(ひもを引くのと同じ)。
+//   - となりのテープは、ぶつかられて初めて動く。押されて、よけて、自分のばねで戻る。だから1本ずつ動きが違う。
 //   - テープは伸びないので、横へ引くと、上下のテープが指のほうへ たぐり寄せられる。
 //   - 指を離すと、線は勢いで少し先まで伸び、そのあと、ばねで まっすぐへ戻る。そのあいだも作品は、曲がった通り道を流れ続ける。
 //
 // 作り:
-//   - 通り道の横ずれは、画面の高さごとの値(場)で持つ。場は、ばね・張り・減衰で動く。指の下だけ、指の位置に合わせ続ける。
-//   - 列ごとに、場から中心線をつくり、線に沿った長さで作品の位置を決める(伸びない)。面のふちは、中心線から直角に幅の半分。
-//   - 写真と文字は、面ごと動かして回すだけ(歪めない)。写真は、面の形で裁つ。線は、作品ごとの小さな SVG。
-//   - 静まったら、何も動かさない。ふつうの升目に戻る。
+//   - 通り道の横ずれは、テープごとに、画面の高さごとの値(場)で持つ。場は、ばね・張り・減衰で動く。
+//   - 場から中心線をつくり、線に沿った長さで作品の位置を決める(伸びない)。面のふちは、中心線から直角に幅の半分。
+//   - 動いているあいだ、写真・文字の面の地・線は、1枚の canvas に WebGL で描く。
+//     (もとの写真を毎コマ裁ち直す作りは、機種によって CPU で描かれて詰まる。WebGL は、どの機種でも GPU で描かれる)
+//     写真は、面ごと動かして回すだけ(歪めない)。文字は、もとの要素を動かして回す。
+//   - 静まったら canvas をしまい、もとの写真と線に戻す。何も動かさない、ふつうの升目になる。
 
 export type TapeGrid = {
   rows: HTMLElement[]; // 見えている作品(並び順)
@@ -26,72 +29,79 @@ export type TapeGrid = {
 };
 
 const SVGNS = 'http://www.w3.org/2000/svg';
+type Dbg = { __tapeSlow?: number; __tapeForce?: boolean; __tapeKeep?: boolean };
 
 export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean) {
   let G: TapeGrid | null = null;
-  type Cl = { f: HTMLElement | null; tx: HTMLElement | null; cap: SVGPathElement; pho: SVGPathElement };
+  type Cl = {
+    f: HTMLElement | null;
+    img: HTMLImageElement | null;
+    tx: HTMLElement | null;
+    o: SVGSVGElement;
+    hid: boolean; // もとの写真と線を隠して、canvas に描いている
+  };
   let cls: Cl[] = [];
-  const dirty = new Set<number>(); // まっすぐでない形で描いてある作品
+  const dirty = new Set<number>();
+  // 線の色(紙色)。CSS の --fg(#rrggbb)を、0〜1 の数にして持つ。
+  const hex = (getComputedStyle(root).getPropertyValue('--fg').trim().match(/^#([0-9a-f]{6})$/i) || ['', 'f4f1ea'])[1];
+  const paperRGB = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
 
-  // ---------- 場(通り道の横ずれ。画面の高さ −PAD 〜 画面の下 +PAD)
+  // ---------- 場(テープごとの、通り道の横ずれ。画面の高さ −PAD 〜 画面の下 +PAD)
   const HS = 16; // 場のきざみ
   const PAD = 420;
   const OMEGA = 4.3; // まっすぐへ戻る ばね の速さ
   const ZETA = 0.7; // 減衰(1 より小さいと、少し行きすぎてから戻る)
-  let LSP = 86; // 指の先で、通り道がなめらかにつながる長さ(テープの幅に合わせる)
   const ETA = 1900; // 細かい折れをならす
-  let SIG = 27; // 指の太さ(同上)
   const SMAX = 0.95; // 面の傾きの上限(約 43 度)
-  let FX = new Float32Array(0); // 横ずれ
-  let FV = new Float32Array(0); // その速さ
-  let FP = new Float32Array(0); // そこを書いたときの、指の横位置(一覧の左端から)
+  const KC = 520; // テープどうしが ぶつかったときに押し返す強さ
+  let LSP = 86; // 指の先で、通り道がなめらかにつながる長さ(テープの幅に合わせる)
+  let SIG = 27; // 指の太さ(同上)
+  let FX: Float32Array[] = []; // 横ずれ
+  let FV: Float32Array[] = []; // その速さ
   let fN = 0;
   let vh = 0;
   function ensureField() {
     vh = window.innerHeight;
+    const cols = G ? G.cols : 0;
     // 場の長さは、増やすだけ(スマホは送るたびに画面の高さが変わる。そのたびに作り直すと、動きが途切れる)。
-    const n = Math.ceil((Math.max(vh, window.screen?.height || 0) + PAD * 2) / HS) + 1;
-    if (n > fN) {
-      const grow = (a: Float32Array) => {
+    const n = Math.max(fN, Math.ceil((Math.max(vh, window.screen?.height || 0) + PAD * 2) / HS) + 1);
+    if (n !== fN || FX.length !== cols) {
+      const grow = (a?: Float32Array) => {
         const b = new Float32Array(n);
-        b.set(a);
+        if (a) b.set(a);
         return b;
       };
-      FX = grow(FX);
-      FV = grow(FV);
-      FP = grow(FP);
+      FX = Array.from({ length: cols }, (_, c) => grow(FX[c]));
+      FV = Array.from({ length: cols }, (_, c) => grow(FV[c]));
       fN = n;
     }
   }
   // 点のあいだは、なめらかな曲線でつなぐ。
-  const fieldAt = (y: number) => {
+  const fieldAt = (c: number, y: number) => {
+    const A = FX[c];
     const f = Math.max(0, Math.min(fN - 1, (y + PAD) / HS));
     const i = Math.min(fN - 2, Math.floor(f));
     const t = f - i;
-    const p0 = FX[i > 0 ? i - 1 : 0];
-    const p1 = FX[i];
-    const p2 = FX[i + 1];
-    const p3 = FX[i + 2 < fN ? i + 2 : fN - 1];
+    const p0 = A[i > 0 ? i - 1 : 0];
+    const p1 = A[i];
+    const p2 = A[i + 1];
+    const p3 = A[i + 2 < fN ? i + 2 : fN - 1];
     return p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
   };
-  const penXAt = (y: number) => {
-    const f = Math.max(0, Math.min(fN - 1, (y + PAD) / HS));
-    const i = Math.min(fN - 2, Math.floor(f));
-    return FP[i] + (FP[i + 1] - FP[i]) * (f - i);
-  };
-  // 高さ y のまわりを、横へ d だけ動かす。速さは vel にそろえる。w は効かせる強さ(0〜1)。
-  function push(y: number, d: number, vel: number, penX: number, w0: number) {
-    const c = Math.round((y + PAD) / HS);
+  // テープ c の、高さ y のまわりを、横へ d だけ動かす。速さは vel にそろえる。w0 は効かせる強さ(0〜1)。
+  function push(c: number, y: number, d: number, vel: number, w0: number) {
+    const X = FX[c];
+    const V = FV[c];
+    const at = Math.round((y + PAD) / HS);
     const span = Math.ceil((SIG * 2.6) / HS);
-    for (let j = Math.max(0, c - span); j <= Math.min(fN - 1, c + span); j++) {
+    for (let j = Math.max(0, at - span); j <= Math.min(fN - 1, at + span); j++) {
       const w = Math.exp(-(((j * HS - PAD - y) / SIG) ** 2)) * w0;
-      FX[j] += d * w;
-      FV[j] += (vel - FV[j]) * w;
-      FP[j] += (penX - FP[j]) * w;
+      X[j] += d * w;
+      V[j] += (vel - V[j]) * w;
     }
   }
 
-  // ---------- 列ごとの通り道
+  // ---------- テープごとの通り道
   const DYP = 8;
   let K = 0;
   let pX = new Float32Array(0); // 中心線の横位置(一覧の左端から)
@@ -99,6 +109,10 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
   let pL = new Float32Array(0); // テープの上の位置(一覧の上端からの長さ)
   let pA = new Float32Array(0); // 作業用
   let pB = new Float32Array(0);
+  let Y0 = 0;
+  let qx = 0;
+  let qy = 0;
+  let qs = 0;
   // ならす(箱形の平均を3回 ≒ 山形の重み)。src → dst、半径は r 点ぶん。tmp は作業用。
   function blur(src: Float32Array, dst: Float32Array, tmp: Float32Array, r: number) {
     const box = (a: Float32Array, o: Float32Array) => {
@@ -124,15 +138,11 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     }
     return m / (DYP * DYP);
   };
-  let Y0 = 0;
-  let qx = 0;
-  let qy = 0;
-  let qs = 0;
+  const limOf = (cw: number) => cw * 0.62; // 横へ動ける幅(端は壁にせず、近づくほど ゆるやかに)
   function buildPath(c: number, listTop: number, anchorY: number) {
     const { cw, g } = G!;
     const hx = c * (cw + g) + cw / 2;
-    const lim = cw * 0.62; // 横へ動ける幅(端は壁にせず、近づくほど ゆるやかに)
-    const sw = 1.25 * (cw + g);
+    const lim = limOf(cw);
     Y0 = -PAD + HS;
     const k = Math.floor((vh + PAD * 2 - HS * 2) / DYP) + 1;
     if (k !== K) {
@@ -145,16 +155,13 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     }
     let bent = false;
     for (let i = 0; i < K; i++) {
-      const y = Y0 + i * DYP;
-      const f = fieldAt(y);
+      const f = fieldAt(c, Y0 + i * DYP);
       if (f > -0.02 && f < 0.02) {
         pX[i] = hx;
         continue;
       }
       bent = true;
-      // 指に近い列ほど、よく動く(列ごとに少しずつ違う動きになる)。
-      const dxp = (hx - penXAt(y)) / sw;
-      pX[i] = hx + lim * Math.tanh(f / lim) * (0.64 + 0.36 * Math.exp(-dxp * dxp));
+      pX[i] = hx + lim * Math.tanh(f / lim);
     }
     if (bent) {
       // 平らなテープは、きつくは曲がれない。幅に応じてならし、それでも きつい所は、さらに ならした線へ寄せる。
@@ -214,53 +221,218 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     return pL[i] + (pL[i + 1] - pL[i]) * (f - i);
   };
 
+  // ---------- canvas(動いているあいだの描画先。画面の幅 × 画面の高さ + 上下の余白。一覧と一緒に送られる場所に置く)
+  const CM = 150;
+  let cv: HTMLCanvasElement | null = null;
+  let gl: WebGLRenderingContext | null = null;
+  let glFail = false;
+  let cvD = 1;
+  let cvW = 0;
+  let cvH = 0;
+  let cvOn = false;
+  let uSize: WebGLUniformLocation | null = null;
+  let uOrg: WebGLUniformLocation | null = null;
+  let uKind: WebGLUniformLocation | null = null;
+  let uCol: WebGLUniformLocation | null = null;
+  const tex = new Map<string, { t: WebGLTexture; w: number; h: number }>();
+  function initGL(): boolean {
+    if (gl) return true;
+    if (glFail) return false;
+    cv = document.createElement('canvas');
+    cv.setAttribute('aria-hidden', 'true');
+    cv.style.cssText = 'position:absolute;left:0;top:0;z-index:1;pointer-events:none;display:none;will-change:transform';
+    const opt = { alpha: true, antialias: true, premultipliedAlpha: true, powerPreference: 'high-performance' as const };
+    gl = (cv.getContext('webgl2', opt) || cv.getContext('webgl', opt)) as WebGLRenderingContext | null;
+    if (!gl) {
+      glFail = true;
+      cv = null;
+      return false;
+    }
+    const sh = (type: number, src: string) => {
+      const o = gl!.createShader(type)!;
+      gl!.shaderSource(o, src);
+      gl!.compileShader(o);
+      return o;
+    };
+    const prog = gl.createProgram()!;
+    // p: 一覧の左上を原点にした位置(px)。org: canvas の左上の、同じ座標での位置。
+    gl.attachShader(
+      prog,
+      sh(
+        gl.VERTEX_SHADER,
+        'attribute vec2 p;attribute vec2 uv;uniform vec2 size;uniform vec2 org;varying vec2 vuv;' +
+          'void main(){vuv=uv;vec2 q=p-org;gl_Position=vec4(q.x/size.x*2.-1.,1.-q.y/size.y*2.,0.,1.);}'
+      )
+    );
+    gl.attachShader(
+      prog,
+      sh(
+        gl.FRAGMENT_SHADER,
+        'precision mediump float;uniform sampler2D t;uniform float kind;uniform vec4 col;varying vec2 vuv;' +
+          'void main(){gl_FragColor=kind>.5?col:vec4(texture2D(t,vuv).rgb,1.);}'
+      )
+    );
+    gl.bindAttribLocation(prog, 0, 'p');
+    gl.bindAttribLocation(prog, 1, 'uv');
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      glFail = true;
+      gl = null;
+      cv = null;
+      return false;
+    }
+    gl.useProgram(prog);
+    uSize = gl.getUniformLocation(prog, 'size');
+    uOrg = gl.getUniformLocation(prog, 'org');
+    uKind = gl.getUniformLocation(prog, 'kind');
+    uCol = gl.getUniformLocation(prog, 'col');
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.enableVertexAttribArray(0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    gl.disable(gl.DEPTH_TEST);
+    gl.clearColor(0, 0, 0, 0);
+    cv.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      glFail = true; // 描く先を失ったら、動かすのをやめて、ふつうの升目のままにする
+    });
+    root.appendChild(cv);
+    return true;
+  }
+  function sizeCanvas() {
+    const w = document.documentElement.clientWidth;
+    const h = vh + CM * 2;
+    const d = Math.min(window.devicePixelRatio || 1, 3, Math.sqrt(6.6e6 / (w * h)));
+    const pw = Math.round(w * d);
+    const phx = Math.round(h * d);
+    if (cv!.width !== pw || cv!.height !== phx) {
+      cv!.width = pw;
+      cv!.height = phx;
+      cv!.style.width = `${w}px`;
+      cv!.style.height = `${h}px`;
+    }
+    cvD = d;
+    cvW = w;
+    cvH = h;
+  }
+  function showCanvas(on: boolean) {
+    if (!cv || cvOn === on) return;
+    cvOn = on;
+    cv.style.display = on ? 'block' : 'none';
+  }
+  // 写真を GPU に渡す。最初に動かす瞬間に つかえないよう、手の空いたときに前もって渡しておく。
+  function texOf(img: HTMLImageElement) {
+    const key = img.currentSrc || img.src;
+    const hit = tex.get(key);
+    if (hit) return hit;
+    if (!gl || !img.complete || !img.naturalWidth) return null;
+    try {
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      const o = { t, w: img.naturalWidth, h: img.naturalHeight };
+      tex.set(key, o);
+      return o;
+    } catch {
+      return null;
+    }
+  }
+  let warmAt = 0;
+  let warmId = 0;
+  function warm() {
+    warmId = 0;
+    if (!G || !initGL()) return;
+    let made = 0;
+    while (warmAt < cls.length && made < 2) {
+      const img = cls[warmAt].img;
+      if (img && !tex.has(img.currentSrc || img.src)) {
+        if (!img.complete) break; // まだ届いていない写真は、あとで
+        if (texOf(img)) made++;
+      }
+      warmAt++;
+    }
+    if (warmAt < cls.length) warmId = window.setTimeout(warm, made ? 60 : 400);
+  }
+
   // ---------- 描画
   const eL: number[] = [];
   const eR: number[] = [];
-  const loc: number[] = [];
-  // テープの la〜lb のふち(左と右)。中心線から、直角に幅の半分。
-  function edges(la: number, lb: number, listTop: number) {
+  const fL: number[] = [];
+  const fR: number[] = [];
+  let vb = new Float32Array(4096);
+  let vn = 0;
+  const need = (n: number) => {
+    if (vn + n > vb.length) {
+      const b = new Float32Array(Math.max(vb.length * 2, vn + n));
+      b.set(vb);
+      vb = b;
+    }
+  };
+  // テープの la〜lb のふち(左と右)。中心線から、直角に幅の半分。一覧の左上を原点にした位置で返す。
+  function edges(la: number, lb: number, listTop: number, L: number[], Rr: number[]) {
     const half = G!.cw / 2;
-    eL.length = 0;
-    eR.length = 0;
+    L.length = 0;
+    Rr.length = 0;
     const k = Math.max(1, Math.round((lb - la) / 12));
     for (let i = 0; i <= k; i++) {
       ptAt(la + ((lb - la) * i) / k);
       const q = 1 / Math.sqrt(1 + qs * qs);
       const y = qy - listTop;
-      eL.push(qx - half * q, y + half * qs * q);
-      eR.push(qx + half * q, y - half * qs * q);
+      L.push(qx - half * q, y + half * qs * q);
+      Rr.push(qx + half * q, y - half * qs * q);
     }
   }
-  const ring = (ox: number, oy: number) => {
-    let d = '';
-    for (let i = 0; i < eL.length; i += 2) d += `${i ? 'L' : 'M'}${(eL[i] - ox).toFixed(1)} ${(eL[i + 1] - oy).toFixed(1)}`;
-    for (let i = eR.length - 2; i >= 0; i -= 2) d += `L${(eR[i] - ox).toFixed(1)} ${(eR[i + 1] - oy).toFixed(1)}`;
-    return d + 'Z';
-  };
+  // 太さ 1px の線(細い四角の連なり)。
+  function line(x0: number, y0: number, x1: number, y1: number) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / len) * 0.5;
+    const ny = (dx / len) * 0.5;
+    need(24);
+    const v = vb;
+    let k = vn;
+    v[k++] = x0 + nx; v[k++] = y0 + ny; k += 2;
+    v[k++] = x0 - nx; v[k++] = y0 - ny; k += 2;
+    v[k++] = x1 + nx; v[k++] = y1 + ny; k += 2;
+    v[k++] = x0 - nx; v[k++] = y0 - ny; k += 2;
+    v[k++] = x1 - nx; v[k++] = y1 - ny; k += 2;
+    v[k++] = x1 + nx; v[k++] = y1 + ny; k += 2;
+    vn = k;
+  }
+  function outline(L: number[], Rr: number[]) {
+    const n = L.length;
+    for (let i = 0; i + 2 < n; i += 2) {
+      line(L[i], L[i + 1], L[i + 2], L[i + 3]);
+      line(Rr[i], Rr[i + 1], Rr[i + 2], Rr[i + 3]);
+    }
+    line(L[0], L[1], Rr[0], Rr[1]);
+    line(L[n - 2], L[n - 1], Rr[n - 2], Rr[n - 1]);
+  }
   function restCell(idx: number) {
     const el = cls[idx];
-    if (!el || !G) return;
-    const { cw, ph, rowH } = G;
-    const f1 = (v: number) => v.toFixed(1);
-    el.pho.setAttribute('d', `M0 0L${f1(cw)} 0L${f1(cw)} ${f1(ph)}L0 ${f1(ph)}Z`);
-    el.cap.setAttribute('d', `M0 ${f1(ph)}L${f1(cw)} ${f1(ph)}L${f1(cw)} ${f1(rowH)}L0 ${f1(rowH)}Z`);
-    if (el.f) {
-      el.f.style.transform = '';
-      el.f.style.clipPath = '';
+    if (!el) return;
+    if (el.hid) {
+      el.hid = false;
+      if (el.img) el.img.style.visibility = '';
+      el.o.style.visibility = '';
     }
+    if (el.f) el.f.style.transform = '';
     if (el.tx) el.tx.style.transform = '';
   }
   function drawCell(idx: number, r: number, c: number, listTop: number) {
     const el = cls[idx];
-    if (!el) return;
+    if (!el || !gl) return;
     const { cw, g, ph, rowH } = G!;
     const hx = c * (cw + g) + cw / 2;
     const l0 = r * rowH;
     const l1 = l0 + ph;
     const l2 = l0 + rowH;
-    const ox0 = c * (cw + g);
-    // 写真の面
     ptAt(l0);
     const ax = qx;
     const ay = qy - listTop;
@@ -270,80 +442,140 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
     ptAt(l2);
     const cx = qx;
     const cy = qy - listTop;
-    edges(l0, l1, listTop);
-    el.pho.setAttribute('d', ring(ox0, l0));
-    if (el.f) {
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const phi = Math.atan2(bx - ax, by - ay);
-      const cs = Math.cos(phi);
-      const sn = Math.sin(phi);
-      const bw = cw * 1.18; // 写真の箱は、面より少し大きい(回したり曲がったりしても、面を覆えるように)
-      const bh = ph * 1.1;
-      // 面の形を、写真の箱の中の位置に直す。箱からはみ出すぶんは、写真を少し大きくして覆う(歪めない)。
-      loc.length = 0;
-      let sc = 1;
-      const add = (x: number, y: number) => {
+    edges(l0, l1, listTop, eL, eR); // 写真の面
+    edges(l1, l2, listTop, fL, fR); // 文字の面
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const phi = Math.atan2(bx - ax, by - ay);
+    const t = el.img ? texOf(el.img) : null;
+    vn = 0;
+    // 1) 文字の面の地(黒)。となりのテープと重なったとき、下のテープを隠す。
+    const nF = fL.length;
+    need(nF * 4);
+    for (let i = 0; i < nF; i += 2) {
+      vb[vn] = fL[i]; vb[vn + 1] = fL[i + 1];
+      vb[vn + 4] = fR[i]; vb[vn + 5] = fR[i + 1];
+      vn += 8;
+    }
+    const capEnd = vn;
+    // 2) 写真: 面の形の帯。写真は、面ごと動かして回すだけ(歪めない)。箱からはみ出すぶんは、少し大きくして覆う。
+    const nE = eL.length;
+    need(nE * 4);
+    const cs = Math.cos(phi);
+    const sn = Math.sin(phi);
+    const bw = cw * 1.18; // 写真の箱は、面より少し大きい(CSS の --m, --vm と合わせる)
+    const bh = ph * 1.1;
+    let sc = 1;
+    for (let i = 0; i < nE; i += 2)
+      for (const E of [eL, eR]) {
+        const vx = E[i] - mx;
+        const vy = E[i + 1] - my;
+        const nd = Math.max(Math.abs(vx * cs - vy * sn) / (bw / 2), Math.abs(vx * sn + vy * cs) / (bh / 2));
+        if (nd > sc) sc = nd;
+      }
+    sc = Math.min(1.6, sc);
+    // object-fit: cover と同じ切り取り。
+    let fu = 1;
+    let fv = 1;
+    if (t) {
+      const ab = bw / bh;
+      const ai = t.w / t.h;
+      if (ai > ab) fu = ab / ai;
+      else fv = ai / ab;
+    }
+    for (let i = 0; i < nE; i += 2)
+      for (const E of [eL, eR]) {
+        const x = E[i];
+        const y = E[i + 1];
         const vx = x - mx;
         const vy = y - my;
-        const lx = vx * cs - vy * sn;
-        const ly = vx * sn + vy * cs;
-        loc.push(lx, ly);
-        const need = Math.max(Math.abs(lx) / (bw / 2), Math.abs(ly) / (bh / 2));
-        if (need > sc) sc = need;
-      };
-      for (let i = 0; i < eL.length; i += 2) add(eL[i], eL[i + 1]);
-      for (let i = eR.length - 2; i >= 0; i -= 2) add(eR[i], eR[i + 1]);
-      sc = Math.min(1.6, sc > 1 ? sc * 1.01 : 1);
-      let poly = '';
-      for (let i = 0; i < loc.length; i += 2) poly += `${i ? ',' : ''}${(loc[i] / sc + bw / 2).toFixed(1)}px ${(loc[i + 1] / sc + bh / 2).toFixed(1)}px`;
-      el.f.style.clipPath = `polygon(${poly})`;
-      el.f.style.transform = `translate3d(${(mx - hx).toFixed(2)}px,${(my - (l0 + ph / 2)).toFixed(2)}px,0) rotate(${(-phi).toFixed(4)}rad)${sc > 1 ? ` scale(${sc.toFixed(4)})` : ''}`;
+        vb[vn] = x;
+        vb[vn + 1] = y;
+        vb[vn + 2] = 0.5 + ((vx * cs - vy * sn) / sc / bw) * fu;
+        vb[vn + 3] = 0.5 + ((vx * sn + vy * cs) / sc / bh) * fv;
+        vn += 4;
+      }
+    const phoEnd = vn;
+    // 3) 線
+    outline(eL, eR);
+    outline(fL, fR);
+    gl.bufferData(gl.ARRAY_BUFFER, vb.subarray(0, vn), gl.DYNAMIC_DRAW);
+    gl.uniform1f(uKind, 1);
+    gl.uniform4f(uCol, 0, 0, 0, 1);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, capEnd / 4);
+    if (t) {
+      gl.uniform1f(uKind, 0);
+      gl.bindTexture(gl.TEXTURE_2D, t.t);
     }
-    // 文字の面
-    edges(l1, l2, listTop);
-    el.cap.setAttribute('d', ring(ox0, l0));
+    gl.drawArrays(gl.TRIANGLE_STRIP, capEnd / 4, (phoEnd - capEnd) / 4);
+    gl.uniform1f(uKind, 1);
+    gl.uniform4f(uCol, paperRGB[0], paperRGB[1], paperRGB[2], 1);
+    gl.drawArrays(gl.TRIANGLES, phoEnd / 4, (vn - phoEnd) / 4);
+    // もとの要素: 写真と線は隠す。写真の面は、押せる場所を合わせるために動かす。文字は、面ごと動かして回す。
+    if (!el.hid) {
+      el.hid = true;
+      if (el.img) el.img.style.visibility = 'hidden';
+      el.o.style.visibility = 'hidden';
+    }
+    if (el.f) el.f.style.transform = `translate3d(${(mx - hx).toFixed(2)}px,${(my - (l0 + ph / 2)).toFixed(2)}px,0) rotate(${(-phi).toFixed(4)}rad)`;
     if (el.tx) {
-      const mx = (bx + cx) / 2;
-      const my = (by + cy) / 2;
-      const phi = Math.atan2(cx - bx, cy - by);
-      el.tx.style.transform = `translate3d(${(mx - hx).toFixed(2)}px,${(my - (l1 + (rowH - ph) / 2)).toFixed(2)}px,0) rotate(${(-phi).toFixed(4)}rad)`;
+      const tmx = (bx + cx) / 2;
+      const tmy = (by + cy) / 2;
+      const tphi = Math.atan2(cx - bx, cy - by);
+      el.tx.style.transform = `translate3d(${(tmx - hx).toFixed(2)}px,${(tmy - (l1 + (rowH - ph) / 2)).toFixed(2)}px,0) rotate(${(-tphi).toFixed(4)}rad)`;
     }
   }
-  function drawAll(listTop: number, anchorY: number) {
+  function drawAll(listRect: DOMRect, anchorY: number) {
     const { n, cols, rowH, R } = G!;
+    if (!initGL() || !cv || !gl) return;
+    sizeCanvas();
+    // canvas は、画面の左上から CM だけ上に置く。一覧の中の要素なので、送りには一覧と一緒についていく。
+    const rr = root.getBoundingClientRect();
+    cv.style.transform = `translate3d(${(-rr.left).toFixed(2)}px,${(-rr.top - CM).toFixed(2)}px,0)`;
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform2f(uSize, cvW, cvH);
+    gl.uniform2f(uOrg, -listRect.left, -listRect.top - CM);
     const seen = new Set<number>();
     for (let c = 0; c < cols; c++) {
-      buildPath(c, listTop, anchorY);
-      const r0 = Math.max(0, Math.floor(lamAtY(-160) / rowH));
-      const r1 = Math.min(R - 1, Math.floor(lamAtY(vh + 160) / rowH));
+      buildPath(c, listRect.top, anchorY);
+      // canvas に入る範囲の作品を描く(画面の上下に、少し余分に)。
+      const r0 = Math.max(0, Math.floor(lamAtY(-CM + 24) / rowH));
+      const r1 = Math.min(R - 1, Math.floor(lamAtY(vh + CM - 24) / rowH));
       for (let r = r0; r <= r1; r++) {
         const idx = r * cols + c;
         if (idx >= n) break;
-        drawCell(idx, r, c, listTop);
+        drawCell(idx, r, c, listRect.top);
         seen.add(idx);
       }
     }
-    // 画面の外へ出た作品は、まっすぐに戻しておく。
+    // canvas の外へ出た作品は、もとの写真と線に戻す。
     dirty.forEach((idx) => {
       if (!seen.has(idx)) restCell(idx);
     });
     dirty.clear();
     seen.forEach((idx) => dirty.add(idx));
+    showCanvas(true);
   }
 
   // ---------- 入力と動き
   let raf = 0;
   let lastT = 0;
+  let gapN = 0; // 動き始めてからのコマ数
+  let gapAvg = 16; // コマの間隔(ms)の、ならした値
   let penX = 0; // 指 / カーソル(画面の中)
   let penY = -1;
+  let pyS = -1; // ならした高さ(入力の届く間隔のムラを、そのまま見せない)
+  let gc = 0; // つかんでいるテープ
   let touching = false;
   let grab = 0; // つかんだ瞬間の、そこの横ずれ
   let startX = 0;
   let target = 0; // 指の下を、いま置きたい横ずれ
-  let prevTarget = 0;
+  let tS = 0; // ならした target
+  let prevTS = 0;
   let holdUntil = 0; // トラックパッドとマウスは、横に動かしているあいだ(と、その直後)だけ、持っている扱い
   let lastMX: number | null = null;
+  let lastNudge = 0;
   let tvx = 0; // 指の速さ(px/秒)
   let tvy = 0;
   let lastTX = 0;
@@ -352,7 +584,6 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
   // 指を離したあと、線は勢いで少し先まで伸びる(見えないペンが、離したときの速さで進み、すぐ弱まる)。
   const GHOST = 0.3;
   let ghost = 0; // 残り時間(秒)
-  let gx = 0;
   let gy = 0;
   let gvx = 0;
   let gvy = 0;
@@ -360,107 +591,181 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
   const GAIN_TOUCH = 1.3;
   const GAIN_WHEEL = 0.9;
   const GAIN_MOUSE = 0.6;
+  const dbg = window as unknown as Dbg;
+
+  // 画面の位置 (x, y) に、いちばん近いテープ。
+  function colAt(x: number, y: number) {
+    const { cols, cw, g } = G!;
+    const left = list.getBoundingClientRect().left;
+    const lim = limOf(cw);
+    let best = 0;
+    let bd = Infinity;
+    for (let c = 0; c < cols; c++) {
+      const d = Math.abs(left + c * (cw + g) + cw / 2 + lim * Math.tanh(fieldAt(c, y) / lim) - x);
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+    return best;
+  }
 
   function tick(t: number) {
     raf = 0;
     if (!G || !G.n) return;
     const t0 = performance.now();
+    // 遅い機械への備え: 動かし始めてから コマの間隔が長いまま(1秒に 18 コマ未満)なら、動かすのをやめて、ふつうの升目に戻す。
+    // (GPU が使えず、WebGL が CPU で描かれる環境。カクカク動くより、動かないほうがよい)
+    gapN++;
+    if (gapN > 2) gapAvg += (t - lastT - gapAvg) * 0.15;
+    if (gapN > 14 && gapAvg > 55 && !dbg.__tapeKeep && !dbg.__tapeSlow && !dbg.__tapeForce) {
+      glFail = true;
+      for (let c = 0; c < G.cols; c++) {
+        FX[c].fill(0);
+        FV[c].fill(0);
+      }
+      root.dataset.amp = '0';
+      root.dataset.tape = 'off'; // 確認用
+      dirty.forEach(restCell);
+      dirty.clear();
+      showCanvas(false);
+      return;
+    }
     // 確認用: window.__tapeSlow に数を入れると、その倍だけ ゆっくり動く(連続写真を撮るため)。
-    const dt = Math.min(0.05, Math.max(0.001, (t - lastT) / 1000)) / ((window as unknown as { __tapeSlow?: number }).__tapeSlow || 1);
+    const dt = Math.min(0.05, Math.max(0.001, (t - lastT) / 1000)) / (dbg.__tapeSlow || 1);
     lastT = t;
     ensureField();
     const rect = list.getBoundingClientRect();
-    const now = performance.now();
-    const maxT = G.cw * 0.62 * 1.7;
+    const { cols, cw, g } = G;
+    const lim = limOf(cw);
+    const maxT = lim * 1.7;
     if (penY < 0) penY = vh * 0.5;
+    if (pyS < 0) pyS = penY;
     if (anchorY < 0) anchorY = penY;
+    const ease = 1 - Math.exp(-dt / 0.028);
+    pyS += (penY - pyS) * ease;
     // いま持っている点
     let hold = 0;
-    let hy = penY;
-    let hx = penX;
+    let hy = pyS;
     if (touching) hold = 1;
     else if (ghost > 0) {
       const k = Math.exp(-dt / 0.13);
-      gx += gvx * dt;
       gy += gvy * dt;
       target = Math.max(-maxT, Math.min(maxT, target + gvx * GAIN_TOUCH * dt));
       gvx *= k;
       gvy *= k;
       hold = Math.max(0, ghost / GHOST) ** 1.5;
       hy = gy;
-      hx = gx;
       ghost -= dt;
-    } else if (now < holdUntil) hold = 1;
-    const vT = (target - prevTarget) / dt;
+    } else if (performance.now() < holdUntil) hold = 1;
+    tS += (target - tS) * ease;
+    const vT = (tS - prevTS) / dt;
     // 場を進める
     const k0 = OMEGA * OMEGA;
-    const c0 = 2 * ZETA * OMEGA;
-    const sub = Math.max(1, Math.ceil((OMEGA * LSP * dt) / (0.5 * HS)));
+    const sub = Math.max(1, Math.ceil((OMEGA * 1.1 * LSP * dt) / (0.5 * HS)));
     const h = dt / sub;
-    const k2 = (k0 * LSP * LSP) / (HS * HS);
     const e2 = ETA / (HS * HS);
+    const gmin = g * 0.45; // これより近づいたら、ぶつかっている
     let maxV = 0;
     let maxX = 0;
     for (let s = 0; s < sub; s++) {
-      if (hold > 0) push(hy, prevTarget + ((target - prevTarget) * (s + 1)) / sub - fieldAt(hy), vT, hx - rect.left, hold);
-      let xm = FX[0];
-      let vm = FV[0];
-      for (let i = 0; i < fN; i++) {
-        const ip = i + 1 < fN ? i + 1 : i;
-        const xi = FX[i];
-        const vi = FV[i];
-        FV[i] = vi + (k2 * (xm - 2 * xi + FX[ip]) + e2 * (vm - 2 * vi + FV[ip]) - c0 * vi - k0 * xi) * h;
-        xm = xi;
-        vm = vi;
+      if (hold > 0) push(gc, hy, prevTS + ((tS - prevTS) * (s + 1)) / sub - fieldAt(gc, hy), vT, hold);
+      for (let c = 0; c < cols; c++) {
+        const X = FX[c];
+        const V = FV[c];
+        // テープごとに、ばねの速さを少し変える(戻り方がそろわないように)。
+        const om = 1 + 0.09 * Math.sin(c * 2.4 + 0.5);
+        const kk = k0 * om * om;
+        const cc = 2 * ZETA * OMEGA * om;
+        const k2 = (kk * LSP * LSP) / (HS * HS);
+        let xm = X[0];
+        let vm = V[0];
+        for (let i = 0; i < fN; i++) {
+          const ip = i + 1 < fN ? i + 1 : i;
+          const xi = X[i];
+          const vi = V[i];
+          V[i] = vi + (k2 * (xm - 2 * xi + X[ip]) + e2 * (vm - 2 * vi + V[ip]) - cc * vi - kk * xi) * h;
+          xm = xi;
+          vm = vi;
+        }
+      }
+      // となりどうしが ぶつかったら、押し合う。
+      for (let c = 0; c + 1 < cols; c++) {
+        const Xa = FX[c];
+        const Xb = FX[c + 1];
+        const Va = FV[c];
+        const Vb = FV[c + 1];
+        for (let i = 0; i < fN; i++) {
+          if (Xa[i] - Xb[i] <= g - gmin) continue; // 離れている
+          const sep = g + lim * Math.tanh(Xb[i] / lim) - lim * Math.tanh(Xa[i] / lim);
+          if (sep >= gmin) continue;
+          const rel = Vb[i] - Va[i];
+          const f = (KC * (gmin - sep) - (rel < 0 ? 16 * rel : 0)) * h;
+          Vb[i] += f;
+          Va[i] -= f;
+        }
       }
       maxV = 0;
       maxX = 0;
-      for (let i = 0; i < fN; i++) {
-        FX[i] += FV[i] * h;
-        const av = FV[i] < 0 ? -FV[i] : FV[i];
-        const ax = FX[i] < 0 ? -FX[i] : FX[i];
-        if (av > maxV) maxV = av;
-        if (ax > maxX) maxX = ax;
+      for (let c = 0; c < cols; c++) {
+        const X = FX[c];
+        const V = FV[c];
+        for (let i = 0; i < fN; i++) {
+          X[i] += V[i] * h;
+          const av = V[i] < 0 ? -V[i] : V[i];
+          const ax = X[i] < 0 ? -X[i] : X[i];
+          if (av > maxV) maxV = av;
+          if (ax > maxX) maxX = ax;
+        }
       }
     }
-    prevTarget = target;
+    prevTS = tS;
     // テープを たぐる 中心は、指のある高さ(指の下の作品は、指についてくる)。
-    if (touching) anchorY = penY;
-    else if (ghost <= 0) anchorY += (penY - anchorY) * (1 - Math.exp(-dt / 0.12));
-    root.dataset.amp = fieldAt(hy).toFixed(1); // 確認用
-    if (hold <= 0 && maxV < 1 && maxX < 0.15) {
+    if (touching) anchorY = pyS;
+    else if (ghost <= 0) anchorY += (pyS - anchorY) * (1 - Math.exp(-dt / 0.12));
+    root.dataset.amp = fieldAt(gc, hy).toFixed(1); // 確認用
+    if (hold <= 0 && maxV < 1 && maxX < 0.15 && !dbg.__tapeForce) {
       // 静まった。まっすぐに戻して、止める。
-      FX.fill(0);
-      FV.fill(0);
+      for (let c = 0; c < cols; c++) {
+        FX[c].fill(0);
+        FV[c].fill(0);
+      }
       root.dataset.amp = '0';
       dirty.forEach(restCell);
       dirty.clear();
+      showCanvas(false);
       return;
     }
-    drawAll(rect.top, anchorY);
-    root.dataset.ms = (performance.now() - t0).toFixed(1); // 確認用: 1コマの計算にかかった時間
+    drawAll(rect, anchorY);
+    root.dataset.ms = (performance.now() - t0).toFixed(1); // 確認用: 1コマの計算と描画の指示にかかった時間
     raf = requestAnimationFrame(tick);
   }
   function kick() {
-    if (raf || !G || !animate) return;
+    if (raf || !G || !animate || glFail) return;
     lastT = performance.now() - 16;
+    gapN = 0;
+    gapAvg = 16;
     raf = requestAnimationFrame(tick);
   }
-  // トラックパッドとマウス: 横に d だけ動かした。カーソルの下を、そのぶん引く。
+  // つかみ直す: 触れた点を、いまある位置から。
+  function regrab(x: number, y: number) {
+    ensureField();
+    gc = colAt(x, y);
+    grab = fieldAt(gc, y);
+    target = tS = prevTS = grab;
+    pyS = y;
+    ghost = 0;
+  }
+  // トラックパッドとマウス: 横に d だけ動かした。カーソルの下のテープを、そのぶん引く。
   // leak: マウスは、ゆっくり動かすあいだは ほとんど引かない(作品を押そうとして狙うとき、的が逃げないように)。速く払うと、大きく引く。
-  let lastNudge = 0;
   function nudge(d: number, leak: boolean) {
     if (!G) return;
     const now = performance.now();
-    if (now >= holdUntil || ghost > 0) {
-      ensureField();
-      grab = fieldAt(penY); // いまある位置からつかむ
-      target = prevTarget = grab;
-      ghost = 0;
-    }
+    // 持っていなければ、つかむ。カーソルが となりのテープへ移ったら、そちらへ持ち替える(横へ払うと、1本ずつ順に はじく)。
+    if (now >= holdUntil || ghost > 0 || colAt(penX, penY) !== gc) regrab(penX, penY);
     if (leak) target *= Math.exp(-Math.min(0.2, (now - lastNudge) / 1000) / 0.16);
     lastNudge = now;
-    const m = G.cw * 0.62 * (leak ? 0.75 : 1.7);
+    const m = limOf(G.cw) * (leak ? 0.75 : 1.7);
     target = Math.max(-m, Math.min(m, target + d));
     holdUntil = now + 130; // 動かすのをやめたら、すぐ離す
     kick();
@@ -487,11 +792,9 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       if (!touching) return;
       touching = false;
       // 離した。線は、そのときの勢いで少し伸びる。
-      const sp = Math.hypot(tvx, tvy);
-      if (sp > 120 && now - lastTT < 80) {
+      if (Math.hypot(tvx, tvy) > 120 && now - lastTT < 80) {
         ghost = GHOST;
-        gx = penX;
-        gy = penY;
+        gy = pyS;
         gvx = tvx;
         gvy = tvy;
       }
@@ -499,24 +802,19 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       return;
     }
     const tc = e.touches[0];
+    penX = tc.clientX;
+    penY = tc.clientY;
     if (e.type === 'touchstart' || !touching) {
-      ensureField();
       touching = true;
-      ghost = 0;
       holdUntil = 0;
-      penX = tc.clientX;
-      penY = tc.clientY;
       startX = tc.clientX;
-      grab = fieldAt(penY); // 触れた点を、いまある位置からつかむ
-      target = prevTarget = grab;
+      regrab(penX, penY);
       tvx = tvy = 0;
     } else {
       const dt = Math.max(0.004, (now - lastTT) / 1000);
       tvx += ((tc.clientX - lastTX) / dt - tvx) * 0.4;
       tvy += ((tc.clientY - lastTY) / dt - tvy) * 0.4;
-      penX = tc.clientX;
-      penY = tc.clientY;
-      const m = G.cw * 0.62 * 1.7;
+      const m = limOf(G.cw) * 1.7;
       target = Math.max(-m, Math.min(m, grab + (tc.clientX - startX) * GAIN_TOUCH));
     }
     lastTX = tc.clientX;
@@ -551,17 +849,22 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       )
         return;
       for (let i = 0; i < cls.length; i++) restCell(i); // 前の並びで動かしていたものを、戻しておく
+      showCanvas(false);
       root.dataset.amp = '0';
       G = grid;
       SIG = Math.max(27, grid.cw * 0.17);
       LSP = Math.max(86, grid.cw * 0.42);
       cancelAnimationFrame(raf);
       raf = 0;
-      FX.fill(0);
-      FV.fill(0);
+      FX = [];
+      FV = [];
+      ensureField();
       ghost = 0;
       holdUntil = 0;
+      touching = false;
       dirty.clear();
+      const { cw, ph, rowH } = grid;
+      const f1 = (v: number) => v.toFixed(1);
       cls = grid.rows.map((li) => {
         let o = li.querySelector<SVGSVGElement>('svg[data-tape]');
         if (!o) {
@@ -569,22 +872,31 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
           o.setAttribute('data-tape', '');
           o.setAttribute('aria-hidden', 'true');
           o.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:1';
-          for (const fill of ['#000', 'none']) {
-            const p = document.createElementNS(SVGNS, 'path');
-            p.style.cssText = `fill:${fill};stroke:var(--fg);stroke-width:1px;stroke-linejoin:round`;
-            o.appendChild(p);
-          }
+          const p = document.createElementNS(SVGNS, 'path');
+          p.style.cssText = 'fill:none;stroke:var(--fg);stroke-width:1px';
+          o.appendChild(p);
           li.appendChild(o);
         }
-        const ps = o.querySelectorAll('path');
+        // 止まっているあいだの線(まっすぐな枠)。
+        o.querySelector('path')!.setAttribute(
+          'd',
+          `M0 0L${f1(cw)} 0L${f1(cw)} ${f1(rowH)}L0 ${f1(rowH)}ZM0 ${f1(ph)}L${f1(cw)} ${f1(ph)}`
+        );
         return {
           f: li.querySelector<HTMLElement>('[data-face]'),
+          img: li.querySelector<HTMLImageElement>('[data-face] img'),
           tx: li.querySelector<HTMLElement>('.cl-text'),
-          cap: ps[0],
-          pho: ps[1],
+          o,
+          hid: false,
         };
       });
       for (let i = 0; i < cls.length; i++) restCell(i);
+      if (animate) {
+        warmAt = 0;
+        clearTimeout(warmId);
+        warmId = window.setTimeout(warm, 300);
+      }
+      if (dbg.__tapeForce) kick();
     },
     dispose() {
       cancelAnimationFrame(raf);
@@ -596,6 +908,8 @@ export function mountTape(root: HTMLElement, list: HTMLElement, animate: boolean
       window.removeEventListener('touchend', onTouch);
       window.removeEventListener('touchcancel', onTouch);
       for (let i = 0; i < cls.length; i++) restCell(i);
+      clearTimeout(warmId);
+      cv?.remove();
     },
   };
 }
