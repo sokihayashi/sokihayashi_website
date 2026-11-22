@@ -94,6 +94,7 @@ vec2 gP, gT, gN, gPq, gTq2, gNq;
 vec4 gR1, gR2;
 vec3 gX0, gC0;   // 帯の四隅と中心
 vec2 gUVp;       // 帯の中心での、写真の位置
+vec2 gUVb;       // 帯の四隅での、写真の位置
 
 // ---- 表現の出力
 struct O {
@@ -111,13 +112,30 @@ struct O {
   float line;   // 帯のふちと作品の境目に線を引くか
   vec3 lineCol; // 線の色
   float ridge;  // 糸の膨らみ
+  vec2 uv;      // 写真のどこを見せるか
+  float work;   // どの作品の写真か
+  float gate;   // 出てくる・消える大きさ(負なら、帯のふつうの決まりに従う)
 };
 O base(){
   O o;
   o.corner = gX0; o.centre = gC0; o.col = vec3(0.0); o.tex = 1.0; o.tint = vec3(1.0);
   o.shape = vec2(1.0); o.round = 0.0; o.alpha = 1.0; o.lit = 1.0; o.gloss = 0.0; o.face = 1.0;
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
+  o.uv = gUVb; o.work = gR2.w; o.gate = -1.0;
   return o;
+}
+// 向きのある細長い面(線・糸・札)
+O ori(vec3 c, vec2 d, float L, float W, vec3 col){
+  O o = base();
+  vec2 e = vec2(-d.y, d.x);
+  o.centre = c; o.corner = c + vec3(d * L * aQ.x + e * W * aQ.y, 0.0);
+  o.col = col; o.tex = 0.0; o.shape = vec2(L, W);
+  return o;
+}
+vec3 litBy(vec3 p, vec3 n){
+  vec3 Ld = uLight - p; float dl2 = dot(Ld, Ld); vec3 L = Ld * inversesqrt(dl2);
+  float R = max(uView.x, uView.y) * 0.55; float att = 1.0 / (1.0 + dl2 / (R * R));
+  return vec3(max(dot(n, L), 0.0) * att, pow(max(dot(n, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 30.0) * att, 0.0);
 }
 // 面の中心から、画面に正対した四角(または丸・棒)を作る。
 O dotAt(vec3 c, vec2 hsz, vec3 col, float round, float alpha){
@@ -190,7 +208,8 @@ O sParticle(){
   float aspA = uAsp[int(a2.w)];
   vec3 pc = photo(a2.w, 0.5 + (pl - a2.xy) / vec2(a2.z, a2.z / aspA));
   pc = (pc * 0.9 + 0.05) * mix(0.1, 0.24, h1) * alive;
-  return dotAt(c, vec2(r), pc, 1.0, 0.0);
+  O o = dotAt(c, vec2(r), pc, 1.0, 0.0); o.gate = 1.0;
+  return o;
 }
 // 3 浮き彫り(アナログとデジタルの間): 帯の表面が、写真の奥行きの分だけ盛り上がり、指の光を受ける。
 O sRelief(){
@@ -303,6 +322,173 @@ O sGlitch(){
   if (r2 < 0.05) { o.tex = 0.0; o.col = vec3(hs2(blk) > 0.5 ? 0.95 : 0.0); }
   return o;
 }
+
+// ---- ここから、実例を帯に落とし込んだ表現(第1弾)
+// 写真を1枚ずつの札にして、軌跡に並べる。upright: 正立して重なる / それ以外: 軌跡の向きに沿う。
+O card(float K, float S, float upright, float zw){
+  float k = floor(float(gIu) / K);
+  int jc = int(k * K * 0.5) % Mi;
+  vec4 c0 = texelFetch(uPath, ivec2(jc, 0), 0);
+  vec4 c1 = texelFetch(uPath, ivec2(jc, 1), 0);
+  vec4 c2 = texelFetch(uPath, ivec2(jc, 2), 0);
+  if (c1.w < 0.5) { c0.xy = uPen.xy; c0.zw = vec2(1.0, 0.0); }
+  float hk = fract(sin(k * 12.9898 + 4.1) * 43758.5453);
+  float ra = (hk - 0.5) * 0.5;
+  vec2 d = mix(normalize(c0.zw + vec2(1e-5, 0.0)), vec2(cos(ra), sin(ra)), upright);
+  d = normalize(d);
+  vec2 e = vec2(-d.y, d.x);
+  float asp = uAsp[int(c2.w)];
+  vec2 sz = asp > 1.0 ? vec2(S, S / asp) : vec2(S * asp, S);
+  float u = (float(gIu) - k * K + 0.5 + aQ.x * 0.5) / K;
+  float v = gVc + 0.5;
+  float uc = (float(gIu) - k * K + 0.5) / K;
+  float vc = gV + 0.5;
+  float ageC = mod(uK - 1.0 - float(jc), Mf);
+  float z = zw * sin(k * 0.7 - uTime * 2.2) + 2.0 * (1.0 - ageC / Mf);
+  O o = base();
+  o.corner = vec3(c0.xy + d * (u - 0.5) * sz.x + e * (v - 0.5) * sz.y, z);
+  o.centre = vec3(c0.xy + d * (uc - 0.5) * sz.x + e * (vc - 0.5) * sz.y, z);
+  o.uv = vec2(u, v); o.work = c2.w;
+  o.gate = c1.w * smoothstep(0.0, 0.25, uTime - c1.z) * smoothstep(Mf, Mf - 30.0, ageC);
+  return o;
+}
+// 10 札の蛇: 写真が1枚ずつの札になって、軌跡の向きに並び、波うつ。
+O sSnake(){ return card(40.0, 20.0 * uDp * 0.82, 0.0, uW * 0.35); }
+// 11 置いていく写真: 通った所に、写真が少し傾いて重なりながら置かれていく。
+O sStamp(){ return card(28.0, 14.0 * uDp * 2.1, 1.0, 0.0); }
+// 12 画素の落下: 古い所から、写真が大きな画素の箱に割れて、回りながら落ちる。
+O sVoxel(){
+  if ((gIu % 3) != 0 || (gIv % 6) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  float g = uW / float(NVi) * 6.0;
+  float t = max(0.0, gHd - 0.28) / 0.72;
+  t = t * t;
+  float fall = t * uView.y * 1.4 * (0.6 + 0.8 * h1);
+  vec3 c = gC0 + vec3((h2 - 0.5) * t * uW * 3.0, fall, t * uW * (h3 - 0.3) * 4.0);
+  float a = t * (h3 - 0.5) * 9.0;
+  vec2 d = vec2(cos(a), sin(a));
+  vec3 pc = photo(gR2.w, gUVp);
+  O o = ori(c, d, g * 0.48, g * 0.48, pc);
+  float sh = 0.75 + 0.35 * fract(h1 * 7.0);
+  o.col *= sh;
+  return o;
+}
+// 13 塵になる: 先は帯のまま。古い所から、細かな塵になって、舞い上がって消える。
+O sDust(){
+  float t = clamp((gHd - 0.25) / 0.6, 0.0, 1.0);
+  if (t <= 0.0) { O o = base(); o.line = 1.0; return o; }
+  vec2 sw = vec2(sin(gC0.y * 0.02 + uTime * 1.3 + h1 * 6.0), cos(gC0.x * 0.02 + uTime * 1.1 + h2 * 6.0));
+  vec3 c = gC0 + vec3(sw * uW * 1.2 * t + vec2((h2 - 0.2) * uW * 2.5, -uW * 5.0 * (0.4 + h3)) * t * t, uW * t * h1 * 2.0);
+  vec3 pc = photo(gR2.w, gUVp);
+  pc = mix(pc, vec3(1.0, 0.62, 0.3) * 1.4, smoothstep(0.0, 0.25, t) * (1.0 - smoothstep(0.25, 0.6, t)) * 0.7);
+  float r = mix(uW / float(NVi) * 0.9, 0.6, t) * (0.6 + 0.8 * h2);
+  return dotAt(c, vec2(r), pc * (1.0 - t * 0.6), 1.0, 1.0);
+}
+// 14 蛇腹: 帯が、等間隔に山と谷に折られる。指の光で、山の面と谷の面の明るさが違う。
+O sFold(){
+  O o = base();
+  float P = 7.0;
+  float ph = fract(gUc / P);
+  float tri = 1.0 - abs(ph * 2.0 - 1.0);
+  float A = uW * 0.55 * (0.6 + 0.4 * sin(uTime * 0.8 + gUc * 0.02));
+  o.corner.z = tri * A;
+  float phc = fract((float(gJ) + gFr) / P);
+  o.centre.z = (1.0 - abs(phc * 2.0 - 1.0)) * A;
+  float sl = (ph < 0.5 ? 1.0 : -1.0) * 2.0 * A / (P * uDp);
+  vec3 n = normalize(vec3(-gTq2 * sl, 1.0));
+  vec3 l = litBy(o.corner, n);
+  o.lit = 0.15 + 1.4 * l.x; o.gloss = 0.3 * l.y;
+  o.line = 1.0;
+  return o;
+}
+// 15 棒の街: 写真の明るさが、そのまま縦の棒の高さになる。
+O sBars(){
+  if ((gIu % 2) != 0 || (gIv % 4) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  vec3 pc = photo(gR2.w, gUVp);
+  float l = dot(pc, vec3(0.3, 0.59, 0.11));
+  float len = uW * (0.1 + 0.85 * l * l) * (0.85 + 0.3 * sin(uTime * 3.0 + gUc * 0.3));
+  vec3 c = gC0 + vec3(0.0, -len, 0.0);
+  O o = ori(c, vec2(0.0, 1.0), len, uDp * 0.42, pc * 1.1);
+  return o;
+}
+// 16 糸に分かれる: 帯が、細い糸の束にほどけ、1本ずつ別々に揺れる。
+O sThreads(){
+  if ((gIv % 3) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  float sp = 1.0 + 1.6 * gHd;
+  float wav = sin(gUc * 0.11 + float(gIv) * 1.7 + uTime * 2.4) * uW * 0.35 * gHd;
+  vec2 pq = gPq + gNq * (gVc * uW * sp + wav);
+  vec3 pc = photo(gR2.w, gUVp);
+  O o = ori(vec3(pq, float(gIv) * 0.05), gTq2, uDp * 0.26, 0.55, pc * 1.15);
+  o.corner = vec3(pq + gNq * 0.55 * aQ.y, o.corner.z);
+  o.centre = vec3(gC0.xy + gN * (gV * uW * (sp - 1.0) + wav), o.centre.z);
+  return o;
+}
+// 17 奥行きの点: 写真の奥行きの分だけ、点が浮いた立体の点群になる。視点が少し回る。
+O sDepth(){
+  if ((gIu % 2) != 0 || (gIv % 2) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  vec2 cell = vec2(mod(gR2.w, AT.x), floor(gR2.w / AT.x));
+  float dd = textureLod(uDAtlas, (cell + clamp(gUVp, 0.004, 0.996)) / AT, 0.0).r;
+  float ang = sin(uTime * 0.5) * 0.5;
+  float z = dd * uW * 2.4;
+  vec3 c = gC0 + vec3(sin(ang) * z * 0.9, -z * 0.35, z);
+  vec3 pc = photo(gR2.w, gUVp);
+  return dotAt(c, vec2(uW / float(NVi) * 1.5 * (0.7 + dd)), pc * (0.95 + 0.4 * dd), 1.0, 1.0);
+}
+// 18 透けて見える: ふだんは線だけの帯。指の近くと先だけ、写真が見える。
+O sReveal(){
+  O o = base();
+  float dpen = distance(gX0.xy, uPen.xy);
+  float rv = max(uPen.z * (1.0 - smoothstep(uW * 1.6, uW * 3.2, dpen)), 1.0 - smoothstep(0.04, 0.12, gHd));
+  vec3 pc = photo(gR2.w, gUVb);
+  float l = dot(pc, vec3(0.3, 0.59, 0.11));
+  float ln = step(0.82, fract(gUc * 0.5)) + step(0.86, fract((gVc + 0.5) * 8.0));
+  o.tex = rv;
+  o.col = mix(vec3(0.02), vec3(0.5, 0.9, 1.0) * (0.25 + l), clamp(ln, 0.0, 1.0));
+  o.line = 1.0; o.lineCol = vec3(0.5, 0.9, 1.0);
+  o.corner.z += rv * uW * 0.25; o.centre.z += rv * uW * 0.25;
+  return o;
+}
+// 19 垂れる: 帯が、列ごとに違う長さで、下へ垂れていく。
+O sDrip(){
+  O o = base();
+  float col = floor(gUc / 2.0);
+  float hc = fract(sin(col * 91.7 + 3.3) * 43758.5453);
+  float amt = pow(hc, 3.0) * smoothstep(0.0, 0.6, gHd) * uView.y * 0.55;
+  float s = clamp(gVc + 0.5, 0.0, 1.0);
+  float sc = clamp(gV + 0.5, 0.0, 1.0);
+  o.corner.y += amt * s * s; o.centre.y += amt * sc * sc;
+  o.uv = vec2(gUVb.x, gUVb.y * (1.0 - 0.6 * s * s * min(amt / uW, 1.0)));
+  o.line = 1.0;
+  return o;
+}
+// 20 流れに乗る: 古い所ほど、見えない流れに運ばれて、渦を巻く。
+O sFlow(){
+  O o = base();
+  vec2 p = gX0.xy; vec2 pc = gC0.xy;
+  float amt = pow(gHd, 1.3) * uW * 1.1;
+  for (int i = 0; i < 4; i++) {
+    float a = sin(p.x * 0.006 + uTime * 0.2) * 2.0 + cos(p.y * 0.007 - uTime * 0.15) * 2.0;
+    p += vec2(cos(a), sin(a)) * amt;
+    float b = sin(pc.x * 0.006 + uTime * 0.2) * 2.0 + cos(pc.y * 0.007 - uTime * 0.15) * 2.0;
+    pc += vec2(cos(b), sin(b)) * amt;
+  }
+  o.corner.xy = p; o.centre.xy = pc;
+  return o;
+}
+// 21 筒: 帯が、軌跡を芯にした筒に巻かれ、ゆっくり回る。
+O sTube(){
+  O o = base();
+  float R = uW * 0.42;
+  float a = gVc * 6.2832 * 0.98 + uTime * 0.7 + gUc * 0.01;
+  float ac = gV * 6.2832 * 0.98 + uTime * 0.7 + (float(gJ) + gFr) * 0.01;
+  o.corner = vec3(gPq + gNq * cos(a) * R, R * 1.4 + sin(a) * R);
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * cos(ac) * R, R * 1.4 + sin(ac) * R);
+  vec3 n = vec3(gNq * cos(a), sin(a));
+  o.face = n.z;
+  vec3 l = litBy(o.corner, o.face < 0.0 ? -n : n);
+  o.lit = 0.12 + 1.5 * l.x; o.gloss = 0.35 * l.y;
+  o.uv = vec2(gUVb.x, fract((a - uTime * 0.7) / 6.2832 + 0.5));
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -313,7 +499,19 @@ O stateOf(int id){
   if (id == 6) return sStitch();
   if (id == 7) return sPixel();
   if (id == 8) return sScan();
-  return sGlitch();
+  if (id == 9) return sGlitch();
+  if (id == 10) return sSnake();
+  if (id == 11) return sStamp();
+  if (id == 12) return sVoxel();
+  if (id == 13) return sDust();
+  if (id == 14) return sFold();
+  if (id == 15) return sBars();
+  if (id == 16) return sThreads();
+  if (id == 17) return sDepth();
+  if (id == 18) return sReveal();
+  if (id == 19) return sDrip();
+  if (id == 20) return sFlow();
+  return sTube();
 }
 
 void main(){
@@ -356,6 +554,7 @@ void main(){
   gC0 = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW, 0.0);
   float asp = uAsp[int(gR2.w)];
   gUVp = 0.5 + (gC0.xy - gR2.xy) / vec2(gR2.z, gR2.z / asp);
+  gUVb = 0.5 + (gX0.xy - gR2.xy) / vec2(gR2.z, gR2.z / asp);
 
   int idA = int(uFrom + 0.5); int idB = int(uTo + 0.5);
   O A = stateOf(idA);
@@ -369,9 +568,8 @@ void main(){
   vec3 corner = mix(A.corner, B.corner, w);
   vec3 cc = mix(A.centre, B.centre, w);
   // 出てくるところ(ペン先)と、巻き取られるところ(いちばん古い所)。帯に乗る表現だけ。
-  float onPath = 1.0 - (float(idA == 2) * (1.0 - w) + float(idB == 2) * w);
-  float sc = gR1.w * smoothstep(0.0, 0.16, uTime - gR1.z) * smoothstep(Mf, Mf - 22.0, gAge);
-  sc = mix(1.0, sc, onPath);
+  float sc0 = gR1.w * smoothstep(0.0, 0.16, uTime - gR1.z) * smoothstep(Mf, Mf - 22.0, gAge);
+  float sc = mix(A.gate < 0.0 ? sc0 : A.gate, B.gate < 0.0 ? sc0 : B.gate, w);
   vec3 wp = cc + (corner - cc) * sc + bulge;
 
   float solidW = float(idA == 1) * (1.0 - w) + float(idB == 1) * w;
@@ -392,8 +590,9 @@ void main(){
 
   // 写真の色: 帯の上で、その場所に見えていた写真。
   vec2 fp = mix(A.corner.xy, B.corner.xy, w);
-  vUV = 0.5 + (gX0.xy - gR2.xy) / vec2(gR2.z, gR2.z / asp);
-  vCell = vec2(mod(gR2.w, AT.x), floor(gR2.w / AT.x));
+  vUV = mix(A.uv, B.uv, w);
+  float wk = w < 0.5 ? A.work : B.work;
+  vCell = vec2(mod(wk, AT.x), floor(wk / AT.x));
   vQ = aQ;
   vShape = mix(A.shape, B.shape, w) * sc;
   vMix = vec4(mix(A.round, B.round, w), alpha, mix(A.line, B.line, w), mix(A.face, B.face, w));
@@ -889,8 +1088,8 @@ export function mountMorph(root: HTMLElement) {
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 10;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0]; // アナログらしさ(画面全体の質感に使う)
+  const KINDS = 22;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7]; // アナログらしさ(画面全体の質感に使う)
   const seq: number[] = [0];
   const seqAt = (n: number) => {
     while (seq.length <= n) {
