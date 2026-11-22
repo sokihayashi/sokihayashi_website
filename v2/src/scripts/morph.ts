@@ -1243,7 +1243,7 @@ export function mountMorph(root: HTMLElement) {
       path[o + 3] = curWork;
     }
     K++;
-    advance(dp);
+    if (!auto) advance(dp * 0.6);
   }
   function lineTo(x: number, y: number) {
     if (!stroke) return;
@@ -1305,14 +1305,17 @@ export function mountMorph(root: HTMLElement) {
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
   type Sec = { n: [number, number]; len: number; pool: number[]; sty: number[] };
   const SECS: Record<string, Sec> = {
-    intro: { n: [1, 1], len: 1.6, pool: [0], sty: [0] },
-    A: { n: [1, 2], len: 1.15, pool: [0, 14, 1, 23], sty: [0, 1] },
-    B: { n: [2, 3], len: 0.6, pool: [12, 15, 16, 2, 24], sty: [1, 3] },
-    chorus: { n: [1, 2], len: 1.5, pool: [27, 25, 22, 1], sty: [3, 0] },
-    drop: { n: [4, 6], len: 0.24, pool: [13, 22, 12, 24, 19, 2, 15, 27], sty: [2] },
-    C: { n: [1, 1], len: 2.0, pool: [19, 16, 25], sty: [1] },
+    intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
+    A: { n: [1, 2], len: 0.95, pool: [0, 14, 1, 23], sty: [0, 1, 3] },
+    B: { n: [2, 3], len: 0.5, pool: [12, 15, 16, 2, 24], sty: [1, 3, 2] },
+    chorus: { n: [1, 2], len: 1.2, pool: [27, 25, 22, 1], sty: [3, 0] },
+    drop: { n: [5, 8], len: 0.2, pool: [13, 22, 12, 24, 19, 2, 15, 27, 25, 14], sty: [2] },
+    P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
+    C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
   };
-  const FORM = ['intro', 'A', 'B', 'chorus', 'drop', 'A', 'B', 'chorus', 'C', 'chorus', 'drop'];
+  // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
+  const FORM = ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
+  const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
   const LOOP = 1; // 2周目以降は Aメロから
   let formI = 0;
   const seq: number[] = [];
@@ -1347,6 +1350,7 @@ export function mountMorph(root: HTMLElement) {
     return styOf[n];
   };
   let secHook: (name: string, cut: boolean) => void = () => {};
+  let frameW = 0; // 曲の中で、プロフィールの額になっている強さ
   let lastSec = '';
   let sFrom = 0;
   let sTo = 0;
@@ -1360,6 +1364,7 @@ export function mountMorph(root: HTMLElement) {
     const wOf = (id: number) => (sFrom === id ? 1 - x : 0) + (sTo === id ? x : 0);
     trail = Math.max(sstep(0.15, 0.75, wOf(2)), sstep(0.3, 0.9, wOf(8)) * 0.8);
     solid = sstep(0.25, 1, wOf(1));
+    frameW = wOf(28);
     analog = ANALOG[sFrom] * (1 - x) + ANALOG[sTo] * x;
     const st = x > 0.5 ? sTo : sFrom;
     const si = x > 0.5 ? A + 1 : A;
@@ -1418,23 +1423,15 @@ export function mountMorph(root: HTMLElement) {
     <h2 style="margin:0;font-size:clamp(1.6rem,7vw,2.6rem);font-weight:500;line-height:1.1">Soki Hayashi<br><span style="font-size:.5em;letter-spacing:.04em">林 宋其</span></h2>
     <p style="margin:0;font-size:.8rem;line-height:1.7;color:var(--muted)">デザイナー / クリエイティブディレクター / 映像作家 / VJ<br>東京</p>
     <p style="margin:0;font-size:1rem;line-height:1.9;max-width:34em">世界観を作ります。<br>店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。小さなビジュアルの中に、その先の世界を予感させる。</p>
-    <p style="margin:0;font-size:.82rem;line-height:1.9;color:var(--muted);max-width:34em">ブランディング、ロゴ、UI、映像の演出・撮影・編集まで、平面から立体まで媒体を選ばずに形を立ち上げる。</p>
     <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">Works</a><a href="${base}/about/">About</a><a href="${base}/contact/">Contact</a></p>`;
   // ---------- 画面そのものも曲に合わせて動く: 文字の層、窓になる画面、ドロップの反転とナビの崩れ。
-  const titles = works.map((a) => (a.textContent || '').trim()).filter(Boolean);
   const typeL = mk('div', 'position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;color:#fff;mix-blend-mode:difference;');
   typeL.dataset.type = '';
   typeL.setAttribute('aria-hidden', 'true');
-  const credits = document.createElement('div');
-  credits.className = 'mt-credits';
-  credits.textContent = [...titles, ...titles].join('\n');
   const big = document.createElement('div');
   big.className = 'mt-big';
   big.innerHTML = 'SOKI<br>HAYASHI';
-  const role = document.createElement('div');
-  role.className = 'mt-role';
-  role.innerHTML = 'Designer / Creative Director<br>Filmmaker / VJ — Tokyo<br><span>世界観を作ります。</span>';
-  typeL.append(credits, big, role);
+  typeL.append(big);
   root.append(typeL);
   const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
   const html = document.documentElement;
@@ -1444,8 +1441,9 @@ export function mountMorph(root: HTMLElement) {
     html.dataset.sec = name;
     if (name === 'drop') {
       if (cut) {
-        root.classList.add('is-flash');
-        setTimeout(() => root.classList.remove('is-flash'), 90);
+        const fx = pick(['is-flash', 'is-hue', 'is-punch', 'is-flash', 'is-mono']);
+        root.classList.add(fx);
+        setTimeout(() => root.classList.remove(fx), fx === 'is-punch' ? 160 : 90);
         big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
         for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
       }
@@ -1518,7 +1516,7 @@ export function mountMorph(root: HTMLElement) {
     if (!drawing) return;
     drawing = false;
     stroke = false;
-    idle = 3.5;
+    idle = 0.9;
   }
   function onLeave(e: PointerEvent) {
     if (e.pointerType === 'mouse' && !drawing) over = 0;
@@ -1546,6 +1544,13 @@ export function mountMorph(root: HTMLElement) {
     const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
     last = t;
     now = (t - t0) / 1000;
+    // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
+    if (!panelOpen) {
+      const n = Math.max(0, Math.floor(phase));
+      seqAt(n + 1);
+      phase += (dt / (BEAT * lenOf[n])) * (drawing ? 0.6 : 1);
+      onPhase();
+    }
     if (drawing) {
       const k = 1 - Math.exp(-dt / 0.03);
       penX += (ptX - penX) * k;
@@ -1585,7 +1590,9 @@ export function mountMorph(root: HTMLElement) {
     // プロフィールの額: 開くとき・閉じるときの動き
     ovX += ((panelOpen ? 1 : 0) - ovX) * (1 - Math.exp(-dt / 0.28));
     if (Math.abs(ovX - (panelOpen ? 1 : 0)) < 0.002) ovX = panelOpen ? 1 : 0;
-    panel.style.opacity = String(Math.max(0, (ovX - 0.55) / 0.45));
+    const pv = Math.max(0, (ovX - 0.55) / 0.45, (frameW - 0.6) / 0.4);
+    panel.style.opacity = String(pv);
+    panel.classList.toggle('is-shown', pv > 0.5);
     const ovOn = ovX > 0.001;
     gl!.uniform1f(u.phase, ovOn ? HOLD + ovX * (1 - HOLD) : phase);
     gl!.uniform1f(u.k, Math.max(1, K));

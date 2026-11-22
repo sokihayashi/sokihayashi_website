@@ -16,6 +16,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
 
 <Base title="Soki Hayashi — morph (試作)">
   <!-- JS や WebGL が動かない環境、「動きを減らす」設定では、作品名の一覧として読める。 -->
+  <script is:inline>document.documentElement.classList.add('morph-pre');</script>
   <div class="morph" data-morph-root data-base={base}>
     <canvas class="morph-canvas" data-canvas aria-hidden="true"></canvas>
     <ul class="morph-list">
@@ -43,8 +44,9 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     document.addEventListener('astro:page-load', () => {
       off();
       const root = document.querySelector<HTMLElement>('[data-morph-root]');
-      if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      if (!document.createElement('canvas').getContext('webgl2')) return;
+      const fail = () => document.documentElement.classList.remove('morph-pre');
+      if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return fail();
+      if (!document.createElement('canvas').getContext('webgl2')) return fail();
       document.documentElement.classList.add('morph-on');
       root.classList.add('is-live');
       dispose = mountMorph(root);
@@ -59,6 +61,15 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   }
   .morph-canvas {
     display: none;
+  }
+  /* 読み込み中は黒い画面だけ(作品名の一覧を一瞬見せない)。 */
+  html.morph-pre .morph {
+    position: fixed;
+    inset: 0;
+    background: #000;
+  }
+  html.morph-pre .morph:not(.is-live) .morph-list {
+    visibility: hidden;
   }
   .morph-list {
     list-style: none;
@@ -116,6 +127,19 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   }
   .morph.is-flash {
     filter: invert(1);
+  }
+  .morph.is-hue {
+    filter: hue-rotate(160deg) saturate(3.2) contrast(1.2);
+  }
+  .morph.is-mono {
+    filter: grayscale(1) contrast(2.4);
+  }
+  .morph.is-punch .morph-canvas {
+    transform: scale(1.14) rotate(-1.5deg);
+  }
+  /* 曲の中で出るプロフィール: 文字の上だけ押せる(それ以外は描ける) */
+  [data-panel].is-shown a {
+    pointer-events: auto;
   }
   html.morph-on .site-bar .mainnav a,
   html.morph-on .site-bar .logo {
