@@ -106,4 +106,74 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     clip-path: inset(50%);
     white-space: nowrap;
   }
+  /* ---------- 曲の区間ごとの、画面の振る舞い */
+  .morph.is-live .morph-canvas {
+    clip-path: inset(0);
+    transition: clip-path 1.1s cubic-bezier(0.7, 0, 0.2, 1);
+  }
+  html[data-sec='C'] .morph.is-live .morph-canvas {
+    clip-path: inset(34% 7% 14% 7%);
+  }
+  .morph.is-flash {
+    filter: invert(1);
+  }
+  html.morph-on .site-bar .mainnav a,
+  html.morph-on .site-bar .logo {
+    display: inline-block;
+    transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  html[data-sec='drop'] .site-bar .mainnav a,
+  html[data-sec='drop'] .site-bar .logo {
+    transition: none;
+  }
+  .mt-credits,
+  .mt-big,
+  .mt-role {
+    position: absolute;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .mt-credits {
+    left: var(--pad);
+    top: 0;
+    white-space: pre;
+    font-size: 0.7rem;
+    line-height: 1.55;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    animation: mt-roll 9s linear infinite;
+  }
+  @keyframes mt-roll {
+    from { transform: translateY(100vh); }
+    to { transform: translateY(-100%); }
+  }
+  .mt-big {
+    left: 4vw;
+    top: 22vh;
+    font-size: 27vw;
+    line-height: 0.82;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    transform-origin: 30% 50%;
+    transition: opacity 0.4s, transform 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .mt-role {
+    left: 7%;
+    right: 7%;
+    top: calc(64px + 4vh);
+    font-size: clamp(1.1rem, 5.6vw, 2rem);
+    line-height: 1.2;
+    font-weight: 500;
+  }
+  .mt-role span {
+    display: block;
+    margin-top: 0.8em;
+    font-size: 0.55em;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+  }
+  html[data-sec='B'] .mt-credits { opacity: 0.85; }
+  html[data-sec='chorus'] .mt-big { opacity: 1; }
+  html[data-sec='drop'] .mt-big { opacity: 1; transition: opacity 0.1s; }
+  html[data-sec='C'] .mt-role { opacity: 1; transition: opacity 0.6s 0.6s; }
 </style>

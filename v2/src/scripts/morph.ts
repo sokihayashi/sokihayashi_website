@@ -1285,7 +1285,9 @@ export function mountMorph(root: HTMLElement) {
     return t * t * (3 - 2 * t);
   };
   function advance(len: number) {
-    phase += len / (Lmax * STATE_LEN);
+    const n = Math.max(0, Math.floor(phase));
+    seqAt(n + 1);
+    phase += len / (Lmax * STATE_LEN * lenOf[n]);
     onPhase();
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
@@ -1299,29 +1301,53 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
   };
-  const seq: number[] = [0];
-  const seqAt = (n: number) => {
-    while (seq.length <= n) {
-      const a = seq[seq.length - 1];
+  // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
+  // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
+  type Sec = { n: [number, number]; len: number; pool: number[]; sty: number[] };
+  const SECS: Record<string, Sec> = {
+    intro: { n: [1, 1], len: 1.6, pool: [0], sty: [0] },
+    A: { n: [1, 2], len: 1.15, pool: [0, 14, 1, 23], sty: [0, 1] },
+    B: { n: [2, 3], len: 0.6, pool: [12, 15, 16, 2, 24], sty: [1, 3] },
+    chorus: { n: [1, 2], len: 1.5, pool: [27, 25, 22, 1], sty: [3, 0] },
+    drop: { n: [4, 6], len: 0.24, pool: [13, 22, 12, 24, 19, 2, 15, 27], sty: [2] },
+    C: { n: [1, 1], len: 2.0, pool: [19, 16, 25], sty: [1] },
+  };
+  const FORM = ['intro', 'A', 'B', 'chorus', 'drop', 'A', 'B', 'chorus', 'C', 'chorus', 'drop'];
+  const LOOP = 1; // 2周目以降は Aメロから
+  let formI = 0;
+  const seq: number[] = [];
+  const secOf: string[] = [];
+  const lenOf: number[] = [];
+  const styOf: number[] = [];
+  const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+  const grow = () => {
+    const name = FORM[formI];
+    formI = formI + 1 < FORM.length ? formI + 1 : LOOP;
+    const S = SECS[name];
+    const cnt = S.n[0] + Math.floor(Math.random() * (S.n[1] - S.n[0] + 1));
+    for (let i = 0; i < cnt; i++) {
+      const a = seq.length ? seq[seq.length - 1] : -1;
       const b = seq.length > 1 ? seq[seq.length - 2] : -1;
-      let c = a;
-      const fa = FAM[a];
-      const fb = b >= 0 ? FAM[b] : '';
+      let c = pick(S.pool);
       let guard = 0;
-      while ((c === a || c === b || FAM[c] === fa || FAM[c] === fb) && guard++ < 200) c = ACTIVE[Math.floor(Math.random() * ACTIVE.length)];
+      // 直前と同じ表現・同じ系統は避ける(区間の候補が少ないときは、同じ表現だけ避ける)。
+      while (S.pool.length > 1 && (c === a || (guard < 60 && (FAM[c] === FAM[a] || c === b))) && guard++ < 200) c = pick(S.pool);
       seq.push(c);
+      secOf.push(name);
+      lenOf.push(S.len * (0.85 + Math.random() * 0.3));
+      styOf.push(pick(S.sty));
     }
+  };
+  const seqAt = (n: number) => {
+    while (seq.length <= n) grow();
     return seq[n];
   };
-  const sty: number[] = [0];
   const styAt = (n: number) => {
-    while (sty.length <= n) {
-      let c = sty[sty.length - 1];
-      while (c === sty[sty.length - 1]) c = Math.floor(Math.random() * 4);
-      sty.push(c);
-    }
-    return sty[n];
+    seqAt(n);
+    return styOf[n];
   };
+  let secHook: (name: string, cut: boolean) => void = () => {};
+  let lastSec = '';
   let sFrom = 0;
   let sTo = 0;
   let analog = 1;
@@ -1336,9 +1362,14 @@ export function mountMorph(root: HTMLElement) {
     solid = sstep(0.25, 1, wOf(1));
     analog = ANALOG[sFrom] * (1 - x) + ANALOG[sTo] * x;
     const st = x > 0.5 ? sTo : sFrom;
-    if (st !== lastState) {
+    const si = x > 0.5 ? A + 1 : A;
+    const sec = secOf[si] || 'A';
+    if (st !== lastState || sec !== lastSec) {
+      const cut = st !== lastState;
       lastState = st;
-      sfx.pon(ANALOG[st]);
+      lastSec = sec;
+      if (cut) sfx.pon(ANALOG[st]);
+      secHook(sec, cut);
     }
     sfx.climb(f);
   }
@@ -1389,6 +1420,40 @@ export function mountMorph(root: HTMLElement) {
     <p style="margin:0;font-size:1rem;line-height:1.9;max-width:34em">世界観を作ります。<br>店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。小さなビジュアルの中に、その先の世界を予感させる。</p>
     <p style="margin:0;font-size:.82rem;line-height:1.9;color:var(--muted);max-width:34em">ブランディング、ロゴ、UI、映像の演出・撮影・編集まで、平面から立体まで媒体を選ばずに形を立ち上げる。</p>
     <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">Works</a><a href="${base}/about/">About</a><a href="${base}/contact/">Contact</a></p>`;
+  // ---------- 画面そのものも曲に合わせて動く: 文字の層、窓になる画面、ドロップの反転とナビの崩れ。
+  const titles = works.map((a) => (a.textContent || '').trim()).filter(Boolean);
+  const typeL = mk('div', 'position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;color:#fff;mix-blend-mode:difference;');
+  typeL.dataset.type = '';
+  typeL.setAttribute('aria-hidden', 'true');
+  const credits = document.createElement('div');
+  credits.className = 'mt-credits';
+  credits.textContent = [...titles, ...titles].join('\n');
+  const big = document.createElement('div');
+  big.className = 'mt-big';
+  big.innerHTML = 'SOKI<br>HAYASHI';
+  const role = document.createElement('div');
+  role.className = 'mt-role';
+  role.innerHTML = 'Designer / Creative Director<br>Filmmaker / VJ — Tokyo<br><span>世界観を作ります。</span>';
+  typeL.append(credits, big, role);
+  root.append(typeL);
+  const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
+  const html = document.documentElement;
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+  secHook = (name, cut) => {
+    if (panelOpen) return;
+    html.dataset.sec = name;
+    if (name === 'drop') {
+      if (cut) {
+        root.classList.add('is-flash');
+        setTimeout(() => root.classList.remove('is-flash'), 90);
+        big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
+        for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
+      }
+    } else {
+      big.style.transform = '';
+      for (const el of navA) el.style.transform = '';
+    }
+  };
   let panelOpen = false;
   let ovX = 0;
   let ovFrom = 0;
@@ -1396,6 +1461,11 @@ export function mountMorph(root: HTMLElement) {
     if (on === panelOpen) return;
     panelOpen = on;
     if (on) ovFrom = Math.max(0, (phase - Math.floor(phase) - HOLD) / (1 - HOLD)) > 0.5 ? sTo : sFrom;
+    if (on) {
+      html.dataset.sec = 'panel';
+      big.style.transform = '';
+      for (const el of navA) el.style.transform = '';
+    } else secHook(lastSec, false);
     pf.textContent = on ? 'Close' : 'Profile';
     pf.setAttribute('aria-expanded', String(on));
     panel.setAttribute('aria-hidden', String(!on));
@@ -1603,9 +1673,14 @@ export function mountMorph(root: HTMLElement) {
 
   (window as unknown as Record<string, unknown>).__morph = {
     // 確認用: 表現の並びを指定する
-    seq(list: number[]) {
-      seq.length = 0;
+    seq(list: number[], sec = 'A', len = 1) {
+      seq.length = secOf.length = lenOf.length = styOf.length = 0;
       seq.push(...list);
+      for (let i = 0; i < list.length; i++) {
+        secOf.push(sec);
+        lenOf.push(len);
+        styOf.push(i % 4);
+      }
       onPhase();
     },
     phase(v: number) {
@@ -1644,6 +1719,9 @@ export function mountMorph(root: HTMLElement) {
     window.removeEventListener('resize', onResize);
     ind.remove();
     label.remove();
+    typeL.remove();
+    delete document.documentElement.dataset.sec;
+    for (const el of navA) el.style.transform = '';
     snd.remove();
     sfx.dispose();
     gl.getExtension('WEBGL_lose_context')?.loseContext();
