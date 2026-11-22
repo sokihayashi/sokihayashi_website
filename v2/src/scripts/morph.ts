@@ -489,6 +489,74 @@ O sTube(){
   o.uv = vec2(gUVb.x, fract((a - uTime * 0.7) / 6.2832 + 0.5));
   return o;
 }
+// 22 割れる: 帯が大きな破片に割れ、指から遠ざかるように、回りながら飛び散る。古い所ほど遠くへ。
+O sShatter(){
+  O o = base();
+  float bu = floor(float(gIu) / 10.0), bv = floor(float(gIv) / 16.0);
+  float hb = fract(sin(bu * 37.1 + bv * 91.7) * 43758.5453), hb2 = fract(hb * 13.7 + 0.3);
+  int jb = int(bu * 5.0 + 2.0) % Mi;
+  vec4 b0 = texelFetch(uPath, ivec2(jb, 0), 0);
+  vec2 bn = vec2(-b0.w, b0.z);
+  vec3 bc = vec3(b0.xy + bn * ((bv * 16.0 + 8.0) / float(NVi) - 0.5) * uW, 0.0);
+  vec2 away = normalize(bc.xy - uPen.xy + vec2(0.001));
+  float t = smoothstep(0.2, 0.9, gHd) + uPen.z * (1.0 - smoothstep(0.0, uW * 3.0, distance(bc.xy, uPen.xy))) * 0.6;
+  float ang = t * (hb - 0.5) * 5.0, tilt = t * (hb2 - 0.5) * 3.0;
+  mat3 R = mat3(cos(ang), sin(ang), 0.0, -sin(ang), cos(ang), 0.0, 0.0, 0.0, 1.0) * mat3(1.0, 0.0, 0.0, 0.0, cos(tilt), sin(tilt), 0.0, -sin(tilt), cos(tilt));
+  vec3 off = vec3(away * t * uW * (1.5 + 3.0 * hb), t * uW * 2.0 * hb2);
+  o.corner = bc + R * (gX0 - bc) + off;
+  o.centre = bc + R * (gC0 - bc) + off;
+  vec3 n = R * vec3(0.0, 0.0, 1.0);
+  o.face = n.z;
+  vec3 l = litBy(o.corner, n.z < 0.0 ? -n : n);
+  o.lit = mix(1.0, 0.25 + 1.3 * l.x, smoothstep(0.0, 0.2, t)); o.gloss = 0.3 * l.y * t;
+  o.line = 1.0;
+  return o;
+}
+// 23 ばね: 帯が細くなり、軌跡を芯にした ばねに巻かれる。
+O sCoil(){
+  O o = base();
+  float R = uW * 0.55;
+  float a = gUc * 0.45 - uTime * 2.0;
+  float ac = (float(gJ) + gFr) * 0.45 - uTime * 2.0;
+  float wd = uW * 0.22;
+  o.corner = vec3(gPq + gNq * cos(a) * R + gTq2 * gVc * wd, R * 1.2 + sin(a) * R);
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * cos(ac) * R + gT * gV * wd, R * 1.2 + sin(ac) * R);
+  vec3 n = vec3(gNq * cos(a), sin(a));
+  o.face = 1.0;
+  vec3 l = litBy(o.corner, n);
+  o.lit = 0.15 + 1.45 * l.x; o.gloss = 0.4 * l.y;
+  return o;
+}
+// 24 積もる: 古い所から下へ落ち、横の位置はそのままに、地層のように積み重なる。
+O sPile(){
+  O o = base();
+  float t = smoothstep(0.08, 0.35, gHd);
+  float floorY = uView.y * 0.94;
+  float layer = (1.0 - gHd) * uView.y * 0.42;
+  float y = floorY - layer + gVc * uW * 0.22 + sin(gX0.x * 0.01 + gHd * 30.0) * uW * 0.15;
+  float yc = floorY - layer + gV * uW * 0.22 + sin(gC0.x * 0.01 + gHd * 30.0) * uW * 0.15;
+  o.corner.y = mix(gX0.y, y, t); o.centre.y = mix(gC0.y, yc, t);
+  o.line = 1.0;
+  return o;
+}
+// 25 波紋: 帯の面に、指を中心にした波紋が広がる。光で、波の山と谷が見える。
+O sRipple(){
+  O o = base();
+  vec2 c = uPen.xy;
+  float d = distance(gX0.xy, c) + 1.0;
+  float k = 0.045, sp = 5.0;
+  float A = uW * 0.45 * exp(-d / (uW * 7.0)) * (0.35 + 0.65 * uPen.z);
+  float ph = d * k - uTime * sp;
+  o.corner.z = sin(ph) * A + A;
+  float dc = distance(gC0.xy, c) + 1.0;
+  o.centre.z = sin(dc * k - uTime * sp) * A + A;
+  vec2 g = (gX0.xy - c) / d * cos(ph) * A * k;
+  vec3 n = normalize(vec3(-g, 1.0));
+  vec3 l = litBy(o.corner, n);
+  o.lit = 0.2 + 1.3 * l.x; o.gloss = 0.5 * l.y;
+  o.line = 1.0;
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -511,7 +579,11 @@ O stateOf(int id){
   if (id == 18) return sReveal();
   if (id == 19) return sDrip();
   if (id == 20) return sFlow();
-  return sTube();
+  if (id == 21) return sTube();
+  if (id == 22) return sShatter();
+  if (id == 23) return sCoil();
+  if (id == 24) return sPile();
+  return sRipple();
 }
 
 void main(){
@@ -1088,17 +1160,26 @@ export function mountMorph(root: HTMLElement) {
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 22;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7]; // アナログらしさ(画面全体の質感に使う)
+  const KINDS = 26;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5]; // アナログらしさ(画面全体の質感に使う)
   // 見た目だけの違い(表面の模様)の表現は、順番に入れない: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const ACTIVE = [0, 1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+  const ACTIVE = [0, 1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+  // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
+  const FAM: Record<number, string> = {
+    0: 'flat', 18: 'flat', 25: 'flat', 1: 'paper', 14: 'paper', 21: 'paper', 23: 'paper',
+    2: 'dots', 13: 'dots', 17: 'dots', 10: 'cards', 11: 'cards', 12: 'pieces', 22: 'pieces',
+    15: 'bars', 16: 'threads', 19: 'deform', 20: 'deform', 24: 'pile',
+  };
   const seq: number[] = [0];
   const seqAt = (n: number) => {
     while (seq.length <= n) {
       const a = seq[seq.length - 1];
       const b = seq.length > 1 ? seq[seq.length - 2] : -1;
       let c = a;
-      while (c === a || c === b) c = ACTIVE[Math.floor(Math.random() * ACTIVE.length)];
+      const fa = FAM[a];
+      const fb = b >= 0 ? FAM[b] : '';
+      let guard = 0;
+      while ((c === a || c === b || FAM[c] === fa || FAM[c] === fb) && guard++ < 200) c = ACTIVE[Math.floor(Math.random() * ACTIVE.length)];
       seq.push(c);
     }
     return seq[n];
