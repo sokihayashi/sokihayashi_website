@@ -92,6 +92,7 @@ void main(){
   }
   float dl = length(disp.xy);
   disp.xy *= min(1.0, W * 0.35 / max(dl, 1e-3));
+  disp.z = min(disp.z, uDepthAmt * 0.8);
   p += disp * (0.6 + 0.8 * h3);
 
   // 雲から作品へ(と、その逆)。途中は少し ふくらんで飛ぶ。
