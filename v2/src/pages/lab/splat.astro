@@ -4,6 +4,9 @@
 import Base from '../../layouts/Base.astro';
 import { getCollection } from 'astro:content';
 import { wallSrc } from '../../data/wall';
+import depthMeta from '../../../public/img/depth/meta.json';
+const idOf = (n: number) => String(n).padStart(3, '0');
+const isFlat = (n: number) => !!(depthMeta as Record<string, { flat: boolean }>)[idOf(n)]?.flat;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
@@ -19,7 +22,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       {
         works.map((w) => (
           <li>
-            <a data-work data-src={wallSrc(w.data.images[0], 560)} data-depth={`${base}/img/depth/${String(w.data.images[0]).padStart(3, '0')}.png`} href={`${base}/works/${w.id}/`}>
+            <a data-work data-src={wallSrc(w.data.images[0], 560)} data-depth={`${base}/img/depth/${idOf(w.data.images[0])}.png`} data-bg={`${base}/img/depth/${idOf(w.data.images[0])}-bg.webp`} data-flat={isFlat(w.data.images[0]) ? '' : undefined} href={`${base}/works/${w.id}/`}>
               {w.data.title}
             </a>
           </li>

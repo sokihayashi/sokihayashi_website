@@ -12,9 +12,10 @@
 
 import { makeSfx } from './sfx';
 
-const GRID = 240; // 粒の格子の、正方形のときの一辺(作品の縦横比に合わせて変える)
-const N = GRID * GRID;
-const TRAIL = 40; // なぞった跡を覚えておく数
+// 1層ぶんの粒の数。画面が重ければ、自動で減らす。
+const COARSE = window.matchMedia('(pointer: coarse)').matches;
+let N = COARSE ? 190 * 190 : 260 * 260;
+const TRAIL = 28; // なぞった跡を覚えておく数
 
 const VS = `#version 300 es
 precision highp float;
@@ -22,11 +23,12 @@ precision highp int;
 layout(location=0) in vec2 aQ;
 uniform sampler2D uImg;   // いまの作品
 uniform sampler2D uPrev;  // ひとつ前の作品(漂っている粒の色を、なめらかに切り替えるため)
-uniform sampler2D uDepth;
+uniform sampler2D uDepth; // r: 奥行き / g: 背景の奥行き(被写体の所を埋めたもの) / b: 被写体の切り抜き
+uniform sampler2D uBg;    // 背景(被写体の所を埋めたもの)
 uniform vec2 uView;
-uniform vec2 uGrid;       // 格子の数(横, 縦)
+uniform vec2 uGrid;       // 1層ぶんの格子の数(横, 縦)
 uniform vec4 uRect;       // 作品を置く所(中心x, 中心y, 幅, 高さ)
-uniform float uT, uForm, uBurst, uTens, uColMix, uZoom, uDepthAmt;
+uniform float uT, uForm, uBurst, uTens, uColMix, uZoom, uDepthAmt, uFlat;
 uniform vec2 uRot;        // 視点の回り込み(横, 縦)
 uniform vec2 uStyle;      // 組み上がり方, ほどけ方
 uniform vec4 uTrail[${TRAIL}]; // なぞった跡(x, y, 動きx, 動きy)
@@ -36,21 +38,39 @@ out vec2 vQ;
 out float vRest;
 float hsh(uint n){ n = (n << 13U) ^ n; n = n * (n * n * 15731U + 789221U) + 1376312589U; return float(n & 0x7fffffffU) / 2147483647.0; }
 void main(){
-  int i = gl_InstanceID;
   int gw = int(uGrid.x); int gh = int(uGrid.y);
-  int gx = i - (i / gw) * gw; int gy = i / gw;
-  if (gy >= gh) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  int per = gw * gh;
+  int i = gl_InstanceID;
+  int layer = i / per;            // 0: 背景(平面の作品では、作品そのもの) / 1: 被写体
+  int j = i - layer * per;
+  int gx = j - (j / gw) * gw; int gy = j / gw;
   vec2 uv = (vec2(float(gx), float(gy)) + 0.5) / uGrid;
+  vec4 dm = textureLod(uDepth, uv, 0.0);
+  bool fg = layer == 1;
+  // 平面の作品は1層だけ。空間の作品の被写体の層は、切り抜きの中だけ。
+  if (fg && (uFlat > 0.5 || dm.b < 0.5)) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float h1 = hsh(uint(i)); float h2 = hsh(uint(i) + 7919U); float h3 = hsh(uint(i) * 3U + 17U);
-  vec3 col = textureLod(uImg, uv, 0.0).rgb;
+  vec3 col = fg || uFlat > 0.5 ? textureLod(uImg, uv, 0.0).rgb : textureLod(uBg, uv, 0.0).rgb;
   vec3 pcol = textureLod(uPrev, uv, 0.0).rgb;
-  float d = textureLod(uDepth, uv, 0.0).r;
   float W = uRect.z; float H = uRect.w;
-  vec3 rest = vec3(uRect.x + (uv.x - 0.5) * W, uRect.y + (uv.y - 0.5) * H, (d - 0.45) * uDepthAmt);
+  vec3 rest; float d; float shade = 1.0;
+  if (uFlat > 0.5) {
+    // 平面の作品: 紙の帯として、ゆるく波打つ(奥行きは足さない)。
+    float ph = uv.x * 3.4 + uT * 0.35;
+    float z = sin(ph) * W * 0.16 + (uv.y - 0.5) * sin(ph * 0.5 + 1.3) * W * 0.12;
+    float slope = cos(ph) * 0.16 * 3.4;
+    rest = vec3(uRect.x + (uv.x - 0.5) * W, uRect.y + (uv.y - 0.5) * H, z);
+    shade = 0.8 + 0.2 * (1.0 - abs(slope)) + 0.08 * slope;
+    d = 0.5 + z / W;
+  } else {
+    d = fg ? dm.r : dm.g;
+    rest = vec3(uRect.x + (uv.x - 0.5) * W, uRect.y + (uv.y - 0.5) * H, (d - 0.45) * uDepthAmt + (fg ? uDepthAmt * 0.06 : -uDepthAmt * 0.04));
+    shade = 0.74 + 0.36 * d;
+  }
 
-  // ほどけた粒は、画面を大きく巡る1本の帯になって流れる(ねじれながら)。
-  float R = max(uView.x, uView.y) * 0.85;
-  float sl = fract(h1 + uT * 0.035 * (0.75 + 0.5 * h3));
+  // ほどけた粒は、画面を大きく巡る1本の帯になって流れる。帯の上には、作品の像が長く引き伸ばされて乗る。
+  float R = min(max(uView.x, uView.y) * 0.62, min(uView.x, uView.y) * 1.25);
+  float sl = fract(uv.x * 0.34 + float(layer) * 0.5 + uT * 0.03 + (h3 - 0.5) * 0.004);
   float an = sl * 6.2832;
   vec3 c0 = vec3(cos(an) * 0.62 + 0.16 * sin(2.0 * an + uT * 0.21), 0.30 * sin(1.5 * an + uT * 0.17), sin(an) * 0.55) * R;
   float an2 = an + 0.01;
@@ -59,18 +79,20 @@ void main(){
   vec3 nb = normalize(cross(tg, vec3(0.0, 1.0, 0.0)) + vec3(0.0, 0.0, 1e-4));
   vec3 bn = cross(nb, tg);
   float tw = an * 2.0 + uT * 0.35;
-  float wv = (h2 - 0.5) * R * 0.2;
-  vec3 cloud = c0 + (nb * cos(tw) + bn * sin(tw)) * wv + (vec3(h3, h1, h2) - 0.5) * R * 0.025;
+  float wv = (uv.y - 0.5) * R * 0.3;
+  vec3 cloud = c0 + (nb * cos(tw) + bn * sin(tw)) * wv + (vec3(h3, h1, h2) - 0.5) * R * 0.006;
+  float ribShade = 0.7 + 0.3 * abs(cos(tw));   // 帯のねじれで、明るさが変わる
   cloud.xy += uView * 0.5;
 
   // 組み上がり方: 0 手前から / 1 左から掃く / 2 中心から / 3 下から積む
   float fd = uStyle.x < 0.5 ? 1.0 - d : uStyle.x < 1.5 ? uv.x : uStyle.x < 2.5 ? length(uv - 0.5) * 1.4 : 1.0 - uv.y;
   // ほどけ方: 0 外から / 1 上の行から剥がれる / 2 奥から / 3 右から掃く
   float bd = uStyle.y < 0.5 ? 1.0 - length(uv - 0.5) * 1.4 : uStyle.y < 1.5 ? uv.y : uStyle.y < 2.5 ? d : 1.0 - uv.x;
+  if (fg) { fd *= 0.6; bd = bd * 0.6 + 0.4; }   // 被写体は先に立ち、最後にほどける
   const float S = 0.85;
   float fl = clamp(uForm * (1.0 + S) - S * (0.8 * fd + 0.2 * h1), 0.0, 1.0);
   float bl = clamp(uBurst * (1.0 + S) - S * (0.8 * bd + 0.2 * h2), 0.0, 1.0);
-  fl = 1.0 - pow(1.0 - fl, 3.0);       // 着地は ゆっくり
+  fl = 1.0 - pow(1.0 - fl, 3.0);
   bl = bl * bl * (3.0 - 2.0 * bl);
   float a = fl * (1.0 - bl);
 
@@ -95,9 +117,9 @@ void main(){
   disp.z = min(disp.z, uDepthAmt * 0.8);
   p += disp * (0.6 + 0.8 * h3);
 
-  // 雲から作品へ(と、その逆)。途中は少し ふくらんで飛ぶ。
+  // 帯から作品へ(と、その逆)。途中は少し ふくらんで飛ぶ。
   float arc = sin(3.14159 * a);
-  vec3 bulge = vec3(h1 - 0.5, h2 - 0.5, h3 - 0.2) * vec3(W, H, uDepthAmt * 6.0) * 0.5 * arc;
+  vec3 bulge = vec3(h1 - 0.5, h2 - 0.5, h3 - 0.2) * vec3(W, H, uDepthAmt * 6.0) * 0.35 * arc;
   vec3 pos = mix(cloud, p, a) + bulge * (1.0 - a);
 
   // 視点: 作品の中心のまわりに回り込み、寄る。
@@ -112,19 +134,16 @@ void main(){
   float s = F / max(F - q.z, 60.0);
   vec2 sp = c.xy + q.xy * s;
 
-  // 大きさ: 立っている時は、となりと重なって1枚の写真に見える。漂う時は小さな粒。
+  // 大きさ: 立っている時は、となりと重なって1枚に見える。帯の上では、少し隙間のある網点になる。
   float spacing = W / uGrid.x;
-  float size = mix(mix(0.7, 2.0, h2 * h2), spacing * 0.78, a) * s * uZoom;
+  float ribSize = R * 0.3 / uGrid.y * 0.75;
+  float size = mix(ribSize * mix(0.8, 1.15, h2), spacing * 0.8, a) * s * uZoom;
   size *= 1.0 + min(length(disp.xy) / (rad * 3.0), 0.5);
   vec2 corner = sp + aQ * size;
   gl_Position = vec4(corner.x / uView.x * 2.0 - 1.0, 1.0 - corner.y / uView.y * 2.0, clamp(-q.z / 4000.0, -0.99, 0.99), 1.0);
 
   vec3 cc = mix(pcol, col, uColMix);
-  // 漂う粒は、少し暗く、ときどき強く光る(遠いほど暗い)。
-  float far = clamp(1.0 - (q.z + R) / (2.0 * R), 0.0, 1.0);
-  float spark = h1 > 0.97 ? 1.8 : mix(0.45, 1.0, h3);
-  float shade = 0.78 + 0.32 * d;
-  vCol = mix(cc * spark * mix(1.0, 0.35, far), col * shade, a);
+  vCol = mix(cc * ribShade * (h1 > 0.985 ? 1.6 : 1.0), col * shade, a);
   vQ = aQ;
   vRest = a;
 }`;
@@ -136,12 +155,12 @@ out vec4 o;
 void main(){
   float r2 = dot(vQ, vQ);
   if (r2 > 1.0) discard;
-  // 立っている時は、ほとんど平ら(写真として見せる)。漂う時は、丸い粒に見えるよう ふちを落とす。
+  // 立っている時は、ほとんど平ら(写真として見せる)。帯の上では、丸い網点に見えるよう ふちを落とす。
   float edge = mix(1.0 - 0.55 * r2, 1.0 - 0.12 * r2, vRest);
   o = vec4(vCol * edge, 1.0);
 }`;
 
-type Work = { title: string; href: string; src: string; depth: string; img?: WebGLTexture; dep?: WebGLTexture; aspect: number; ready: boolean };
+type Work = { title: string; href: string; src: string; depth: string; bg: string; flat: boolean; img?: WebGLTexture; dep?: WebGLTexture; bgt?: WebGLTexture; aspect: number; ready: boolean };
 
 export function mountSplat(root: HTMLElement) {
   const cv = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
@@ -152,6 +171,8 @@ export function mountSplat(root: HTMLElement) {
     href: a.href,
     src: a.dataset.src || '',
     depth: a.dataset.depth || '',
+    bg: a.dataset.bg || '',
+    flat: a.dataset.flat !== undefined,
     aspect: 1,
     ready: false,
   }));
@@ -178,12 +199,13 @@ export function mountSplat(root: HTMLElement) {
   const U = (n: string) => gl.getUniformLocation(prog, n);
   const u = {
     view: U('uView'), grid: U('uGrid'), rect: U('uRect'), t: U('uT'), form: U('uForm'), burst: U('uBurst'), tens: U('uTens'),
-    colMix: U('uColMix'), zoom: U('uZoom'), depthAmt: U('uDepthAmt'), rot: U('uRot'), style: U('uStyle'),
+    colMix: U('uColMix'), flat: U('uFlat'), zoom: U('uZoom'), depthAmt: U('uDepthAmt'), rot: U('uRot'), style: U('uStyle'),
     trail: U('uTrail'), trailW: U('uTrailW'),
   };
   gl.uniform1i(U('uImg'), 0);
   gl.uniform1i(U('uPrev'), 1);
   gl.uniform1i(U('uDepth'), 2);
+  gl.uniform1i(U('uBg'), 4);
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -213,21 +235,24 @@ export function mountSplat(root: HTMLElement) {
     loading.add(k);
     const a = new Image();
     const b = new Image();
-    a.decoding = b.decoding = 'async';
+    const c = new Image();
+    a.decoding = b.decoding = c.decoding = 'async';
     let n = 0;
     const done = () => {
-      if (++n < 2 || dead) return;
+      if (++n < 3 || dead) return;
       gl!.activeTexture(gl!.TEXTURE3);
       w.img = texFrom(a, true);
       w.dep = texFrom(b, true);
+      w.bgt = texFrom(c, true);
       w.aspect = a.naturalWidth / a.naturalHeight;
       w.ready = true;
       loading.delete(k);
     };
-    a.onload = b.onload = done;
-    a.onerror = b.onerror = () => loading.delete(k);
+    a.onload = b.onload = c.onload = done;
+    a.onerror = b.onerror = c.onerror = () => loading.delete(k);
     a.src = w.src;
     b.src = w.depth;
+    c.src = w.bg;
   }
 
   // ---------- 大きさ
@@ -378,6 +403,8 @@ export function mountSplat(root: HTMLElement) {
   let raf = 0;
   let last = performance.now();
   const t0 = last;
+  let fsum = 0;
+  let fcnt = 0;
   let rotX = 0;
   let rotY = 0;
   const ease = (x: number) => x * x * (3 - 2 * x);
@@ -456,6 +483,7 @@ export function mountSplat(root: HTMLElement) {
     gl!.uniform1f(u.burst, burst);
     gl!.uniform1f(u.tens, tens);
     gl!.uniform1f(u.colMix, colMix);
+    gl!.uniform1f(u.flat, cw.flat ? 1 : 0);
     gl!.uniform1f(u.zoom, zoom);
     gl!.uniform1f(u.depthAmt, Math.min(W, H) * 0.6);
     gl!.uniform2f(u.rot, rotX, rotY);
@@ -468,8 +496,18 @@ export function mountSplat(root: HTMLElement) {
     gl!.bindTexture(gl!.TEXTURE_2D, (prev >= 0 && works[prev].img) || cw.img || black);
     gl!.activeTexture(gl!.TEXTURE2);
     gl!.bindTexture(gl!.TEXTURE_2D, cw.dep || black);
+    gl!.activeTexture(gl!.TEXTURE4);
+    gl!.bindTexture(gl!.TEXTURE_2D, cw.bgt || black);
     gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
-    gl!.drawArraysInstanced(gl!.TRIANGLE_STRIP, 0, 4, N);
+    gl!.drawArraysInstanced(gl!.TRIANGLE_STRIP, 0, 4, gw * gh * 2);
+    // 重すぎる端末では、粒を減らす(最初の3秒の平均で判断)。
+    if (now > 1.5 && now < 4.5) {
+      fsum += dt;
+      fcnt++;
+    } else if (now >= 4.5 && fcnt > 0) {
+      if (fsum / fcnt > 0.026 && !(window as unknown as Record<string, unknown>).__splatKeep) N = Math.round(N * 0.55);
+      fcnt = -1e9;
+    }
   }
   size();
   load(0);
@@ -486,6 +524,13 @@ export function mountSplat(root: HTMLElement) {
       if (p === 'hold') holdLen = 999;
       if (p === 'gap' || p === 'form') colMix = 1;
     },
+    goId(src: string) {
+      const k = works.findIndex((w) => w.src.includes(src));
+      if (k >= 0) {
+        cur = k;
+        load(k);
+      }
+    },
     go(i: number) {
       cur = i % works.length;
       load(cur);
@@ -495,7 +540,7 @@ export function mountSplat(root: HTMLElement) {
       for (let k = 1; k < pts.length; k++) addTrail(pts[k][0], pts[k][1], (pts[k][0] - pts[k - 1][0]) * 60, (pts[k][1] - pts[k - 1][1]) * 60);
     },
     get state() {
-      return { cur, phase, pt, style, energy, ready: works.map((w) => w.ready).filter(Boolean).length };
+      return { cur, phase, pt, style, energy, N, flat: works[cur].flat, ready: works.map((w) => w.ready).filter(Boolean).length };
     },
   };
 
