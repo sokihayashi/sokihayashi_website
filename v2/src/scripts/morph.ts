@@ -5,7 +5,7 @@
 //   0 帯     … 指 = 筆。なぞった跡に並んで、平らな帯になる。帯の中に作品の写真が順に見える(写真は まっすぐ。帯が窓になる)
 //   1 立体   … 指 = 光。帯が ねじれて奥行きを持ち、紙として光と艶が乗る。裏は紙の色。指を動かすと、奥行きが ずれて見える
 //   2 粒子   … 指 = 渦。面が光の粒になり、なぞった線に沿って、撚り合わさりながら流れる(残像つき)。色は写真の色
-//   3 網点   … 指 = レンズ。粒が画面全体の格子(28°)に並び、赤・緑・青の光の棒の長さで、1枚の作品を描く。指の下だけ、元の写真に戻る
+//   3 作品   … 粒が集まり、1つの作品が奥行きを持った粒の像として立つ。視点が回り込む(写真は2層、平面の作品は紙)
 //   → 0 帯   … 棒が、なぞった跡へ戻る
 //
 // 進めるのは時間ではなく、描いた長さ。手を止めると、その状態のまま漂う。
@@ -21,7 +21,7 @@ import { makeSfx } from './sfx';
 
 const M = 640; // なぞった跡を覚えておく数(輪になっていて、古いものから上書きする)
 const SEG = 32; // 作品1つぶんの長さ(跡の数)
-const NV = 48; // 帯の幅方向の枚数
+const NV = 64; // 帯の幅方向の枚数
 const NU = M * 2; // 帯の長さ方向の枚数
 const TILES = NU * NV;
 const HOLD = 0.5; // 1つの状態のうち、変わらずにいる割合
@@ -30,7 +30,7 @@ const STATE_LEN = 0.62; // 1つの状態ぶんの、描く長さ(帯の長さに
 const ACOLS = 6;
 const AROWS = 5;
 const CELL = 400;
-const NAMES = ['Band', 'Solid', 'Particle', 'Halftone'];
+const NAMES = ['Band', 'Solid', 'Particle', 'Work'];
 
 const VS = `#version 300 es
 precision highp float;
@@ -44,6 +44,10 @@ uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK, uPass;
 uniform float uAsp[30];
 uniform float uPitch, uCols, uCells, uStep;
 uniform float uFocus, uFocusAsp;
+uniform sampler2D uSDep;  // 立つ作品の奥行き(r: 奥行き / g: 背景の奥行き / b: 被写体の切り抜き)
+uniform sampler2D uSBg;   // 立つ作品の背景(被写体の所を埋めたもの)
+uniform float uSFlat;     // 立つ作品が平面か
+uniform vec2 uSwing;      // 立つ作品のまわりの回り込み
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
 uniform vec2 uCam;   // 視点の ずれ
@@ -183,29 +187,44 @@ void main(){
   vec3 pcol = photo(a2.w, 0.5 + (pl - a2.xy) / vec2(a2.z, a2.z / aspA));
   pcol = (pcol * 0.9 + 0.05) * mix(0.1, 0.24, h1) * alive;
 
-  // ---- 3 網点: 赤・緑・青の光の棒。行ごとに ずらして、棒の列を 28° に傾ける。
-  int ch = i - (i / 3) * 3;
-  uint cell = (uint(i / 3) * uint(uStep)) % uint(uCells);
-  float cx = float(cell % uint(uCols)); float cy = float(cell / uint(uCols));
-  const float TAN28 = 0.5317094; const float C28 = 0.8829476; const float S28 = 0.4694716;
-  float wrapW = uCols * uPitch;
-  float gx = mod(cx * uPitch + cy * uPitch * TAN28 + float(ch - 1) * uPitch / 3.0, wrapW) - (wrapW - uView.x) * 0.5;
-  vec2 g = vec2(gx, (cy + 0.5) * uPitch - uPitch * 0.5);
-  float fs = max(uView.x / uFocusAsp, uView.y);
-  vec3 fcol = photo(uFocus, 0.5 + (g - uView * 0.5) / (vec2(uFocusAsp, 1.0) * fs));
-  float val = ch == 0 ? fcol.r : ch == 1 ? fcol.g : fcol.b;
-  float len = pow(val, 1.45) * (1.0 + 0.07 * sin(dot(g, vec2(0.011, 0.007)) - uTime * 1.3));
-  float lens = uPen.z * smoothstep(uW * 1.5, uW * 0.6, distance(g, uPen.xy));
-  len = mix(len, 1.0, lens);
-  float bwid = uPitch / 6.0 * mix(1.22, 1.3, lens);
-  float blen = max(uPitch / C28 * 0.5 * 0.94 * len, bwid * 0.02);
-  vec3 prim = ch == 0 ? vec3(PAPER.r, 0.0, 0.0) : ch == 1 ? vec3(0.0, PAPER.g, 0.0) : vec3(0.0, 0.0, PAPER.b);
-  vec3 dcol = mix(prim, fcol, lens);
-  vec3 c3 = vec3(g, 0.0);
+  // ---- 3 作品が立つ: 流れていた粒が集まり、1つの作品が奥行きを持った粒の像として立つ。
+  //   写真の作品は2層(埋めた背景 + 手前の被写体)。平面の作品は紙として波打つ(奥行きは足さない)。
+  float per = floor(float(${TILES}) * 0.5);
+  float lay = float(i) < per ? 0.0 : 1.0;
+  float jj = float(i) - lay * per;
+  float gwf = max(8.0, floor(sqrt(per * uFocusAsp)));
+  float ghf = floor(per / gwf);
+  float gyy = floor(jj / gwf); float gxx = jj - gyy * gwf;
+  vec2 suv = (vec2(gxx, gyy) + 0.5) / vec2(gwf, ghf);
+  vec4 sdm = textureLod(uSDep, suv, 0.0);
+  bool sfg = lay > 0.5;
+  bool shide = gyy >= ghf || (sfg && (uSFlat > 0.5 || sdm.b < 0.5));
+  float SW = min(uView.x * (uView.x > uView.y ? 0.7 : 0.86), uView.y * 0.7 * uFocusAsp);
+  float SH = SW / uFocusAsp;
+  float sDA = min(SW, SH) * 0.6;
+  vec3 scol = sfg || uSFlat > 0.5 ? photo(uFocus, suv) : textureLod(uSBg, suv, 0.0).rgb;
+  vec3 srest;
+  if (uSFlat > 0.5) {
+    float ph3 = suv.x * 3.4 + uTime * 0.35;
+    srest = vec3((suv.x - 0.5) * SW, (suv.y - 0.5) * SH, sin(ph3) * SW * 0.16 + (suv.y - 0.5) * sin(ph3 * 0.5 + 1.3) * SW * 0.12);
+    scol *= 0.8 + 0.2 * (1.0 - abs(cos(ph3) * 0.54)) + 0.08 * cos(ph3) * 0.54;
+  } else {
+    float dd3 = sfg ? sdm.r : sdm.g;
+    srest = vec3((suv.x - 0.5) * SW, (suv.y - 0.5) * SH, (dd3 - 0.45) * sDA + (sfg ? sDA * 0.06 : -sDA * 0.04));
+    scol *= 0.74 + 0.36 * dd3;
+  }
+  // 視点が、作品のまわりを回り込む。
+  float cy3 = cos(uSwing.x); float sy3 = sin(uSwing.x);
+  srest = vec3(cy3 * srest.x + sy3 * srest.z, srest.y, -sy3 * srest.x + cy3 * srest.z);
+  float cx3 = cos(uSwing.y); float sx3 = sin(uSwing.y);
+  srest = vec3(srest.x, cx3 * srest.y - sx3 * srest.z, sx3 * srest.y + cx3 * srest.z);
+  vec3 c3 = srest + vec3(uView * 0.5, 0.0);
+  float s3 = SW / gwf * 0.8;
+  if (shide) { c3 = c2; s3 = 0.0; }
 
   // ---- まぜる(四隅と、面の中心)
   vec3 q2 = vec3(r2d * aQ, 0.0);
-  vec3 q3 = vec3(C28, -S28, 0.0) * bwid * aQ.x + vec3(S28, C28, 0.0) * blen * aQ.y;
+  vec3 q3 = vec3(aQ * s3, 0.0);
   vec3 wp = X0 * wt.x + X1 * wt.y + (c2 + q2) * wt.z + (c3 + q3) * wt.w;
   vec3 cc = C0 * wt.x + C1 * wt.y + c2 * wt.z + c3 * wt.w;
   // 変わる途中は、まっすぐ飛ばずに、少し ふくらんで動く。
@@ -228,7 +247,7 @@ void main(){
   vec2 ctr = uView * 0.5;
   vec2 sp = ctr + uCam + (wp.xy - ctr - uCam) * F / (F - wp.z);
   float depth = clamp(-(wp.z + (1.0 - hd) * 3.0) / 1600.0, -0.99, 0.99);
-  gl_Position = vec4(sp.x / uView.x * 2.0 - 1.0, 1.0 - sp.y / uView.y * 2.0, mix(depth, 0.6, dotw), 1.0);
+  gl_Position = vec4(sp.x / uView.x * 2.0 - 1.0, 1.0 - sp.y / uView.y * 2.0, mix(depth, 0.6, wt.z), 1.0);
 
   // 色: 帯のとき、その場所に見えていた写真。
   float asp = uAsp[int(r2.w)];
@@ -236,10 +255,10 @@ void main(){
   vUV = 0.5 + (fp - r2.xy) / vec2(r2.z, r2.z / asp);
   vCell = vec2(mod(r2.w, AT.x), floor(r2.w / AT.x));
   vQ = aQ;
-  vShape = vec2(r2d, r2d) * wt.z / max(dotw, 1e-4) + vec2(bwid, blen) * wt.w / max(dotw, 1e-4);
-  vMix = vec4(dotw, 1.0 - dotw, wt.x + wt.y, mix(1.0, face, wt.y));
+  vShape = vec2(r2d, r2d) * wt.z / max(dotw, 1e-4) + vec2(s3, s3) * wt.w / max(dotw, 1e-4);
+  vMix = vec4(dotw, 1.0 - wt.z, wt.x + wt.y, mix(1.0, face, wt.y));
   vLit = vec4(mix(1.0, lit, wt.y), gloss * wt.y, wt.y, 0.0);
-  vAlt = vec4((pcol * wt.z + dcol * wt.w) / max(dotw, 1e-4), dotw);
+  vAlt = vec4((pcol * wt.z + scol * wt.w) / max(dotw, 1e-4), dotw);
   vRib = vec2((mod(float(j), SEGf) + 0.5 + tq) * uDp, vc * uW);
 }`;
 
@@ -357,11 +376,13 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), sFlat: U('uSFlat'), swing: U('uSwing'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
   gl.uniform1i(U('uShadow'), 3);
+  gl.uniform1i(U('uSDep'), 5);
+  gl.uniform1i(U('uSBg'), 6);
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -389,6 +410,42 @@ export function mountMorph(root: HTMLElement) {
   for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.LINEAR);
   for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
   const asp = new Float32Array(30).fill(1);
+  // 立つ作品の奥行きと背景(必要になった作品だけ読む)。
+  const stand: ({ dep: WebGLTexture; bg: WebGLTexture } | null)[] = [];
+  const standLoading = new Set<number>();
+  const one = gl.createTexture()!;
+  gl.activeTexture(gl.TEXTURE5);
+  gl.bindTexture(gl.TEXTURE_2D, one);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 0, 255]));
+  function loadStand(k: number) {
+    if (stand[k] || standLoading.has(k)) return;
+    const a = works[k];
+    if (!a?.dataset.depth) return;
+    standLoading.add(k);
+    const d = new Image();
+    const b = new Image();
+    let n = 0;
+    const done = () => {
+      if (++n < 2 || dead) return;
+      const mk = (im: HTMLImageElement) => {
+        const t = gl!.createTexture()!;
+        gl!.activeTexture(gl!.TEXTURE7);
+        gl!.bindTexture(gl!.TEXTURE_2D, t);
+        gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, im);
+        gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR);
+        gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR);
+        gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE);
+        gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
+        return t;
+      };
+      stand[k] = { dep: mk(d), bg: mk(b) };
+      standLoading.delete(k);
+    };
+    d.onload = b.onload = done;
+    d.onerror = b.onerror = () => standLoading.delete(k);
+    d.src = a.dataset.depth || '';
+    b.src = a.dataset.bg || '';
+  }
   // 網点に向く写真かどうか(色が鮮やかで、明暗の幅があるほど高い)。
   const score = new Float32Array(30);
   const tiny = document.createElement('canvas');
@@ -621,6 +678,7 @@ export function mountMorph(root: HTMLElement) {
 
   // ---------- 状態を進める(描いた長さで)
   let focus = 0;
+  const shown = new Set<number>();
   let lastState = 0;
   let trail = 0; // 残像の強さ(粒子のとき 1)
   let solid = 0; // 立体の強さ(床と影を出す)
@@ -640,12 +698,22 @@ export function mountMorph(root: HTMLElement) {
     // 網点に描く作品は、粒子から網点へ変わりはじめた時に、ペン先にあった作品。
     if (a === 2 && x <= 0) {
       // 直近に描いた4作品のうち、網点に いちばん向くもの。
+      // 直近に描いた4作品から、まだ立たせていない作品を選ぶ(写真の作品を優先)。
       let best = curWork;
-      for (let k = 1; k < 4; k++) {
+      let bs = -1;
+      for (let k = 0; k < 4; k++) {
         const w = (((workN - 1 - k) % nW) + nW) % nW;
-        if (workN - 1 - k >= 0 && score[w] > score[best]) best = w;
+        if (workN - 1 - k < 0) continue;
+        const sc = (works[w].dataset.flat === undefined ? 2 : 0) + (shown.has(w) ? 0 : 3) + score[w] * 0.5;
+        if (sc > bs) {
+          bs = sc;
+          best = w;
+        }
       }
       focus = best;
+      shown.add(best);
+      if (shown.size >= nW) shown.clear();
+      loadStand(best);
     }
     trail = a === 1 ? sstep(0.15, 0.75, x) : a === 2 ? 1 - sstep(0.8, 1, x) : 0;
     solid = a === 0 ? sstep(0.25, 1, x) : a === 1 ? 1 - sstep(0, 0.15, x) : 0;
@@ -693,6 +761,7 @@ export function mountMorph(root: HTMLElement) {
     sndText();
     if (sfx.on) sfx.click();
   });
+  ind.style.display = 'none'; // 状態の名前は出さない(講評で、デモっぽいと指摘)
   root.append(ind, label, snd);
 
   // ---------- 入力(指一本)
@@ -702,10 +771,12 @@ export function mountMorph(root: HTMLElement) {
   let penX = 0; // ペン(指を、ごくわずかに遅れて追う)
   let penY = 0;
   let over = 0; // カーソルが画面の中にある
-  let idle = 2.2; // ひとりでに描きはじめるまでの秒
+  let idle = 0.25; // ひとりでに描きはじめるまでの秒
   let auto = false;
   let autoOn = true;
   let tau = Math.random() * 20;
+  let swingX = 0;
+  let swingY = 0;
   let lightX = 0; // 光と視点(指を、ゆっくり追う)
   let lightY = 0;
   const isUI = (t: EventTarget | null) => t instanceof Element && !!t.closest('a,button');
@@ -802,6 +873,22 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.k, Math.max(1, K));
     gl!.uniform1f(u.focus, focus);
     gl!.uniform1f(u.focusAsp, asp[focus]);
+    {
+      const A = Math.floor(phase);
+      const a4 = ((A % 4) + 4) % 4;
+      const fr = phase - A;
+      // 作品が立っている間、視点が端から端へ回り込む。指(カーソル)の位置で少し足す。
+      const sw = a4 === 3 ? -0.42 + 0.84 * sstep(0, 1, fr) : a4 === 2 ? -0.42 : 0.42;
+      swingX += (sw + (ptX / Math.max(1, vw) - 0.5) * 0.3 - swingX) * (1 - Math.exp(-dt / 0.5));
+      swingY += (0.1 * Math.sin(now * 0.2) + (ptY / Math.max(1, vh) - 0.5) * 0.2 - swingY) * (1 - Math.exp(-dt / 0.5));
+      gl!.uniform2f(u.swing, swingX, swingY);
+      const st = stand[focus];
+      gl!.uniform1f(u.sFlat, works[focus].dataset.flat !== undefined ? 1 : 0);
+      gl!.activeTexture(gl!.TEXTURE5);
+      gl!.bindTexture(gl!.TEXTURE_2D, st ? st.dep : one);
+      gl!.activeTexture(gl!.TEXTURE6);
+      gl!.bindTexture(gl!.TEXTURE_2D, st ? st.bg : one);
+    }
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
