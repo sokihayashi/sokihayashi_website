@@ -18,7 +18,8 @@ interface Props {
   //   sheet: 送ると、1枚の網として線が左右にしなる / bands: 列ごとの帯が左右にしなる
   //   gather: 送ると、布をたぐるように、画面の上(戻すときは下)に、くしゃっとしわが寄って溜まり、少し遅れて流れる(前後の凹凸)
   //   trace: 列が1本ずつの平らな帯。重さと張りのある紐で、指(カーソル)の横の動きで引くと、波になって伝わり、ゆれながら戻る
-  live?: 'sheet' | 'bands' | 'gather' | 'trace';
+  //   tape: 列が1本ずつの平らなテープ。指(カーソル)の通った跡がテープの通り道になり、作品がそこを流れる。離すと、ばねで まっすぐへ戻る
+  live?: 'sheet' | 'bands' | 'gather' | 'trace' | 'tape';
   cols?: 0 | 1 | 2; // 0: 写真と文字を横に並べる行(最初の版) / 1・2: 写真の下に文字を置く升目(スマホでの列の数)
 }
 const { curve = false, ctl = 'chain', keys = ['d', 's', 'sort'], cols = 0, live } = Astro.props;
@@ -538,18 +539,38 @@ const shown = groups.filter((g) => keys.includes(g.key)).map((g, _, a) => (a.len
   }
   /* 帯の版: 列のあいだに、すき間を空ける(列が1本ずつの帯に見えるように)。 */
   .cl-page[data-live='bands'],
-  .cl-page[data-live='trace'] {
+  .cl-page[data-live='trace'],
+  .cl-page[data-live='tape'] {
     --g: 12px;
   }
   @media (min-width: 800px) {
     .cl-page[data-live='bands'],
-    .cl-page[data-live='trace'] {
+    .cl-page[data-live='trace'],
+    .cl-page[data-live='tape'] {
       --g: 20px;
     }
   }
   .cl-page[data-live='bands'] .cl-list,
-  .cl-page[data-live='trace'] .cl-list {
+  .cl-page[data-live='trace'] .cl-list,
+  .cl-page[data-live='tape'] .cl-list {
     column-gap: var(--g);
+  }
+  /* テープの版: 写真の箱は、面より少しだけ大きい(幅 1.18 倍、高さ 1.1 倍。tape.ts の数字と合わせる)。
+     作品ごとに重なりの順番を持つ(あとの作品が上)。線は作品ごとの SVG、文字はその上。 */
+  .cl-page[data-grid][data-live='tape'] {
+    --m: calc(var(--cw) * 0.09);
+    --vm: calc(var(--ph) * 0.05);
+  }
+  .cl-page[data-live='tape'] .cl-row {
+    position: relative;
+    isolation: isolate;
+  }
+  .cl-page[data-live='tape'] .cl-face {
+    will-change: transform;
+  }
+  .cl-page[data-grid][data-live='tape'] .cl-text {
+    z-index: 2;
+    padding-left: 0.7rem;
   }
   /* 描く版: 帯が大きく横へ動けるよう、写真の箱の余地を広げる。 */
   .cl-page[data-grid][data-live='trace'] {

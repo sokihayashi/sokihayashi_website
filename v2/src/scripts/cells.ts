@@ -1,3 +1,4 @@
+import { mountTape } from './tape';
 // 試作: Works の一覧(枠と面)。
 //
 // 黒い地に、紙色の細い線で枠を引く。枠の中に、写真か文字が入る。動きはない。
@@ -17,7 +18,10 @@ export function mountCells(root: HTMLElement): () => void {
   const count = document.querySelector<HTMLElement>('[data-cl-count]');
   const page = root.closest<HTMLElement>('.cl-page');
   // 動きの種類(升目の版だけ)。sheet: 1枚の網がしなる / bands: 列ごとの帯がしなる。動きを減らす設定のときは、動かさない。
-  const live = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? '' : root.dataset.live || '';
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const live = reduced ? '' : root.dataset.live || '';
+  // テープの版(tape)は、描き方も動きも別のファイル(tape.ts)に持つ。
+  const tape = root.dataset.live === 'tape' ? mountTape(root, list, !reduced) : null;
   type Group = { key: string; label: string; opts: [string, string][] };
   const groups: Group[] = ctl?.dataset.groups ? JSON.parse(ctl.dataset.groups) : [];
   const state: Record<string, string> = { d: 'all', s: 'all', sort: 'order' };
@@ -227,6 +231,11 @@ export function mountCells(root: HTMLElement): () => void {
       dirty.clear();
     }
     G = { rows, n, cols, cw, g, m, vm, ph, rowH, R, by };
+    if (tape) {
+      svg.innerHTML = '';
+      tape.layout({ rows, n, cols, cw, g, ph, rowH, R });
+      return;
+    }
     if (!n) {
       svg.innerHTML = '';
       return;
@@ -991,7 +1000,7 @@ export function mountCells(root: HTMLElement): () => void {
   }
 
   function onScroll() {
-    if (live === 'trace') return; // 描く版は、送りではなく、手の横の動きで動く
+    if (live === 'trace' || live === 'tape') return; // 描く版は、送りではなく、手の横の動きで動く
     if (raf || !G) return;
     if (live === 'gather') {
       if (slack === 0) {
@@ -1083,5 +1092,6 @@ export function mountCells(root: HTMLElement): () => void {
     root.classList.remove('is-live');
     page?.style.removeProperty('--cw');
     glc?.remove();
+    tape?.dispose();
   };
 }
