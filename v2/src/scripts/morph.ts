@@ -42,6 +42,7 @@ uniform highp sampler2D uShadow;
 uniform vec2 uView;
 uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK, uPass;
 uniform float uFrom, uTo; // いま変わっている途中の、2つの表現の番号
+uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 古い所から順に / 2 一瞬で切り替わる / 3 指から外へ
 uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
@@ -152,6 +153,7 @@ O dotAt(vec3 c, vec2 hsz, vec3 col, float round, float alpha){
 O sBand(){
   O o = base();
   o.line = 1.0;
+  o.par = 1.0; // 帯のままでも、写真の中は立体に見える
   return o;
 }
 // 1 立体(アナログ): 床から浮いて、ねじれて波うつ紙。指の光を受けて、影を落とす。
@@ -589,6 +591,35 @@ O sBig(){
   o.lit = 0.75 + 0.45 * l.x; o.gloss = 0.12 * l.y;
   return o;
 }
+// 28 額縁(プロフィールを開いたとき): 帯が画面のふちに回り込んで、細い額になる。中に文字が入る。
+O sFrame(){
+  O o = base();
+  float m = 14.0, top = 64.0;
+  vec2 a = vec2(m, top), b = uView - vec2(m, m);
+  vec2 sz = b - a;
+  float per = 2.0 * (sz.x + sz.y);
+  float bw = min(uW * 0.38, 34.0);
+  float s = mod((float(gIu) + 0.5 + aQ.x * 0.5) / float(${NU}) * per + uTime * 18.0, per);
+  float sc = mod((float(gIu) + 0.5) / float(${NU}) * per + uTime * 18.0, per);
+  vec2 P, T, Pc;
+  if (s < sz.x) { P = a + vec2(s, 0.0); T = vec2(1.0, 0.0); }
+  else if (s < sz.x + sz.y) { P = vec2(b.x, a.y + s - sz.x); T = vec2(0.0, 1.0); }
+  else if (s < 2.0 * sz.x + sz.y) { P = vec2(b.x - (s - sz.x - sz.y), b.y); T = vec2(-1.0, 0.0); }
+  else { P = vec2(a.x, b.y - (s - 2.0 * sz.x - sz.y)); T = vec2(0.0, -1.0); }
+  if (sc < sz.x) Pc = a + vec2(sc, 0.0);
+  else if (sc < sz.x + sz.y) Pc = vec2(b.x, a.y + sc - sz.x);
+  else if (sc < 2.0 * sz.x + sz.y) Pc = vec2(b.x - (sc - sz.x - sz.y), b.y);
+  else Pc = vec2(a.x, b.y - (sc - 2.0 * sz.x - sz.y));
+  vec2 N = vec2(-T.y, T.x);
+  o.corner = vec3(P + N * gVc * bw, 0.0);
+  o.centre = vec3(Pc + N * gV * bw, 0.0);
+  float seg = per / 14.0;
+  float wkf = floor(s / seg);
+  o.work = mod(wkf * 7.0, 27.0);
+  o.uv = vec2(fract(s / seg), gVc + 0.5);
+  o.gate = 1.0; o.line = 1.0; o.par = 0.6;
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -617,7 +648,8 @@ O stateOf(int id){
   if (id == 24) return sPile();
   if (id == 25) return sRipple();
   if (id == 26) return sPhoto3D();
-  return sBig();
+  if (id == 27) return sBig();
+  return sFrame();
 }
 
 void main(){
@@ -639,8 +671,13 @@ void main(){
   // この1枚が、いま どの表現と どの表現の間にいるか。
   float f = fract(uPhase);
   float x = clamp((f - HOLD) / (1.0 - HOLD), 0.0, 1.0);
-  float w = clamp(x * (1.0 + SP) - SP * (0.72 * gHd + 0.28 * h1), 0.0, 1.0);
-  w = w * w * (3.0 - 2.0 * w);
+  int sty = int(uSty + 0.5);
+  float w;
+  if (sty == 1) w = smoothstep(gHd * 0.6, gHd * 0.6 + 0.4, x);
+  else if (sty == 2) w = smoothstep(0.47, 0.53, x);
+  else if (sty == 3) { float dd = distance(gP, uPen.xy) / max(uView.x, uView.y); w = smoothstep(dd * 0.75, dd * 0.75 + 0.3, x); }
+  else { w = clamp(x * (1.0 + SP) - SP * (0.72 * gHd + 0.28 * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w); }
+  float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0));
 
   // 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
   gTq = (gFr - 0.5) + aQ.x * 0.25;
@@ -670,7 +707,7 @@ void main(){
 
   // 変わる途中は、まっすぐ飛ばずに、少し ふくらんで動く。
   float arc = sin(3.14159 * w);
-  vec3 bulge = vec3((vec2(h2, h3) - 0.5) * uW * 1.1, (h1 - 0.5) * uW * 1.4) * arc;
+  vec3 bulge = vec3((vec2(h2, h3) - 0.5) * uW * 1.1, (h1 - 0.5) * uW * 1.4) * arc * bulgeK;
   vec3 corner = mix(A.corner, B.corner, w);
   vec3 cc = mix(A.centre, B.centre, w);
   // 出てくるところ(ペン先)と、巻き取られるところ(いちばん古い所)。帯に乗る表現だけ。
@@ -881,7 +918,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1219,15 +1256,13 @@ export function mountMorph(root: HTMLElement) {
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 28;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6]; // アナログらしさ(画面全体の質感に使う)
-  // 見た目だけの違い(表面の模様)の表現と、写真が並ぶだけの札(10, 11)は、順番に入れない: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+  const KINDS = 29;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8]; // アナログらしさ(画面全体の質感に使う)
+  // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
+  const ACTIVE = [0, 1, 2, 13, 14, 15, 22, 23, 24, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
   const FAM: Record<number, string> = {
-    0: 'flat', 18: 'flat', 25: 'flat', 1: 'paper', 14: 'paper', 21: 'paper', 23: 'paper',
-    2: 'dots', 13: 'dots', 17: 'dots', 10: 'cards', 11: 'cards', 12: 'pieces', 22: 'pieces',
-    15: 'bars', 16: 'threads', 19: 'deform', 20: 'deform', 24: 'pile', 26: 'photo3d', 27: 'big',
+    0: 'band', 14: 'band', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
   };
   const seq: number[] = [0];
   const seqAt = (n: number) => {
@@ -1242,6 +1277,15 @@ export function mountMorph(root: HTMLElement) {
       seq.push(c);
     }
     return seq[n];
+  };
+  const sty: number[] = [0];
+  const styAt = (n: number) => {
+    while (sty.length <= n) {
+      let c = sty[sty.length - 1];
+      while (c === sty[sty.length - 1]) c = Math.floor(Math.random() * 4);
+      sty.push(c);
+    }
+    return sty[n];
   };
   let sFrom = 0;
   let sTo = 0;
@@ -1294,7 +1338,38 @@ export function mountMorph(root: HTMLElement) {
   });
   ind.style.display = 'none'; // 状態の名前は出さない(講評で、デモっぽいと指摘)
   label.style.display = 'none';
-  root.append(ind, label, snd);
+  // ---------- プロフィール: 開くと、帯が画面のふちに回り込んで額になり、中に文字が入る。
+  const base = (root.dataset.base || '').replace(/\/$/, '');
+  const pf = mk('button', `${FRAME}right:calc(var(--pad) + 6.6rem);${BOTTOM}padding:.5rem .7rem;font-size:.66rem;letter-spacing:.08em;cursor:pointer;border-radius:0;`) as HTMLButtonElement;
+  pf.type = 'button';
+  pf.textContent = 'Profile';
+  pf.setAttribute('aria-expanded', 'false');
+  const panel = mk('section', 'position:absolute;z-index:2;left:calc(14px + 34px + 1.2rem);right:calc(14px + 34px + 1.2rem);top:calc(64px + 34px + 1rem);bottom:calc(14px + 34px + 1rem);overflow:auto;color:var(--fg);opacity:0;pointer-events:none;transition:opacity .35s;display:flex;flex-direction:column;justify-content:center;gap:1.1rem;');
+  panel.dataset.panel = '';
+  panel.setAttribute('aria-hidden', 'true');
+  panel.innerHTML = `
+    <p style="margin:0;font-size:.66rem;letter-spacing:.12em;color:var(--muted)">PROFILE</p>
+    <h2 style="margin:0;font-size:clamp(1.6rem,7vw,2.6rem);font-weight:500;line-height:1.1">Soki Hayashi<br><span style="font-size:.5em;letter-spacing:.04em">林 宋其</span></h2>
+    <p style="margin:0;font-size:.8rem;line-height:1.7;color:var(--muted)">デザイナー / クリエイティブディレクター / 映像作家 / VJ<br>東京</p>
+    <p style="margin:0;font-size:1rem;line-height:1.9;max-width:34em">世界観を作ります。<br>店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。小さなビジュアルの中に、その先の世界を予感させる。</p>
+    <p style="margin:0;font-size:.82rem;line-height:1.9;color:var(--muted);max-width:34em">ブランディング、ロゴ、UI、映像の演出・撮影・編集まで、平面から立体まで媒体を選ばずに形を立ち上げる。</p>
+    <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">Works</a><a href="${base}/about/">About</a><a href="${base}/contact/">Contact</a></p>`;
+  let panelOpen = false;
+  let ovX = 0;
+  let ovFrom = 0;
+  const setPanel = (on: boolean) => {
+    if (on === panelOpen) return;
+    panelOpen = on;
+    if (on) ovFrom = Math.max(0, (phase - Math.floor(phase) - HOLD) / (1 - HOLD)) > 0.5 ? sTo : sFrom;
+    pf.textContent = on ? 'Close' : 'Profile';
+    pf.setAttribute('aria-expanded', String(on));
+    panel.setAttribute('aria-hidden', String(!on));
+    panel.style.pointerEvents = on ? 'auto' : 'none';
+    if (on) { auto = false; drawing = false; }
+  };
+  pf.addEventListener('click', () => setPanel(!panelOpen));
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') setPanel(false); });
+  root.append(ind, label, snd, pf, panel);
 
   // ---------- 入力(指一本)
   let drawing = false;
@@ -1311,9 +1386,10 @@ export function mountMorph(root: HTMLElement) {
   let swingY = 0;
   let lightX = 0; // 光と視点(指を、ゆっくり追う)
   let lightY = 0;
-  const isUI = (t: EventTarget | null) => t instanceof Element && !!t.closest('a,button');
+  const isUI = (t: EventTarget | null) => t instanceof Element && !!t.closest('a,button,[data-panel]');
   function onDown(e: PointerEvent) {
     if (isUI(e.target) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (panelOpen) { setPanel(false); return; }
     const r = root.getBoundingClientRect();
     ptX = penX = e.clientX - r.left;
     ptY = penY = e.clientY - r.top;
@@ -1370,7 +1446,7 @@ export function mountMorph(root: HTMLElement) {
       penX += (ptX - penX) * k;
       penY += (ptY - penY) * k;
       lineTo(penX, penY);
-    } else if (autoOn) {
+    } else if (autoOn && !panelOpen) {
       idle -= dt;
       if (idle <= 0) {
         if (!auto) {
@@ -1401,12 +1477,18 @@ export function mountMorph(root: HTMLElement) {
     gl!.bindTexture(gl!.TEXTURE_2D, pathTex);
     gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, M, 3, gl!.RGBA, gl!.FLOAT, path);
     gl!.uniform1f(u.time, now);
-    gl!.uniform1f(u.phase, phase);
+    // プロフィールの額: 開くとき・閉じるときの動き
+    ovX += ((panelOpen ? 1 : 0) - ovX) * (1 - Math.exp(-dt / 0.28));
+    if (Math.abs(ovX - (panelOpen ? 1 : 0)) < 0.002) ovX = panelOpen ? 1 : 0;
+    panel.style.opacity = String(Math.max(0, (ovX - 0.55) / 0.45));
+    const ovOn = ovX > 0.001;
+    gl!.uniform1f(u.phase, ovOn ? HOLD + ovX * (1 - HOLD) : phase);
     gl!.uniform1f(u.k, Math.max(1, K));
     gl!.uniform1f(u.focus, focus);
     gl!.uniform1f(u.focusAsp, asp[focus]);
-    gl!.uniform1f(u.from, sFrom);
-    gl!.uniform1f(u.to, sTo);
+    gl!.uniform1f(u.from, ovOn ? ovFrom : sFrom);
+    gl!.uniform1f(u.to, ovOn ? 28 : sTo);
+    gl!.uniform1f(u.sty, ovOn ? 1 : styAt(Math.max(0, Math.floor(phase))));
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);

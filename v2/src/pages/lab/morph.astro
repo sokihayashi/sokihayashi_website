@@ -16,7 +16,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
 
 <Base title="Soki Hayashi — morph (試作)">
   <!-- JS や WebGL が動かない環境、「動きを減らす」設定では、作品名の一覧として読める。 -->
-  <div class="morph" data-morph-root>
+  <div class="morph" data-morph-root data-base={base}>
     <canvas class="morph-canvas" data-canvas aria-hidden="true"></canvas>
     <ul class="morph-list">
       {
