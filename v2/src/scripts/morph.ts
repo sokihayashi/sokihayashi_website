@@ -57,6 +57,7 @@ out vec4 vAlt;  // rgb: 写真を使わないときの色
 out vec3 vTint; // 写真に掛ける色
 out vec3 vLine; // 線の色
 out float vPar;  // 立体写真の強さ
+out vec2 vScr;   // 画面での位置(px)
 const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
@@ -363,19 +364,19 @@ O sSnake(){ return card(40.0, 20.0 * uDp * 0.82, 0.0, uW * 0.35); }
 O sStamp(){ return card(28.0, 14.0 * uDp * 2.1, 1.0, 0.0); }
 // 12 画素の落下: 古い所から、写真が大きな画素の箱に割れて、回りながら落ちる。
 O sVoxel(){
+  // 画素の雨: 写真が升目に揃った四角い画素になり、列ごとに順に、まっすぐ落ちて、下に積み上がる。回らない、デジタルの落ち方。
   if ((gIu % 3) != 0 || (gIv % 6) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
   float g = uW / float(NVi) * 6.0;
-  float t = max(0.0, gHd - 0.28) / 0.72;
-  t = t * t;
-  float fall = t * uView.y * 1.4 * (0.6 + 0.8 * h1);
-  vec3 c = gC0 + vec3((h2 - 0.5) * t * uW * 3.0, fall, t * uW * (h3 - 0.3) * 4.0);
-  float a = t * (h3 - 0.5) * 9.0;
-  vec2 d = vec2(cos(a), sin(a));
+  vec2 cell = floor(gC0.xy / g);
+  vec2 snap = (cell + 0.5) * g;
+  float delay = fract(cell.x * 0.137) * 0.35;
+  float t = clamp((gHd - 0.18 - delay) / 0.4, 0.0, 1.0);
+  float stackH = floor(fract(sin(cell.x * 12.7) * 4375.5) * 7.0 + 1.0) - floor(h1 * 3.0);
+  float land = uView.y - g * (0.5 + max(stackH, 0.0));
+  float y = mix(snap.y, max(snap.y, land), t * t);
   vec3 pc = photo(gR2.w, gUVp);
-  O o = ori(c, d, g * 0.48, g * 0.48, pc);
-  float sh = 0.75 + 0.35 * fract(h1 * 7.0);
-  o.col *= sh;
-  return o;
+  pc = floor(pc * 6.0 + 0.5) / 6.0;
+  return dotAt(vec3(snap.x, y, 0.0), vec2(g * 0.47), pc, 0.0, 1.0);
 }
 // 13 塵になる: 先は帯のまま。古い所から、細かな塵になって、舞い上がって消える。
 O sDust(){
@@ -417,14 +418,15 @@ O sBars(){
 }
 // 16 糸に分かれる: 帯が、細い糸の束にほどけ、1本ずつ別々に揺れる。
 O sThreads(){
-  if ((gIv % 3) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
-  float sp = 1.0 + 1.6 * gHd;
-  float wav = sin(gUc * 0.11 + float(gIv) * 1.7 + uTime * 2.4) * uW * 0.35 * gHd;
-  vec2 pq = gPq + gNq * (gVc * uW * sp + wav);
+  // 房になってほどける: 帯の縦糸がほどけ、帯から下へ垂れ下がる房になって、揺れる。
+  if ((gIu % 4) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  float len = uW * (0.6 + 3.2 * smoothstep(0.05, 0.7, gHd)) * (0.7 + 0.6 * h2);
+  float s = clamp(gV + 0.5, 0.0, 1.0);
+  vec2 top = gP + gN * (-0.5) * uW;
+  float sway = sin(uTime * 1.7 + float(gIu) * 0.05) * uW * 0.5 * s * s;
+  vec2 c = top + vec2(sway, len * s);
   vec3 pc = photo(gR2.w, gUVp);
-  O o = ori(vec3(pq, float(gIv) * 0.05), gTq2, uDp * 0.26, 0.55, pc * 1.15);
-  o.corner = vec3(pq + gNq * 0.55 * aQ.y, o.corner.z);
-  o.centre = vec3(gC0.xy + gN * (gV * uW * (sp - 1.0) + wav), o.centre.z);
+  O o = ori(vec3(c, 0.0), vec2(0.0, 1.0), len / float(NVi) * 0.6, uDp * 0.7, pc * 1.05);
   return o;
 }
 // 17 奥行きの点: 写真の奥行きの分だけ、点が浮いた立体の点群になる。視点が少し回る。
@@ -454,15 +456,24 @@ O sReveal(){
 }
 // 19 垂れる: 帯が、列ごとに違う長さで、下へ垂れていく。
 O sDrip(){
+  // 溶けて垂れる: 列ごとに違う長さで、床まで垂れる。先ほど細く、写真は縦に引き伸ばされる。
   O o = base();
-  float col = floor(gUc / 2.0);
+  float col = floor(gUc / 3.0);
   float hc = fract(sin(col * 91.7 + 3.3) * 43758.5453);
-  float amt = pow(hc, 3.0) * smoothstep(0.0, 0.6, gHd) * uView.y * 0.55;
-  float s = clamp(gVc + 0.5, 0.0, 1.0);
-  float sc = clamp(gV + 0.5, 0.0, 1.0);
-  o.corner.y += amt * s * s; o.centre.y += amt * sc * sc;
-  o.uv = vec2(gUVb.x, gUVb.y * (1.0 - 0.6 * s * s * min(amt / uW, 1.0)));
-  o.line = 1.0;
+  float tip = uView.y - gX0.y;
+  float amt = pow(hc, 1.6) * smoothstep(0.0, 0.45, gHd) * max(tip, 0.0) * 0.95 * (0.8 + 0.2 * sin(uTime * 1.3 + col));
+  float s = clamp(gVc + 0.5, 0.0, 1.0), sc = clamp(gV + 0.5, 0.0, 1.0);
+  float pull = s * s, pullc = sc * sc;
+  float colX = (floor(gUc / 3.0) + 0.5) * 3.0;
+  float thin = 1.0 - 0.75 * pull * min(amt / uW, 1.0);
+  vec2 axisP = gPq + gTq2 * 0.0;
+  o.corner.xy = vec2(mix(gX0.x, gX0.x, 1.0), gX0.y + amt * pull);
+  o.corner.xy += gTq2 * (gUc - colX) * uDp * 0.5 * (thin - 1.0);
+  o.centre.y += amt * pullc;
+  o.uv = vec2(gUVb.x, gUVb.y - (gUVb.y - 0.5) * 0.7 * pull * min(amt / uW, 1.0));
+  o.gloss = 0.35 * pull * min(amt / uW, 1.0);
+  o.lit = 1.0 - 0.25 * pull * min(amt / uW, 1.0);
+  o.line = 0.0;
   return o;
 }
 // 20 流れに乗る: 古い所ほど、見えない流れに運ばれて、渦を巻く。
@@ -546,20 +557,23 @@ O sPile(){
 }
 // 25 波紋: 帯の面に、指を中心にした波紋が広がる。光で、波の山と谷が見える。
 O sRipple(){
+  // 液体の面: 指(なければ描いている先)を中心に、帯の面いっぱいに波紋が走る。強い照り返しで、水銀のように見せる。
   O o = base();
-  vec2 c = uPen.xy;
+  vec2 head = texelFetch(uPath, ivec2(int(mod(uK - 1.0, Mf)), 0), 0).xy;
+  vec2 c = mix(head, uPen.xy, uPen.z);
   float d = distance(gX0.xy, c) + 1.0;
-  float k = 0.045, sp = 5.0;
-  float A = uW * 0.45 * exp(-d / (uW * 7.0)) * (0.35 + 0.65 * uPen.z);
+  float k = 0.032, sp = 4.2;
+  float A = uW * 0.85 * exp(-d / (uW * 9.0));
   float ph = d * k - uTime * sp;
   o.corner.z = sin(ph) * A + A;
   float dc = distance(gC0.xy, c) + 1.0;
-  o.centre.z = sin(dc * k - uTime * sp) * A + A;
+  o.centre.z = sin(dc * k - uTime * sp) * uW * 0.85 * exp(-dc / (uW * 9.0)) + A;
   vec2 g = (gX0.xy - c) / d * cos(ph) * A * k;
   vec3 n = normalize(vec3(-g, 1.0));
   vec3 l = litBy(o.corner, n);
-  o.lit = 0.2 + 1.3 * l.x; o.gloss = 0.5 * l.y;
-  o.line = 1.0;
+  o.tint = vec3(0.62, 0.66, 0.72);
+  o.lit = 0.08 + 1.7 * l.x; o.gloss = 1.3 * l.y + 0.25 * pow(1.0 - n.z, 2.0);
+  o.par = 0.0;
   return o;
 }
 // 26 立体写真: 帯のまま、写真の中の奥行きで、平面の写真が立体に見える。指の位置で、のぞき込む向きが変わる。
@@ -721,13 +735,14 @@ void main(){
     // 影の地図: 光から見た近さだけを書く。立体の紙だけが影を落とす。
     vec3 m = toShadow(wp);
     vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
-    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0;
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0);
     gl_Position = solidW < 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
     return;
   }
   const float F = 1500.0;
   vec2 ctr = uView * 0.5;
   vec2 sp = ctr + uCam + (wp.xy - ctr - uCam) * F / (F - wp.z);
+  vScr = sp;
   float depth = clamp(-(wp.z + (1.0 - gHd) * 3.0) / 1600.0, -0.99, 0.99);
   gl_Position = vec4(sp.x / uView.x * 2.0 - 1.0, 1.0 - sp.y / uView.y * 2.0, mix(0.6, depth, alpha), 1.0);
 
@@ -752,8 +767,9 @@ precision highp float;
 uniform sampler2D uAtlas;
 uniform float uW;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
-in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar;
+in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr;
 uniform sampler2D uDAtlas;
+uniform vec3 uLight;
 uniform vec2 uTilt;
 out vec4 o;
 const vec3 PAPER = vec3(0.957, 0.945, 0.918);
@@ -767,25 +783,43 @@ void main(){
   vec2 uv = clamp(vUV, vec2(0.004), vec2(0.996));
   float shade = 1.0;
   if (vPar > 0.01) {
-    // 奥行きの地図をたどって、のぞき込む向きの分だけ写真をずらす(手前ほど大きく動く)。
+    // 写真を立体に見せる。(1) のぞき込む向きの分だけ、奥行きをたどってずらす。
+    // (2) 奥行きから面の向きを出し、指を光にして照らす。(3) 光の方へたどって、自分の影を落とす。
+    // 奥行きが平らな作品(ロゴ・ポスター)は、明るさを高さにして、浮き彫りとして照らす。
     vec2 AT2 = vec2(${ACOLS}.0, ${AROWS}.0);
-    vec2 dir = uTilt * 0.055 * vPar;
-    const int NS = 14;
+    float flatW = step(texture(uDAtlas, (vCell + vec2(0.5)) / AT2).r + texture(uDAtlas, (vCell + vec2(0.25, 0.7)) / AT2).r + texture(uDAtlas, (vCell + vec2(0.75, 0.3)) / AT2).r, 0.01);
+    #define HGT(q) mix(texture(uDAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).r, dot(texture(uAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).rgb, vec3(0.3, 0.59, 0.11)) * 0.25, flatW)
+    vec2 dir = uTilt * 0.08 * vPar * (1.0 - flatW * 0.6);
+    const int NS = 12;
     float lay = 1.0 / float(NS);
     float cur = 1.0;
     vec2 q = uv + dir * 0.5;
-    float hgt = texture(uDAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).r;
+    float hgt = HGT(q);
     for (int i = 0; i < NS; i++) {
       if (hgt >= cur) break;
       cur -= lay; q -= dir * lay;
-      hgt = texture(uDAtlas, (vCell + clamp(q, 0.004, 0.996)) / AT2).r;
+      hgt = HGT(q);
     }
     uv = clamp(q, vec2(0.004), vec2(0.996));
-    // 奥ほど少し暗く、段差の縁に陰を入れて、厚みを感じさせる。
-    float e = 0.01;
-    float hx = texture(uDAtlas, (vCell + clamp(uv + vec2(e, 0.0), 0.004, 0.996)) / AT2).r - hgt;
-    float hy = texture(uDAtlas, (vCell + clamp(uv + vec2(0.0, e), 0.004, 0.996)) / AT2).r - hgt;
-    shade = mix(1.0, 0.72 + 0.4 * hgt + clamp(dot(vec2(hx, hy), -normalize(uTilt + vec2(1e-4))) * 6.0, -0.25, 0.25), clamp(vPar, 0.0, 1.0));
+    float e = 0.006;
+    float hx = HGT(uv + vec2(e, 0.0)) - HGT(uv - vec2(e, 0.0));
+    float hy = HGT(uv + vec2(0.0, e)) - HGT(uv - vec2(0.0, e));
+    float S = mix(14.0, 22.0, flatW);
+    vec3 nrm = normalize(vec3(-hx * S, -hy * S, 1.0));
+    vec3 L = normalize(vec3(uLight.xy - vScr, 150.0));
+    float dif = max(dot(nrm, L), 0.0);
+    float spc = pow(max(dot(nrm, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 40.0);
+    // 自分の影: 光の方へ数歩たどって、手前に高い所があれば影。
+    float sh = 0.0;
+    vec2 ld = normalize(L.xy + vec2(1e-4)) * 0.012;
+    float h0 = HGT(uv);
+    for (int i = 1; i <= 8; i++) {
+      float hi = HGT(uv + ld * float(i));
+      sh = max(sh, clamp((hi - h0 - float(i) * 0.012) * 10.0, 0.0, 1.0));
+    }
+    float lit = 0.28 + 1.15 * dif - 0.5 * sh + 0.55 * spc;
+    shade = mix(1.0, lit, clamp(vPar, 0.0, 1.0));
+    #undef HGT
   }
   vec3 tc = texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
   if (vMix.w < 0.0) tc = PAPER;
@@ -1259,10 +1293,11 @@ export function mountMorph(root: HTMLElement) {
   const KINDS = 29;
   const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8]; // アナログらしさ(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const ACTIVE = [0, 1, 2, 13, 14, 15, 22, 23, 24, 27];
+  const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
   const FAM: Record<number, string> = {
-    0: 'band', 14: 'band', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
+    0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
+    12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
   };
   const seq: number[] = [0];
   const seqAt = (n: number) => {
