@@ -38,9 +38,9 @@ precision highp int;
 layout(location=0) in vec2 aQ;
 uniform sampler2D uPath;
 uniform sampler2D uAtlas;
+uniform highp sampler2D uShadow;
 uniform vec2 uView;
-uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK;
-uniform vec2 uHalf;
+uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK, uPass;
 uniform float uAsp[30];
 uniform float uPitch, uCols, uCells, uStep;
 uniform float uFocus, uFocusAsp;
@@ -49,7 +49,7 @@ uniform vec3 uLight; // 光の位置(立体のとき)
 uniform vec2 uCam;   // 視点の ずれ
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
-out vec4 vLit;  // x: 明るさ / y: 艶
+out vec4 vLit;  // x: 明るさ / y: 艶 / z: 立体の割合
 out vec4 vAlt;  // rgb: 粒・棒の色 / a: それを使う割合
 const float Mf = ${M}.0;
 const int Mi = ${M};
@@ -63,6 +63,24 @@ float hsh(uint n){ n = (n << 13U) ^ n; n = n * (n * n * 15731U + 789221U) + 1376
 vec3 photo(float work, vec2 uv){
   vec2 c = vec2(mod(work, AT.x), floor(work / AT.x));
   return textureLod(uAtlas, (c + clamp(uv, vec2(0.004), vec2(0.996))) / AT, 0.0).rgb;
+}
+// 光から見て、床のどこに落ちるか(影の地図の位置)と、光からの近さ。
+vec3 toShadow(vec3 p){
+  float h = uLight.z;
+  float z = min(p.z, h * 0.85);
+  vec2 g = uLight.xy + (p.xy - uLight.xy) * h / (h - z);
+  return vec3((g - uView * 0.5) / (uView * 2.0), 0.5 - z / (8.0 * uW));
+}
+float shadowAt(vec3 p){
+  vec3 m = toShadow(p);
+  vec2 uv = m.xy + 0.5;
+  float s = 0.0;
+  const float E = 1.4 / 1024.0;
+  s += step(textureLod(uShadow, uv + vec2(E, 0.0), 0.0).r + 0.014, m.z);
+  s += step(textureLod(uShadow, uv + vec2(-E, 0.0), 0.0).r + 0.014, m.z);
+  s += step(textureLod(uShadow, uv + vec2(0.0, E), 0.0).r + 0.014, m.z);
+  s += step(textureLod(uShadow, uv + vec2(0.0, -E), 0.0).r + 0.014, m.z);
+  return s * 0.25;
 }
 void main(){
   int i = gl_InstanceID;
@@ -78,15 +96,6 @@ void main(){
   vec2 P = r0.xy; vec2 T = r0.zw;
   // まだ描かれていない面は、ペン先に しまってある。
   if (r1.w < 0.5) { P = uPen.xy; T = vec2(1.0, 0.0); }
-  // 曲がり目で すき間が開かないように、となりの跡の向きへ少し寄せ、外側の面は長くする。
-  float side = fr < 0.5 ? -1.0 : 1.0;
-  int jn = int(mod(float(j) + side + Mf, Mf));
-  vec4 n0 = texelFetch(uPath, ivec2(jn, 0), 0);
-  float nok = texelFetch(uPath, ivec2(jn, 1), 0).w * r1.w * ((side > 0.0 && age < 0.5) || (side < 0.0 && age > Mf - 1.5) ? 0.0 : 1.0);
-  nok *= step(distance(n0.xy, P), uDp * 1.6);
-  vec2 Tn = mix(T, n0.zw, nok);
-  float bend = abs(T.x * Tn.y - T.y * Tn.x);
-  T = normalize(mix(T, Tn, 0.25) + vec2(1e-5, 0.0));
   vec2 N = vec2(-T.y, T.x);
 
   // この1枚が、いま どの状態と どの状態の間にいるか。
@@ -97,34 +106,53 @@ void main(){
   int a = int(mod(A, 4.0));
   vec4 wt = vec4(0.0);
   wt[a] = 1.0 - w; wt[(a + 1) % 4] += w;
+  float dotw = wt.z + wt.w;
 
-  float sj = float(j) + fr;
-  vec2 hx = T * (uHalf.x + abs(v) * uW * min(bend, 0.35) * 0.6); vec2 hy = N * uHalf.y;
+  // ---- 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
+  float tq = (fr - 0.5) + aQ.x * 0.25;          // この跡の中心から見た、長さ方向の位置(-0.5〜0.5)
+  float vc = v + aQ.y * (0.5 / float(NVi));     // 幅方向の位置
+  int jn = tq < 0.0 ? (j == 0 ? Mi - 1 : j - 1) : (j + 1 == Mi ? 0 : j + 1);
+  vec4 q0 = texelFetch(uPath, ivec2(jn, 0), 0);
+  float seam = tq < 0.0 ? step(Mf - 1.5, age) : step(age, 0.5);
+  float ok = r1.w * texelFetch(uPath, ivec2(jn, 1), 0).w * step(distance(q0.xy, P), uDp * 1.6) * (1.0 - seam);
+  vec2 Pq; vec2 Tq;
+  if (ok > 0.5) {
+    if (tq < 0.0) { Pq = mix(q0.xy, P, tq + 1.0); Tq = mix(q0.zw, T, tq + 1.0); }
+    else { Pq = mix(P, q0.xy, tq); Tq = mix(T, q0.zw, tq); }
+  } else { Pq = P + T * tq * uDp; Tq = T; }
+  Tq = normalize(Tq + vec2(1e-5, 0.0));
+  vec2 Nq = vec2(-Tq.y, Tq.x);
+  float uc = float(j) + 0.5 + tq;
 
   // ---- 0 帯
-  vec2 rib = P + T * (fr - 0.5) * uDp + N * v * uW;
-  vec3 c0 = vec3(rib, 0.0);
+  vec3 X0 = vec3(Pq + Nq * vc * uW, 0.0);
+  vec3 C0 = vec3(P + T * (fr - 0.5) * uDp + N * v * uW, 0.0);
 
-  // ---- 1 立体: 芯のまわりに ねじれ、芯そのものも前後に波うつ。紙として光を受ける。
-  float th = sj * uTwK + uTime * 0.4;
+  // ---- 1 立体: 床から浮き、芯のまわりに ねじれ、前後に波うつ。紙として光を受け、影を落とす。
+  float th = uc * uTwK + uTime * 0.4;
   float cs = cos(th); float sn = sin(th);
-  float zph = sj * uZK - uTime * 0.6;
-  float zc = sin(zph) * uW * 1.25;
-  vec3 c1 = vec3(P + T * (fr - 0.5) * uDp + N * v * uW * cs, zc + v * uW * sn);
-  vec3 nrm = normalize(vec3(-N * sn, cs) - vec3(T, 0.0) * (cos(zph) * uW * 1.25 * uZK / uDp) * cs);
+  float zph = uc * uZK - uTime * 0.6;
+  float zc = uW * (0.6 + 0.45 * sin(zph));
+  vec3 X1 = vec3(Pq + Nq * vc * uW * cs, zc + vc * uW * sn);
+  float thc = (float(j) + fr) * uTwK + uTime * 0.4;
+  vec3 C1 = vec3(P + T * (fr - 0.5) * uDp + N * v * uW * cos(thc), uW * (0.6 + 0.45 * sin((float(j) + fr) * uZK - uTime * 0.6)) + v * uW * sin(thc));
+  vec3 nrm = normalize(vec3(-Nq * sn, cs) - vec3(Tq, 0.0) * (cos(zph) * uW * 0.45 * uZK / uDp) * cs);
   float face = nrm.z;
   vec3 nn = face < 0.0 ? -nrm : nrm;
-  vec3 Ld = uLight - c1;
+  vec3 Ld = uLight - X1;
   float dl2 = dot(Ld, Ld);
   vec3 L = Ld * inversesqrt(dl2);
-  float R = max(uView.x, uView.y) * 0.5;
+  float R = max(uView.x, uView.y) * 0.55;
   float att = 1.0 / (1.0 + dl2 / (R * R));
+  float sh = wt.y > 0.001 && uPass < 0.5 ? shadowAt(X1) : 0.0;
   float dif = max(dot(nn, L), 0.0);
-  float spc = pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 42.0);
-  float lit = 0.13 + 1.5 * dif * att;
-  float gloss = 0.55 * spc * att;
+  float spc = pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 36.0);
+  float rim = pow(1.0 - abs(nn.z), 3.0);
+  float lit = 0.09 + (1.45 * dif * att + 0.1 * rim) * (1.0 - 0.82 * sh);
+  float gloss = 0.4 * spc * att * (1.0 - sh);
 
   // ---- 2 粒子: なぞった線に沿って流れる、撚り合わさった光の束。
+  float sj = float(j) + fr;
   float sr = mod(sj + uTime * mix(6.0, 24.0, h2), Mf);
   int ja = int(floor(sr)); int jb = ja + 1 == Mi ? 0 : ja + 1;
   float ff = sr - floor(sr);
@@ -170,26 +198,33 @@ void main(){
   float lens = uPen.z * smoothstep(uW * 1.5, uW * 0.6, distance(g, uPen.xy));
   len = mix(len, 1.0, lens);
   float bwid = uPitch / 6.0 * mix(1.22, 1.3, lens);
-  float blen = uPitch / C28 * 0.5 * 0.94 * len;
+  float blen = max(uPitch / C28 * 0.5 * 0.94 * len, bwid * 0.02);
   vec3 prim = ch == 0 ? vec3(PAPER.r, 0.0, 0.0) : ch == 1 ? vec3(0.0, PAPER.g, 0.0) : vec3(0.0, 0.0, PAPER.b);
   vec3 dcol = mix(prim, fcol, lens);
   vec3 c3 = vec3(g, 0.0);
 
-  // ---- まぜる
-  vec3 c = c0 * wt.x + c1 * wt.y + c2 * wt.z + c3 * wt.w;
-  vec3 e1 = vec3(hx, 0.0) * (wt.x + wt.y) + vec3(r2d, 0.0, 0.0) * wt.z + vec3(C28, -S28, 0.0) * bwid * wt.w;
-  vec3 e2 = vec3(hy, 0.0) * wt.x + vec3(hy * cs, uHalf.y * sn) * wt.y + vec3(0.0, r2d, 0.0) * wt.z + vec3(S28, C28, 0.0) * max(blen, bwid * 0.02) * wt.w;
+  // ---- まぜる(四隅と、面の中心)
+  vec3 q2 = vec3(r2d * aQ, 0.0);
+  vec3 q3 = vec3(C28, -S28, 0.0) * bwid * aQ.x + vec3(S28, C28, 0.0) * blen * aQ.y;
+  vec3 wp = X0 * wt.x + X1 * wt.y + (c2 + q2) * wt.z + (c3 + q3) * wt.w;
+  vec3 cc = C0 * wt.x + C1 * wt.y + c2 * wt.z + c3 * wt.w;
   // 変わる途中は、まっすぐ飛ばずに、少し ふくらんで動く。
   float arc = a == 0 ? 0.0 : sin(3.14159 * w);
-  c.xy += arc * (vec2(h2, h3) - 0.5) * uW * 1.1;
-  c.z += arc * (h1 - 0.5) * uW * 1.4;
-
+  vec3 bulge = vec3((vec2(h2, h3) - 0.5) * uW * 1.1, (h1 - 0.5) * uW * 1.4) * arc;
   // 出てくるところ(ペン先)と、巻き取られるところ(いちばん古い所)。
-  float dotw = wt.z + wt.w;
   float sc = r1.w * smoothstep(0.0, 0.16, uTime - r1.z) * smoothstep(Mf, Mf - 22.0, age);
   sc = mix(sc, 1.0, dotw);
-  vec3 wp = c + (e1 * aQ.x + e2 * aQ.y) * sc;
-  const float F = 950.0;
+  wp = cc + (wp - cc) * sc + bulge;
+
+  if (uPass > 0.5) {
+    // 影の地図: 光から見た近さだけを書く。光の粒や棒は、影を落とさない。
+    vec3 m = toShadow(wp);
+    vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0);
+    gl_Position = dotw > 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
+    return;
+  }
+  const float F = 1500.0;
   vec2 ctr = uView * 0.5;
   vec2 sp = ctr + uCam + (wp.xy - ctr - uCam) * F / (F - wp.z);
   float depth = clamp(-(wp.z + (1.0 - hd) * 3.0) / 1600.0, -0.99, 0.99);
@@ -197,15 +232,15 @@ void main(){
 
   // 色: 帯のとき、その場所に見えていた写真。
   float asp = uAsp[int(r2.w)];
-  vec2 fp = rib + (hx * aQ.x + hy * aQ.y) * (1.0 - dotw);
+  vec2 fp = mix(X0.xy, C0.xy, dotw);
   vUV = 0.5 + (fp - r2.xy) / vec2(r2.z, r2.z / asp);
   vCell = vec2(mod(r2.w, AT.x), floor(r2.w / AT.x));
   vQ = aQ;
-  vShape = vec2(length(e1), length(e2)) * sc;
+  vShape = vec2(r2d, r2d) * wt.z / max(dotw, 1e-4) + vec2(bwid, blen) * wt.w / max(dotw, 1e-4);
   vMix = vec4(dotw, 1.0 - dotw, wt.x + wt.y, mix(1.0, face, wt.y));
-  vLit = vec4(mix(1.0, lit, wt.y), gloss * wt.y, 0.0, 0.0);
+  vLit = vec4(mix(1.0, lit, wt.y), gloss * wt.y, wt.y, 0.0);
   vAlt = vec4((pcol * wt.z + dcol * wt.w) / max(dotw, 1e-4), dotw);
-  vRib = vec2((mod(float(j), SEGf) + fr) * uDp + aQ.x * uHalf.x, v * uW + aQ.y * uHalf.y);
+  vRib = vec2((mod(float(j), SEGf) + 0.5 + tq) * uDp, vc * uW);
 }`;
 
 const FS = `#version 300 es
@@ -229,10 +264,41 @@ void main(){
   // 帯のふちと、作品の境目の線。
   float line = max(step(uW * 0.5 - 1.3, abs(vRib.y)), step(vRib.x, 1.3));
   col = mix(col, PAPER, line * step(0.98, vMix.z));
-  col = col * vLit.x + vLit.y;
+  // 光(立体のとき)。明るい所は、白く飛ばさずに丸める。
+  vec3 lc = col * vLit.x + vLit.y;
+  col = mix(lc, (1.0 - exp(-1.25 * lc)) * 1.22, vLit.z);
   col = mix(col, vAlt.rgb, vAlt.a);
   // 不透明さ 1 = ふつうに重なる / 0 = 光として足す。
   o = vec4(col * cov, vMix.y * cov);
+}`;
+
+// 床: 立体のとき、指の光が床を照らし、帯の影が落ちる。
+const FLOOR_FS = `#version 300 es
+precision highp float;
+uniform highp sampler2D uShadow;
+uniform vec2 uView;
+uniform vec3 uLight;
+uniform float uSolid;
+in vec2 vUv;
+out vec4 o;
+void main(){
+  vec2 p = vec2(vUv.x, 1.0 - vUv.y) * uView;
+  vec2 uv = (p - uView * 0.5) / (uView * 2.0) + 0.5;
+  float s = 0.0;
+  for (int k = 0; k < 16; k++) {
+    float a = float(k) * 2.39996;
+    float r = sqrt((float(k) + 0.5) / 16.0) * 3.2 / 1024.0;
+    s += step(texture(uShadow, uv + vec2(cos(a), sin(a)) * r).r + 0.006, 0.5);
+  }
+  s /= 16.0;
+  vec2 d = p - uLight.xy;
+  float d2 = dot(d, d) + uLight.z * uLight.z;
+  float R = max(uView.x, uView.y) * 0.55;
+  float e = (1.0 / (1.0 + d2 / (R * R))) * (uLight.z * inversesqrt(d2));
+  // 少しだけ粒を足して、なだらかな明るさが縞にならないようにする。
+  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+  vec3 c = vec3(0.150, 0.146, 0.140) * e * (1.0 - 0.86 * s) * uSolid + n * 0.006 * uSolid;
+  o = vec4(max(c, 0.0), 1.0);
 }`;
 
 // 残像: 前のコマを少し暗くして、下に敷く。
@@ -278,7 +344,11 @@ export function mountMorph(root: HTMLElement) {
   };
   const prog = build(VS, FS);
   const fade = build(FADE_VS, FADE_FS);
-  if (!prog || !fade) return () => {};
+  const floor = build(FADE_VS, FLOOR_FS);
+  if (!prog || !fade || !floor) return () => {};
+  gl.useProgram(floor);
+  gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
+  const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
   const uKeep = gl.getUniformLocation(fade, 'uKeep');
@@ -286,11 +356,12 @@ export function mountMorph(root: HTMLElement) {
   const U = (n: string) => gl.getUniformLocation(prog, n);
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
-    half: U('uHalf'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
+    pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
     focus: U('uFocus'), focusAsp: U('uFocusAsp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
+  gl.uniform1i(U('uShadow'), 3);
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -385,6 +456,23 @@ export function mountMorph(root: HTMLElement) {
     gl!.clear(gl!.COLOR_BUFFER_BIT);
   }
 
+  // 影の地図(光から見た近さ)。立体のときだけ描く。
+  const SHADOW = 1024;
+  const shTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, shTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, SHADOW, SHADOW, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+  const shFbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, shFbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shTex, 0);
+  gl.drawBuffers([gl.NONE]);
+  gl.readBuffer(gl.NONE);
+  gl.clearDepth(1);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
   // ---------- 大きさ
   let vw = 0;
   let vh = 0;
@@ -427,7 +515,6 @@ export function mountMorph(root: HTMLElement) {
     while (gcd(step, cells) !== 1) step++;
     gl!.uniform1f(u.dp, dp);
     gl!.uniform1f(u.w, W);
-    gl!.uniform2f(u.half, dp / 4 + 0.6, W / NV / 2 + 0.6);
     gl!.uniform1f(u.twK, (2 * Math.PI * Math.max(1, Math.round(Lmax / (W * 7)))) / M);
     gl!.uniform1f(u.zK, (2 * Math.PI * Math.max(1, Math.round(Lmax / (W * 11)))) / M);
     gl!.uniform1f(u.pitch, pitch);
@@ -536,6 +623,7 @@ export function mountMorph(root: HTMLElement) {
   let focus = 0;
   let lastState = 0;
   let trail = 0; // 残像の強さ(粒子のとき 1)
+  let solid = 0; // 立体の強さ(床と影を出す)
   const sstep = (a: number, b: number, v: number) => {
     const t = Math.max(0, Math.min(1, (v - a) / (b - a)));
     return t * t * (3 - 2 * t);
@@ -560,6 +648,7 @@ export function mountMorph(root: HTMLElement) {
       focus = best;
     }
     trail = a === 1 ? sstep(0.15, 0.75, x) : a === 2 ? 1 - sstep(0.8, 1, x) : 0;
+    solid = a === 0 ? sstep(0.25, 1, x) : a === 1 ? 1 - sstep(0, 0.15, x) : 0;
     const st = x > 0.5 ? (a + 1) % 4 : a;
     if (st !== lastState) {
       lastState = st;
@@ -714,8 +803,25 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.focus, focus);
     gl!.uniform1f(u.focusAsp, asp[focus]);
     gl!.uniform3f(u.pen, fx, fy, fon);
-    gl!.uniform3f(u.light, lightX, lightY, W * 2.2);
+    gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
+
+    // 0) 影の地図(立体が少しでもあるとき)
+    const shadowOn = K > 0 && ((((Math.floor(phase) % 4) + 4) % 4 === 1) || solid > 0);
+    gl!.bindFramebuffer(gl!.FRAMEBUFFER, shFbo);
+    gl!.viewport(0, 0, SHADOW, SHADOW);
+    gl!.enable(gl!.DEPTH_TEST);
+    gl!.disable(gl!.BLEND);
+    gl!.clear(gl!.DEPTH_BUFFER_BIT);
+    if (shadowOn) {
+      // 描いている地図を、同時に読めるようにしておくと、描画そのものが拒否される。描く間だけ外す。
+      gl!.activeTexture(gl!.TEXTURE3);
+      gl!.bindTexture(gl!.TEXTURE_2D, null);
+      gl!.uniform1f(u.pass, 1);
+      gl!.drawArraysInstanced(gl!.TRIANGLE_STRIP, 0, 4, TILES);
+      gl!.bindTexture(gl!.TEXTURE_2D, shTex);
+    }
+    gl!.uniform1f(u.pass, 0);
 
     // 1) 前のコマを薄くして敷く(粒子のときだけ残る)
     gl!.bindFramebuffer(gl!.FRAMEBUFFER, drawFbo);
@@ -731,7 +837,20 @@ export function mountMorph(root: HTMLElement) {
       gl!.depthMask(true);
       gl!.clear(gl!.DEPTH_BUFFER_BIT);
       gl!.useProgram(prog);
-    } else gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
+    } else {
+      gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
+      if (solid > 0.01) {
+        // 床: 指の光と、帯の影
+        gl!.useProgram(floor);
+        gl!.uniform2f(fl.view, vw, vh);
+        gl!.uniform3f(fl.light, lightX, lightY, W * 2.6);
+        gl!.uniform1f(fl.solid, solid);
+        gl!.depthMask(false);
+        gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
+        gl!.depthMask(true);
+        gl!.useProgram(prog);
+      }
+    }
     // 2) 面を描く
     if (K > 0) {
       gl!.enable(gl!.DEPTH_TEST);
@@ -771,7 +890,7 @@ export function mountMorph(root: HTMLElement) {
       focus = n;
     },
     get state() {
-      return { phase, K, focus, trail };
+      return { phase, K, focus, trail, solid };
     },
   };
 
