@@ -1,69 +1,63 @@
-// ページの移り変わり(試作): ガウシアン・スプラッティングの考え方で。
+// ページの移り変わり(試作): いまある粒を、組み直す。
 //
-// ページを「3D空間に浮かぶ、粒でできた面」として扱う。粒は、位置・大きさ・色・不透明度を持つ、丸いガウシアン。
-// 密に並んで元の大きさなら絵になり、縮むと点群になる(伸ばさない。粒は点のまま)。
-//
-// 押した場所から、いまのページの粒が縮んで点群になり、明るさに応じて前後に厚みを持つ。
-// 視点が、押した場所へ向かって奥へ進む。いまのページの点は、視点の横を通り過ぎる。
-// 奥には、次のページが点群で浮いている。近づくと、点が面に集まり、元の大きさに戻って、絵になる。
+// ページを、丸いガウシアンの粒の集まりとして扱う。密に並んで元の大きさなら絵になり、縮むと点群になる。
+// 押した場所から、いまのページの粒が縮んで点群になる。
+// 次のページが分かったら、**同じ粒**が、次のページの絵を作る場所へ移り、元の大きさに戻って、絵になる。
+// 粒は、自分の色に近い場所へ行く(明るい粒は明るい所へ、色のある粒は色のある所へ)。色は、着くまでに少しだけ合わせる。
+// 視点は動かさない。次のページを別に用意して近づく、という作りはやめた。
 //
 // 呼ぶのは band.ts。いまは /lab/morph-sharp/ から出るときだけ使う。
-// 確認用: window.__gs = { keep(), still(t1, cam, t2, bin, x, y), clear() }
+// 確認用: window.__gs = { keep(), still(t1, t2, x, y), at(ms), clear() }
 
 const CELL = 3; // 粒の間隔(px)
-const T_LOOSE = 400; // 点群にほどけるまで(ms)
-const T_TIGHT = 760; // 奥へ進んで、次のページに締まるまで(ms)
-const CAM0 = 0.2; // ほどけ終わったときの、視点の進み(0 = いまのページ、1 = 次のページ)
+const T_LOOSE = 360; // 点群にほどけるまで(ms)
+const T_BUILD = 900; // 組み直して、次のページになるまで(ms)
 const SNAP = 0.5; // ページを写し取るときの縮尺
 
 const VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec2 aQ;
-layout(location=1) in vec3 aI; // 粒の元の場所(px)、乱数
-uniform vec2 uView, uO, uV, uOff;
-uniform float uT1, uT2, uCam, uBin, uTime, uReach, uCell, uLod0, uLayer, uD, uZb, uDpr, uRoll;
+layout(location=1) in vec3 aI; // いまのページでの場所(px)、乱数
+layout(location=2) in vec2 aT; // 次のページでの場所(px)
+uniform vec2 uView, uO;
+uniform float uT1, uT2, uTime, uReach, uCell, uLod0, uD;
+uniform vec3 uBgA, uBgB;
 uniform sampler2D uA, uB;
 out vec2 vQ; out vec4 vCol;
 float h(float n){ return fract(sin(n * 127.1) * 43758.5453); }
 void main(){
   vec2 p0 = aI.xy; float sd = aI.z;
-  bool isB = uLayer > 0.5;
-  // 押した場所から波が通る。いまのページは波でほどけ、次のページは波で締まる。
-  float d = length(p0 - uO) / uReach * 0.62;
-  float L = isB ? 1.0 - smoothstep(d, d + 0.38, uT2) : smoothstep(d, d + 0.38, uT1);
-  vec2 uv = p0 / uView;
-  vec3 c = isB ? textureLod(uB, uv, uLod0).rgb : textureLod(uA, uv, uLod0).rgb;
-  float lum = dot(c, vec3(0.299, 0.587, 0.114));
-  // 奥行き: ほどけると、面が厚みを持つ。明るい所が手前。粒ごとに少し前後する。
-  float zw = (isB ? uZb : 0.0) - ((lum - 0.5) * 0.26 + (h(sd + 1.0) - 0.5) * 0.045) * uD * L;
-  // 点は、まっすぐ動かない。押した場所のまわりを巻き(点ごとに速さが違う)、見えない流れに揺られる。
-  // いまのページは巻きながら出ていき、次のページは同じ回り方で巻き戻りながら、元の場所に着く。
-  vec2 r0 = p0 - uO;
-  float rr = length(r0) / uReach;
-  float th = L * (0.55 + 0.9 * (h(sd + 2.0) - 0.5) + 0.35 * sin(rr * 5.0 - uTime * 1.4)) * (isB ? -1.0 : 1.0);
-  vec2 pw = uO + mat2(cos(th), sin(th), -sin(th), cos(th)) * r0;
-  vec3 flow = vec3(
-    sin(p0.y * 0.011 + uTime * 1.9 + sd * 2.0) + 0.5 * sin(p0.x * 0.027 - uTime * 2.7),
-    sin(p0.x * 0.013 - uTime * 1.6 + sd * 2.0) + 0.5 * sin(p0.y * 0.031 + uTime * 2.3),
-    sin((p0.x + p0.y) * 0.009 + uTime * 1.3 + sd * 3.0));
-  pw += flow.xy * 0.035 * uD * L;
-  zw += flow.z * 0.05 * uD * L;
-  float depth = uD + zw - uCam * uZb; // 視点からの距離
-  float a = (isB ? uBin : smoothstep(0.0, 0.06, L)) * smoothstep(0.1, 0.38, depth / uD);
-  if (depth < 0.08 * uD || a < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); return; }
-  // 透視。視点は、まっすぐ奥へ進まない: 横へ弧を描いて回り込み(uOff)、傾き(uRoll)、向かう先(uV)も弧を描いて動く。
-  // はじまりと終わりでは、ずれも傾きも 0 になり、ページはそのままの位置に重なる。
-  float s = uD / depth;
-  vec2 rel = pw - uV - uOff;
-  rel = mat2(cos(uRoll), sin(uRoll), -sin(uRoll), cos(uRoll)) * rel;
-  vec2 p = uV + rel * s;
-  // 粒は丸いまま。元の大きさ(となりと重なって絵になる)から、点の大きさへ縮む。近づけば大きく見えるが、上限を置く。
-  float sig = min(uCell * mix(0.56, 0.34, L) * s, 3.6);
-  sig = max(sig, 0.62);
+  // 押した場所から波が通って、点群にほどける。
+  float d = length(p0 - uO) / uReach;
+  float L = smoothstep(d * 0.62, d * 0.62 + 0.38, uT1);
+  // 組み直し: 粒ごとに出発がずれる(押した場所に近い粒から)。行きは加速し、着く前に減速する。
+  float st = 0.3 * h(sd + 3.0) + 0.22 * d;
+  float u = clamp((uT2 - st) / 0.48, 0.0, 1.0);
+  u = u * u * (3.0 - 2.0 * u);
+  vec3 cA = textureLod(uA, p0 / uView, uLod0).rgb;
+  vec3 cB = textureLod(uB, aT / uView, uLod0).rgb;
+  // 地の色のままの粒(前でも後でも見えない粒)は描かない。
+  float vis = smoothstep(0.03, 0.09, max(distance(cA, uBgA), distance(cB, uBgB)));
+  float a = smoothstep(0.0, 0.06, L) * vis;
+  if (a < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); return; }
+  // 点でいるあいだは、その場で小さく揺れている(止まらない)。
+  float loose = L * (1.0 - u);
+  vec2 jit = vec2(sin(uTime * 2.3 + sd * 40.0), cos(uTime * 1.9 + sd * 31.0)) * uCell * 1.4 * loose;
+  // 行き先へ。まっすぐではなく、粒ごとに少しふくらんだ弧で。
+  vec2 dv = aT - p0;
+  vec2 pos = mix(p0, aT, u) + vec2(-dv.y, dv.x) * sin(3.14159 * u) * (h(sd + 4.0) - 0.5) * 0.5 + jit;
+  // 動いているあいだ、面から少し浮く(手前に来た粒は、大きく見える)。
+  float lift = sin(3.14159 * u) * (0.06 + 0.26 * h(sd + 5.0)) * uD;
+  float s = uD / (uD - lift);
+  vec2 p = uView * 0.5 + (pos - uView * 0.5) * s;
+  // 粒は丸いまま。点の大きさに縮み、着いたら元の大きさ(となりと重なって絵になる)に戻る。
+  float pt = L * (1.0 - smoothstep(0.8, 1.0, u));
+  float sig = max(min(uCell * mix(0.56, 0.34, pt) * s, 3.6), 0.62);
   vQ = aQ * 2.6;
   vec2 q = p + vQ * sig;
   gl_Position = vec4(q.x / uView.x * 2.0 - 1.0, 1.0 - q.y / uView.y * 2.0, 0.0, 1.0);
-  vCol = vec4(c, a);
+  // 色は、運んできた色から、着く場所の色へ。
+  vCol = vec4(mix(cA, cB, smoothstep(0.35, 0.95, u)), a);
 }`;
 
 const FS = `#version 300 es
@@ -85,7 +79,7 @@ void main(){ vP = aQ * 0.5 + 0.5; gl_Position = vec4(aQ, 0.0, 1.0); }`;
 const BFS = `#version 300 es
 precision highp float;
 uniform vec2 uView, uO;
-uniform float uT1, uT2, uCam, uReach;
+uniform float uT1, uT2, uReach;
 uniform vec3 uBgA, uBgB;
 in vec2 vP;
 out vec4 o;
@@ -93,7 +87,7 @@ void main(){
   vec2 uv = vec2(vP.x, 1.0 - vP.y);
   float d = length(uv * uView - uO) / uReach * 0.62;
   float a = smoothstep(0.0, 0.1, smoothstep(d, d + 0.38, uT1));
-  vec3 c = mix(uBgA, uBgB, smoothstep(0.3, 0.8, uCam));
+  vec3 c = mix(uBgA, uBgB, smoothstep(0.2, 0.8, uT2));
   o = vec4(c * a, a);
 }`;
 
@@ -108,19 +102,22 @@ interface GL {
   texB: WebGLTexture;
   vao: WebGLVertexArrayObject;
   inst: WebGLBuffer;
+  targ: WebGLBuffer;
   n: number;
   w: number;
   h: number;
-  dpr: number;
+  cols: number;
+  rows: number;
 }
+type Shot = { c: HTMLCanvasElement; bg: number[] };
 
 let G: GL | null = null;
 let bgA = [0, 0, 0], bgB = [0, 0, 0]; // 前のページと次のページの、地の色
 let wrap: HTMLElement | null = null;
 let raf = 0;
 let safety = 0;
-// t1: いまのページがほどける波 / cam: 視点の進み / t2: 次のページが締まる波 / bin: 次のページの現れ
-const S = { t1: 0, cam: 0, t2: 0, bin: 0, x: 0, y: 0, t0: 0, tm: -1 };
+// t1: 点群にほどける波 / t2: 組み直しの進み / tm: 確認用の時刻(-1 なら実時間)
+const S = { t1: 0, t2: 0, x: 0, y: 0, t0: 0, tm: -1 };
 
 const ease = (x: number) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 
@@ -146,7 +143,7 @@ function build(): GL | null {
   const prog = mk(VS, FS);
   const back = mk(BVS, BFS);
   const U = (p: WebGLProgram, names: string[]) => Object.fromEntries(names.map((n) => [n, gl.getUniformLocation(p, n)]));
-  const names = ['uView', 'uO', 'uV', 'uOff', 'uRoll', 'uT1', 'uT2', 'uCam', 'uBin', 'uTime', 'uReach', 'uCell', 'uLod0', 'uLayer', 'uD', 'uZb', 'uDpr', 'uA', 'uB', 'uBgA', 'uBgB'];
+  const names = ['uView', 'uO', 'uT1', 'uT2', 'uTime', 'uReach', 'uCell', 'uLod0', 'uD', 'uA', 'uB', 'uBgA', 'uBgB'];
   const vao = gl.createVertexArray()!;
   gl.bindVertexArray(vao);
   const quad = gl.createBuffer()!;
@@ -159,6 +156,11 @@ function build(): GL | null {
   gl.enableVertexAttribArray(1);
   gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
   gl.vertexAttribDivisor(1, 1);
+  const targ = gl.createBuffer()!;
+  gl.bindBuffer(gl.ARRAY_BUFFER, targ);
+  gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+  gl.vertexAttribDivisor(2, 1);
   const tex = () => {
     const t = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, t);
@@ -170,7 +172,7 @@ function build(): GL | null {
   };
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  return { cv, gl, prog, back, u: U(prog, names), bu: U(back, names), texA: tex(), texB: tex(), vao, inst, n: 0, w: 0, h: 0, dpr: 1 };
+  return { cv, gl, prog, back, u: U(prog, names), bu: U(back, names), texA: tex(), texB: tex(), vao, inst, targ, n: 0, w: 0, h: 0, cols: 0, rows: 0 };
 }
 
 /** 画面の大きさに合わせて、粒を並べ直す。 */
@@ -179,17 +181,66 @@ function layout(g: GL) {
   if (g.w === w && g.h === h) return;
   g.w = w;
   g.h = h;
-  g.dpr = Math.min(window.devicePixelRatio || 1, 2);
-  g.cv.width = Math.round(w * g.dpr);
-  g.cv.height = Math.round(h * g.dpr);
-  const a: number[] = [];
-  let seed = 1;
-  for (let y = CELL / 2; y < h; y += CELL) {
-    for (let x = CELL / 2; x < w; x += CELL) a.push(x, y, (seed++ * 0.61803) % 1);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  g.cv.width = Math.round(w * dpr);
+  g.cv.height = Math.round(h * dpr);
+  g.cols = Math.ceil(w / CELL);
+  g.rows = Math.ceil(h / CELL);
+  g.n = g.cols * g.rows;
+  const a = new Float32Array(g.n * 3);
+  for (let i = 0; i < g.n; i++) {
+    a[i * 3] = ((i % g.cols) + 0.5) * CELL;
+    a[i * 3 + 1] = (Math.floor(i / g.cols) + 0.5) * CELL;
+    a[i * 3 + 2] = ((i + 1) * 0.61803) % 1;
   }
-  g.n = a.length / 3;
   g.gl.bindBuffer(g.gl.ARRAY_BUFFER, g.inst);
-  g.gl.bufferData(g.gl.ARRAY_BUFFER, new Float32Array(a), g.gl.STATIC_DRAW);
+  g.gl.bufferData(g.gl.ARRAY_BUFFER, a, g.gl.STATIC_DRAW);
+}
+
+/**
+ * 粒の並び順を作る: 明るさと色みの近いもの同士をまとめ、その中では場所の近い順に並べる。
+ * 前のページと次のページを同じ決まりで並べ、同じ番目どうしを組にすると、
+ * 明るい粒は明るい所へ、色のある粒は色のある所へ行く。
+ */
+function order(g: GL, c: HTMLCanvasElement): Uint32Array {
+  const t = document.createElement('canvas');
+  t.width = g.cols;
+  t.height = g.rows;
+  const x = t.getContext('2d', { willReadFrequently: true })!;
+  x.drawImage(c, 0, 0, g.cols, g.rows);
+  const d = x.getImageData(0, 0, g.cols, g.rows).data;
+  const key = new Float64Array(g.n);
+  const spread = (v: number) => {
+    v &= 0x3ff;
+    v = (v | (v << 8)) & 0x00ff00ff;
+    v = (v | (v << 4)) & 0x0f0f0f0f;
+    v = (v | (v << 2)) & 0x33333333;
+    return (v | (v << 1)) & 0x55555555;
+  };
+  for (let i = 0; i < g.n; i++) {
+    const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
+    const lum = (r * 77 + gg * 150 + b * 29) >> 12; // 0..15
+    const sat = Math.min(3, (Math.max(r, gg, b) - Math.min(r, gg, b)) >> 5); // 0..3
+    key[i] = (lum * 4 + sat) * 2097152 + (spread(i % g.cols) | (spread(Math.floor(i / g.cols)) << 1));
+  }
+  const idx = new Uint32Array(g.n);
+  for (let i = 0; i < g.n; i++) idx[i] = i;
+  return idx.sort((p, q) => key[p] - key[q]);
+}
+
+/** 粒ごとの行き先を決めて渡す。b が無ければ、行き先は今の場所(動かない)。 */
+function setTargets(g: GL, a: HTMLCanvasElement, b: HTMLCanvasElement | null) {
+  const t = new Float32Array(g.n * 2);
+  const at = (i: number, j: number) => {
+    t[i * 2] = ((j % g.cols) + 0.5) * CELL;
+    t[i * 2 + 1] = (Math.floor(j / g.cols) + 0.5) * CELL;
+  };
+  if (b) {
+    const oa = order(g, a), ob = order(g, b);
+    for (let k = 0; k < g.n; k++) at(oa[k], ob[k]);
+  } else for (let i = 0; i < g.n; i++) at(i, i);
+  g.gl.bindBuffer(g.gl.ARRAY_BUFFER, g.targ);
+  g.gl.bufferData(g.gl.ARRAY_BUFFER, t, g.gl.DYNAMIC_DRAW);
 }
 
 function upload(g: GL, tex: WebGLTexture, src: HTMLCanvasElement) {
@@ -214,37 +265,17 @@ function draw(g: GL) {
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, g.texB);
   const reach = Math.max(Math.hypot(S.x, S.y), Math.hypot(g.w - S.x, S.y), Math.hypot(S.x, g.h - S.y), Math.hypot(g.w - S.x, g.h - S.y));
-  const D = g.h * 1.2; // 視点から面までの距離
-  // 視点の道すじ。向かう先は、押した場所から画面のまん中へ、弧を描いて移る。
-  // 視点そのものは、横へふくらんで回り込み(ねじを巻くような道)、途中で傾く。進みが 0 と 1 では、どれも 0。
-  const c = Math.min(1, Math.max(0, S.cam));
-  const arc = Math.sin(Math.PI * c);
-  const tx = g.w / 2 - S.x, ty = g.h * 0.45 - S.y;
-  const tl = Math.hypot(tx, ty) || 1;
-  const side = S.x > g.w / 2 ? 1 : -1; // 押した側と反対へふくらむ
-  const vx = S.x + tx * c + (-ty / tl) * side * g.h * 0.16 * arc;
-  const vy = S.y + ty * c + (tx / tl) * side * g.h * 0.16 * arc;
-  const ph = Math.atan2(ty, tx) + side * (1.2 + 3.4 * c);
-  const ox = Math.cos(ph) * D * 0.2 * arc, oy = Math.sin(ph) * D * 0.2 * arc;
-  const roll = side * 0.5 * arc;
   const set = (p: WebGLProgram, u: Record<string, WebGLUniformLocation | null>) => {
     gl.useProgram(p);
     gl.uniform2f(u.uView, g.w, g.h);
     gl.uniform2f(u.uO, S.x, S.y);
-    gl.uniform2f(u.uV, vx, vy);
-    gl.uniform2f(u.uOff, ox, oy);
-    gl.uniform1f(u.uRoll, roll);
     gl.uniform1f(u.uT1, S.t1);
     gl.uniform1f(u.uT2, S.t2);
-    gl.uniform1f(u.uCam, S.cam);
-    gl.uniform1f(u.uBin, S.bin);
     gl.uniform1f(u.uTime, S.tm >= 0 ? S.tm : (performance.now() - S.t0) / 1000);
     gl.uniform1f(u.uReach, reach);
     gl.uniform1f(u.uCell, CELL);
     gl.uniform1f(u.uLod0, Math.max(0, Math.log2(CELL * SNAP)));
-    gl.uniform1f(u.uD, D);
-    gl.uniform1f(u.uZb, D * 1.5); // 次のページは、この距離だけ奥にある
-    gl.uniform1f(u.uDpr, g.dpr);
+    gl.uniform1f(u.uD, g.h * 1.2);
     gl.uniform3fv(u.uBgA, bgA);
     gl.uniform3fv(u.uBgB, bgB);
     gl.uniform1i(u.uA, 0);
@@ -253,10 +284,6 @@ function draw(g: GL) {
   set(g.back, g.bu);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   set(g.prog, g.u);
-  // 奥(次のページ)から先に描き、手前(いまのページ)を上に重ねる。
-  gl.uniform1f(g.u.uLayer, 1);
-  if (S.bin > 0.004) gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
-  gl.uniform1f(g.u.uLayer, 0);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
 }
 
@@ -451,18 +478,9 @@ function run(dur: number, step: (x: number) => void): Promise<void> {
   });
 }
 
-const phase1 = (p: number) => ({ t1: ease(p), cam: CAM0 * p * p });
-const phase2 = (p: number, cam0: number) => ({
-  bin: Math.min(1, p / 0.22),
-  cam: cam0 + (1 - cam0) * ease(Math.min(1, p / 0.86)),
-  t2: ease(Math.max(0, (p - 0.42) / 0.58)),
-});
-
-/** 次のページを待つあいだも、視点はゆっくり進み続ける(止まらない)。 */
+/** 次のページを待つあいだも、点はその場で揺れている。 */
 function idle() {
-  const a = performance.now();
   const f = () => {
-    S.cam = CAM0 + 0.12 * (1 - Math.exp(-(performance.now() - a) / 900));
     if (G) draw(G);
     raf = requestAnimationFrame(f);
   };
@@ -470,28 +488,32 @@ function idle() {
   raf = requestAnimationFrame(f);
 }
 
-/** いまのページが、(x, y) から点群にほどけ、視点が奥へ進みはじめる。 */
+let shotA: Shot | null = null;
+
+/** いまのページが、(x, y) から点群にほどける。 */
 export async function loosen(x: number, y: number): Promise<boolean> {
   G ??= build();
   if (!G) return false;
   const g = G;
   layout(g);
   const a = await snap();
+  shotA = a;
   upload(g, g.texA, a.c);
   upload(g, g.texB, a.c);
+  setTargets(g, a.c, null);
   bgA = bgB = a.bg;
-  Object.assign(S, { t1: 0, cam: 0, t2: 0, bin: 0, x, y, t0: performance.now(), tm: -1 });
+  Object.assign(S, { t1: 0, t2: 0, x, y, t0: performance.now(), tm: -1 });
   mount(g);
   safety = window.setTimeout(clear, 6000); // 何かあっても、覆ったままにはしない
-  await run(T_LOOSE, (p) => Object.assign(S, phase1(p)));
+  await run(T_LOOSE, (p) => (S.t1 = ease(p)));
   idle();
   return true;
 }
 
-/** 奥に次のページが点群で現れ、視点がそこまで進み、点が面に集まって、次のページになる。 */
+/** 同じ粒が、次のページの絵を作る場所へ移り、元の大きさに戻って、次のページになる。 */
 export async function tighten() {
   const g = G;
-  if (!g || !wrap) return;
+  if (!g || !wrap || !shotA) return;
   mount(g); // ページが替わると <html> の class が置き換わる。付け直す
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   // 画面内の画像が出そろうのを、少しだけ待つ。
@@ -503,9 +525,9 @@ export async function tighten() {
   await Promise.race([Promise.all(imgs.map((i) => i.decode().catch(() => undefined))), new Promise((r) => setTimeout(r, 350))]);
   const b = await snap();
   upload(g, g.texB, b.c);
+  setTargets(g, shotA.c, b.c);
   bgB = b.bg;
-  const cam0 = S.cam;
-  await run(T_TIGHT, (p) => Object.assign(S, phase2(p, cam0)));
+  await run(T_BUILD, (p) => (S.t2 = p));
   // 粒の絵から、本物のページへ。
   await wrap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 110, fill: 'forwards' }).finished.catch(() => undefined);
   clear();
@@ -513,23 +535,25 @@ export async function tighten() {
 
 // ---------- 確認用
 if (typeof window !== 'undefined') {
-  let kept: { c: HTMLCanvasElement; bg: number[] } | null = null;
+  let kept: Shot | null = null;
   (window as unknown as Record<string, unknown>).__gs = {
     /** いまのページを「前のページ」として覚える。 */
     async keep() {
       kept = await snap();
     },
-    /** 途中の1コマを止めて出す。 */
-    async still(t1: number, cam: number, t2: number, bin: number, x = window.innerWidth * 0.7, y = 40) {
+    /** 途中の1コマを止めて出す(t1: ほどけ、t2: 組み直し)。 */
+    async still(t1: number, t2: number, x = window.innerWidth * 0.7, y = 40) {
       G ??= build();
       if (!G) return false;
       layout(G);
       const b = await snap();
-      upload(G, G.texA, (kept ?? b).c);
+      const a = kept ?? b;
+      upload(G, G.texA, a.c);
       upload(G, G.texB, b.c);
-      bgA = (kept ?? b).bg;
+      setTargets(G, a.c, b.c);
+      bgA = a.bg;
       bgB = b.bg;
-      Object.assign(S, { t1, cam, t2, bin, x, y, t0: performance.now() - 900, tm: -1 });
+      Object.assign(S, { t1, t2, x, y, t0: performance.now() - 900, tm: -1 });
       mount(G);
       cancelAnimationFrame(raf);
       draw(G);
@@ -538,7 +562,7 @@ if (typeof window !== 'undefined') {
     /** 動きの ms ミリ秒目の1コマ(待ち時間なしで通したとき)。先に still() を1回呼んでおく。 */
     at(ms: number) {
       if (!G) return false;
-      Object.assign(S, { t1: 1, t2: 0, bin: 0, tm: ms / 1000 }, ms < T_LOOSE ? phase1(ms / T_LOOSE) : phase2(Math.min(1, (ms - T_LOOSE) / T_TIGHT), CAM0));
+      Object.assign(S, { tm: ms / 1000, t1: ms < T_LOOSE ? ease(ms / T_LOOSE) : 1, t2: ms < T_LOOSE ? 0 : Math.min(1, (ms - T_LOOSE) / T_BUILD) });
       draw(G);
       return true;
     },
