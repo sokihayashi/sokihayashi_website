@@ -1621,7 +1621,8 @@ export function mountMorph(root: HTMLElement) {
         setTimeout(() => root.classList.remove(fx), fx === 'is-punch' ? 160 : 90);
         big.style.opacity = Math.random() < 0.35 ? '1' : '0';
         big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
-        for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
+        // 入れ替えた版では、上のメニューの文字とロゴを動かさない(本人: 位置が変わるのは微妙)。/lab/morph/ には残してある。
+        if (!sharp) for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
       }
     } else {
       big.style.opacity = '';
