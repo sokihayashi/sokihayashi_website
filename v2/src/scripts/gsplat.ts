@@ -9,10 +9,10 @@
 // 呼ぶのは band.ts。いまは /lab/morph-sharp/ から出るときだけ使う。
 // 確認用: window.__gs = { keep(), still(t1, t2, x, y), at(ms), clear() }
 
-const CELL = 3; // 粒の間隔(px)
+const CELL = 2; // 粒の間隔(px)。3 では粗く見えた(本人:数が足りない)
 const T_LOOSE = 360; // 点群にほどけるまで(ms)
 const T_BUILD = 900; // 組み直して、次のページになるまで(ms)
-const SNAP = 0.5; // ページを写し取るときの縮尺
+const SNAP = 1; // ページを写し取るときの縮尺
 
 const VS = `#version 300 es
 precision highp float;
@@ -42,7 +42,7 @@ void main(){
   if (a < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); return; }
   // 点でいるあいだは、その場で小さく揺れている(止まらない)。
   float loose = L * (1.0 - u);
-  vec2 jit = vec2(sin(uTime * 2.3 + sd * 40.0), cos(uTime * 1.9 + sd * 31.0)) * uCell * 1.4 * loose;
+  vec2 jit = vec2(sin(uTime * 1.3 + sd * 40.0), cos(uTime * 1.1 + sd * 31.0)) * uCell * 1.6 * loose;
   // 行き先へ。まっすぐではなく、粒ごとに少しふくらんだ弧で。
   vec2 dv = aT - p0;
   vec2 pos = mix(p0, aT, u) + vec2(-dv.y, dv.x) * sin(3.14159 * u) * (h(sd + 4.0) - 0.5) * 0.5 + jit;
@@ -108,6 +108,7 @@ interface GL {
   h: number;
   cols: number;
   rows: number;
+  mort: Uint32Array; // 粒の番号を、場所の近い順に並べたもの
 }
 type Shot = { c: HTMLCanvasElement; bg: number[] };
 
@@ -172,7 +173,7 @@ function build(): GL | null {
   };
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  return { cv, gl, prog, back, u: U(prog, names), bu: U(back, names), texA: tex(), texB: tex(), vao, inst, targ, n: 0, w: 0, h: 0, cols: 0, rows: 0 };
+  return { cv, gl, prog, back, u: U(prog, names), bu: U(back, names), texA: tex(), texB: tex(), vao, inst, targ, n: 0, w: 0, h: 0, cols: 0, rows: 0, mort: new Uint32Array(0) };
 }
 
 /** 画面の大きさに合わせて、粒を並べ直す。 */
@@ -195,6 +196,19 @@ function layout(g: GL) {
   }
   g.gl.bindBuffer(g.gl.ARRAY_BUFFER, g.inst);
   g.gl.bufferData(g.gl.ARRAY_BUFFER, a, g.gl.STATIC_DRAW);
+  // 場所の近い順(縦と横の番号の桁を、交互に組んだ数の順)。画面の大きさが変わったときだけ作る。
+  const spread = (v: number) => {
+    v &= 0x3ff;
+    v = (v | (v << 8)) & 0x00ff00ff;
+    v = (v | (v << 4)) & 0x0f0f0f0f;
+    v = (v | (v << 2)) & 0x33333333;
+    return (v | (v << 1)) & 0x55555555;
+  };
+  const key = new Uint32Array(g.n);
+  for (let i = 0; i < g.n; i++) key[i] = spread(i % g.cols) | (spread(Math.floor(i / g.cols)) << 1);
+  g.mort = new Uint32Array(g.n);
+  for (let i = 0; i < g.n; i++) g.mort[i] = i;
+  g.mort.sort((p, q) => key[p] - key[q]);
 }
 
 /**
@@ -209,23 +223,22 @@ function order(g: GL, c: HTMLCanvasElement): Uint32Array {
   const x = t.getContext('2d', { willReadFrequently: true })!;
   x.drawImage(c, 0, 0, g.cols, g.rows);
   const d = x.getImageData(0, 0, g.cols, g.rows).data;
-  const key = new Float64Array(g.n);
-  const spread = (v: number) => {
-    v &= 0x3ff;
-    v = (v | (v << 8)) & 0x00ff00ff;
-    v = (v | (v << 4)) & 0x0f0f0f0f;
-    v = (v | (v << 2)) & 0x33333333;
-    return (v | (v << 1)) & 0x55555555;
-  };
+  // 場所の近い順(g.mort)に見ていき、明るさと色みの箱に入れるだけ。比べて並べ替えない(速い)。
+  const bin = new Uint8Array(g.n);
+  const count = new Uint32Array(65);
   for (let i = 0; i < g.n; i++) {
     const r = d[i * 4], gg = d[i * 4 + 1], b = d[i * 4 + 2];
     const lum = (r * 77 + gg * 150 + b * 29) >> 12; // 0..15
     const sat = Math.min(3, (Math.max(r, gg, b) - Math.min(r, gg, b)) >> 5); // 0..3
-    key[i] = (lum * 4 + sat) * 2097152 + (spread(i % g.cols) | (spread(Math.floor(i / g.cols)) << 1));
+    count[(bin[i] = lum * 4 + sat) + 1]++;
   }
-  const idx = new Uint32Array(g.n);
-  for (let i = 0; i < g.n; i++) idx[i] = i;
-  return idx.sort((p, q) => key[p] - key[q]);
+  for (let k = 1; k < 65; k++) count[k] += count[k - 1];
+  const out = new Uint32Array(g.n);
+  for (let m = 0; m < g.n; m++) {
+    const i = g.mort[m];
+    out[count[bin[i]]++] = i;
+  }
+  return out;
 }
 
 /** 粒ごとの行き先を決めて渡す。b が無ければ、行き先は今の場所(動かない)。 */
@@ -399,36 +412,27 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
     const up = cs.textTransform === 'uppercase';
     const raw = n.textContent || '';
     g.font = `${cs.fontStyle} ${cs.fontWeight} ${fs}px ${cs.fontFamily}`;
-    (g as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = cs.letterSpacing === 'normal' ? '0px' : cs.letterSpacing;
+    (g as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px';
     g.textBaseline = 'alphabetic';
     // 行の箱の中での、文字の基準線の位置(書体の上端・下端から求める)。
     const mt = g.measureText('Mg') as TextMetrics & { fontBoundingBoxAscent?: number; fontBoundingBoxDescent?: number };
     const asc = mt.fontBoundingBoxAscent ?? fs * 0.8, dsc = mt.fontBoundingBoxDescent ?? fs * 0.2;
     const base = (top: number, hh: number) => top + (hh - (asc + dsc)) / 2 + asc;
-    if (rects.length === 1) {
-      const r = rects[0];
-      g.fillText(up ? txt.toUpperCase() : txt, r.left, base(r.top, r.height));
-    } else if (raw.length <= 700) {
-      // 複数行: 1文字ずつ位置を見て、行に分ける。
-      let line = '', lx = 0, ly = -1e9, lh = 0;
-      const flush = () => {
-        if (line.trim()) g.fillText(up ? line.toUpperCase() : line, lx, base(ly, lh));
-        line = '';
-      };
-      for (let i = 0; i < raw.length; i++) {
-        range.setStart(n, i);
-        range.setEnd(n, i + 1);
-        const r = range.getBoundingClientRect();
-        if (!r.width && !r.height) continue;
-        if (Math.abs(r.top - ly) > r.height * 0.5) {
-          flush();
-          lx = r.left;
-          ly = r.top;
-          lh = r.height;
+    if (raw.length <= 1400) {
+      // 1文字ずつ、本物の文字がある場所を測って置く。
+      // (行ごとにまとめて置くと、字間の詰めや書体の決まりの差で、本物と少しずつずれていた。)
+      for (let i = 0; i < raw.length; ) {
+        const cp = raw.codePointAt(i)!;
+        const len = cp > 0xffff ? 2 : 1;
+        const ch = raw.slice(i, i + len);
+        if (ch.trim()) {
+          range.setStart(n, i);
+          range.setEnd(n, i + len);
+          const r = range.getBoundingClientRect();
+          if (r.width && r.height && inView(r)) g.fillText(up ? ch.toUpperCase() : ch, r.left, base(r.top, r.height));
         }
-        line += raw[i];
+        i += len;
       }
-      flush();
     } else {
       g.globalAlpha = 0.35;
       for (const r of rects) g.fillRect(r.left, r.top + r.height * 0.35, r.width, r.height * 0.3);
@@ -466,9 +470,14 @@ function clear() {
 
 function run(dur: number, step: (x: number) => void): Promise<void> {
   return new Promise((res) => {
-    const a = performance.now();
+    // 1コマで進む時間に上限を置く。途中で画面が固まっても、そのぶんを飛ばさずに続きから動く(ガクッと飛ばない)。
+    let el = 0;
+    let last = performance.now();
     const f = () => {
-      const x = Math.min(1, (performance.now() - a) / dur);
+      const n = performance.now();
+      el += Math.min(34, n - last);
+      last = n;
+      const x = Math.min(1, el / dur);
       step(x);
       if (G) draw(G);
       if (x < 1) raf = requestAnimationFrame(f);

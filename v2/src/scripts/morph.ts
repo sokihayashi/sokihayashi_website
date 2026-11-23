@@ -25,7 +25,7 @@ const NV = 64; // 帯の幅方向の枚数
 const NU = M * 2; // 帯の長さ方向の枚数
 const TILES = NU * NV;
 const HOLD = 0.5; // 1つの状態のうち、変わらずにいる割合
-const RAMP = 26; // つなぎ方 4(描いた先から)で、前の表現から次の表現へ変わっていく継ぎ目の長さ(跡の数)
+const RAMP = 64; // つなぎ方 4(描いた先から)で、前の表現から次の表現へ変わっていく継ぎ目の長さ(跡の数)
 const SPREAD = 1.5; // 変わり目が、帯の後ろへ伝わるのにかかる長さ
 const STATE_LEN = 0.62; // 1つの状態ぶんの、描く長さ(帯の長さに対する割合)
 const ACOLS = 6;
@@ -762,7 +762,8 @@ void main(){
     // 古い帯は、新しく描いた分だけ、いちばん古い所から巻き取られる。
     // 継ぎ目: 切り替わった所で ぶつ切りにしない。切り替わってから RAMP の跡ぶんは、前の表現から次の表現へ、帯に沿って少しずつ変わる。
     float idx = uNew - gAge; // 切り替わってから何番目の跡か(負なら、切り替わる前の跡)
-    w = gR1.z >= uSw ? smoothstep(0.0, RAMP, idx) : 0.0;
+    // 変わり具合は、面ごとではなく、面の四隅ごとに決める(となりの面と同じ値になるので、段々にならず、絵もずれない)。
+    w = smoothstep(0.0, RAMP, idx + (gFr - 0.5) + aQ.x * 0.25);
     if (idx < RAMP) {
       // 前の帯と継ぎ目は、新しく描いた分だけ、いちばん古い所から巻き取られる。
       float rank = clamp((RAMP - idx) / max(1.0, uOld + RAMP), 0.0, 1.0); // 0 = 次の表現になりきる所、1 = いちばん古い
@@ -1877,8 +1878,10 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.to, opOn ? 27 : ovOn ? 28 : sTo);
     gl!.uniform1f(u.sty, ovOn ? 1 : styAt(Math.max(0, Math.floor(phase))));
     gl!.uniform1f(u.sw, swAt);
-    gl!.uniform1f(u.nw, K - swK);
-    gl!.uniform1f(u.old, Math.max(1, Math.min(K, M) - (K - swK)));
+    // 切り替わりの途中でなければ、「切り替わったあとの跡」は無い(すべて前の表現)。
+    const nw4 = swN >= 0 ? K - swK : -1e6;
+    gl!.uniform1f(u.nw, nw4);
+    gl!.uniform1f(u.old, Math.max(1, Math.min(K, M) - Math.max(0, nw4)));
     gl!.uniform1f(u.ret, swN >= 0 ? Math.max(0, Math.min(1, (K - swK - RAMP) / RET)) : 0);
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
