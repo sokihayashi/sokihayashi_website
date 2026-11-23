@@ -46,6 +46,7 @@ uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 
 uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
+uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -181,6 +182,8 @@ O sSolid(){
   float spc = pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 36.0);
   float rim = pow(1.0 - abs(nn.z), 3.0);
   o.lit = 0.09 + (1.45 * dif * att + 0.1 * rim) * (1.0 - 0.82 * sh);
+  // 入れ替えた並びでは、影の側を真っ黒に落とさない(上を向いた面ほど、空の明るさを受ける)。
+  if (uSharp > 0.5) o.lit = 0.17 + 0.09 * (nn.z * 0.5 + 0.5) + (1.38 * dif * att + 0.1 * rim) * (1.0 - 0.78 * sh);
   o.gloss = 0.4 * spc * att * (1.0 - sh);
   o.line = 1.0;
   return o;
@@ -750,7 +753,11 @@ void main(){
   if (sty == 1) w = smoothstep(gHd * 0.6, gHd * 0.6 + 0.4, x);
   else if (sty == 2) w = smoothstep(0.47, 0.53, x);
   else if (sty == 3) { float dd = distance(gP, uPen.xy) / max(uView.x, uView.y); w = smoothstep(dd * 0.75, dd * 0.75 + 0.3, x); }
-  else { w = clamp(x * (1.0 + SP) - SP * (0.72 * gHd + 0.28 * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w); }
+  else {
+    // 入れ替えた並びでは、面ごとの ばらつきを ほとんど無くす(変わり目が、帯の上を1本の線として走る)。
+    float jit = mix(0.28, 0.03, uSharp);
+    w = clamp(x * (1.0 + SP) - SP * ((1.0 - jit) * gHd + jit * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w);
+  }
   float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0));
 
   // 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
@@ -782,6 +789,8 @@ void main(){
   // 変わる途中は、まっすぐ飛ばずに、少し ふくらんで動く。
   float arc = sin(3.14159 * w);
   vec3 bulge = vec3((vec2(h2, h3) - 0.5) * uW * 1.1, (h1 - 0.5) * uW * 1.4) * arc * bulgeK;
+  // 入れ替えた並びでは、面を ばらばらに散らさない。帯が ひと続きのまま、少し浮いて うねる。
+  if (uSharp > 0.5) bulge = vec3(gNq * sin(gUc * 0.19 + uTime * 1.6) * uW * 0.16, uW * 0.42) * arc * bulgeK;
   vec3 corner = mix(A.corner, B.corner, w);
   vec3 cc = mix(A.centre, B.centre, w);
   // 出てくるところ(ペン先)と、巻き取られるところ(いちばん古い所)。帯に乗る表現だけ。
@@ -826,6 +835,7 @@ const FS = `#version 300 es
 precision highp float;
 uniform sampler2D uAtlas;
 uniform float uW;
+uniform float uSharp;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
 in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr;
 uniform sampler2D uDAtlas;
@@ -899,7 +909,8 @@ void main(){
     #undef HGT
   }
   vec3 tc = layC.x >= 0.0 ? layC * vTint : texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
-  if (vMix.w < 0.0) tc = PAPER;
+  // 紙の裏。入れ替えた並びでは、表の写真が透ける(薄い紙の裏から見た刷り。真っ白な穴にしない。写真の色を残す)。
+  if (vMix.w < 0.0) tc = mix(PAPER, mix(PAPER * 0.97, tc, 0.4), uSharp);
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
   // 帯のふちと、作品の境目の線。
   float line = max(step(uW * 0.5 - 1.3, abs(vRib.y)), step(vRib.x, 1.3));
@@ -1029,7 +1040,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1485,7 +1496,8 @@ export function mountMorph(root: HTMLElement) {
     trail = Math.max(sstep(0.15, 0.75, wOf(2)), sstep(0.3, 0.9, wOf(8)) * 0.8);
     solid = sstep(0.25, 1, wOf(1));
     frameW = wOf(28);
-    analog = ANALOG[sFrom] * (1 - x) + ANALOG[sTo] * x;
+    // 入れ替えた並びでは、画面全体の仕上げを1つに揃える(色の割れと走査線は掛けない。細かい点が、色の雑音になるため)。
+    analog = sharp ? 0.85 : ANALOG[sFrom] * (1 - x) + ANALOG[sTo] * x;
     const st = x > 0.5 ? sTo : sFrom;
     const si = x > 0.5 ? A + 1 : A;
     const sec = secOf[si] || 'A';
@@ -1740,6 +1752,7 @@ export function mountMorph(root: HTMLElement) {
   ];
 
   // ---------- 毎コマ
+  let frozen = false; // 確認用: 曲を止める
   let raf = 0;
   let last = performance.now();
   const t0 = last;
@@ -1749,7 +1762,7 @@ export function mountMorph(root: HTMLElement) {
     last = t;
     now = (t - t0) / 1000;
     // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
-    if (!panelOpen && !openOn) {
+    if (!panelOpen && !openOn && !frozen) {
       const n = Math.max(0, Math.floor(phase));
       seqAt(n + 1);
       phase += (dt / (BEAT * lenOf[n])) * (drawing ? 0.6 : 1);
@@ -1809,6 +1822,7 @@ export function mountMorph(root: HTMLElement) {
       label.style.pointerEvents = showLb ? 'auto' : 'none';
     }
     gl!.uniform1f(u.openW, opOn ? openWk : -1);
+    gl!.uniform1f(u.sharp, sharp ? 1 : 0);
     const ovOn = ovX > 0.001 || opOn;
     if (opOn) {
       ovFrom = openFrom;
@@ -1900,19 +1914,23 @@ export function mountMorph(root: HTMLElement) {
 
   (window as unknown as Record<string, unknown>).__morph = {
     // 確認用: 表現の並びを指定する
-    seq(list: number[], sec = 'A', len = 1) {
+    seq(list: number[], sec = 'A', len = 1, sty = -1) {
       seq.length = secOf.length = lenOf.length = styOf.length = 0;
       seq.push(...list);
       for (let i = 0; i < list.length; i++) {
         secOf.push(sec);
         lenOf.push(len);
-        styOf.push(i % 4);
+        styOf.push(sty >= 0 ? sty : i % 4);
       }
       onPhase();
     },
     phase(v: number) {
       phase = v;
       onPhase();
+    },
+    // 確認用: 曲を止める(変わり目の途中を、止めて見るため)
+    freeze(on: boolean) {
+      frozen = on;
     },
     auto(on: boolean) {
       autoOn = on;
