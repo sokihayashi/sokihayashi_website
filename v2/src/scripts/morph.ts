@@ -45,6 +45,7 @@ uniform float uFrom, uTo; // いま変わっている途中の、2つの表現�
 uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 古い所から順に / 2 一瞬で切り替わる / 3 指から外へ
 uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
+uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -587,8 +588,8 @@ O sPhoto3D(){
 // 27 一枚を大きく: 帯がほどけて、いま描いている作品が画面いっぱいの立体写真になる。指で傾く。
 O sBig(){
   O o = base();
-  // いちばん新しく描いた所の作品
-  float wk = texelFetch(uPath, ivec2(int(mod(uK - 1.0, Mf)), 2), 0).w;
+  // 押してひらいた作品。なければ、いちばん新しく描いた所の作品
+  float wk = uOpenW > -0.5 ? uOpenW : texelFetch(uPath, ivec2(int(mod(uK - 1.0, Mf)), 2), 0).w;
   float asp = max(uAsp[int(wk)], 0.2);
   vec2 box = uView * vec2(0.86, 0.72);
   vec2 sz = box.x / asp <= box.y ? vec2(box.x, box.x / asp) : vec2(box.y * asp, box.y);
@@ -1028,7 +1029,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1430,7 +1431,10 @@ export function mountMorph(root: HTMLElement) {
         C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
       };
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
-  const FORM = ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
+  // 入れ替えた並びでは、プロフィールを曲の中に置かない(見ることと読むことを混ぜない。プロフィールは About のページへ)。
+  const FORM = sharp
+    ? ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus']
+    : ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
   const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
   const LOOP = 1; // 2周目以降は Aメロから
   let formI = 0;
@@ -1510,6 +1514,7 @@ export function mountMorph(root: HTMLElement) {
   const lbT = mk('span', 'display:block;font-size:.9rem;line-height:1.4;');
   const lbM = mk('span', 'display:block;margin-top:.2rem;font-size:.66rem;letter-spacing:.06em;color:var(--muted);');
   lbM.textContent = '開く';
+  label.style.transition = 'opacity .2s';
   label.append(lbT, lbM);
   const snd = mk('button', `${FRAME}right:var(--pad);${BOTTOM}padding:.5rem .7rem;font-size:.66rem;letter-spacing:.08em;cursor:pointer;border-radius:0;`) as HTMLButtonElement;
   snd.type = 'button';
@@ -1590,6 +1595,51 @@ export function mountMorph(root: HTMLElement) {
     if (on) { auto = false; drawing = false; }
   };
   pf.addEventListener('click', () => setPanel(!panelOpen));
+  if (sharp) pf.style.display = 'none'; // プロフィールへは、上の About から行く
+
+  // ---------- 押すとひらく(入れ替えた並びだけ): 帯の上の作品を押すと、その作品がひらく。もう一度押すと、作品のページへ。
+  let openOn = false;
+  let openWk = 0;
+  let openX = 0;
+  let openFrom = 0;
+  let openAt = 0;
+  const openBox = () => {
+    const a = Math.max(asp[openWk] || 1, 0.2);
+    const bw = vw * 0.86;
+    const bh = vh * 0.72;
+    const w = bw / a <= bh ? bw : bh * a;
+    const h = bw / a <= bh ? bw / a : bh;
+    return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+  };
+  const setOpen = (w: number) => {
+    const on = w >= 0;
+    if (on) {
+      if (!openOn) openFrom = Math.max(0, (phase - Math.floor(phase) - HOLD) / (1 - HOLD)) > 0.5 ? sTo : sFrom;
+      openWk = w;
+      openAt = now;
+      lbT.textContent = works[w]?.textContent?.trim() || '';
+      label.href = works[w]?.href || `${base}/works/`;
+      auto = false;
+      drawing = false;
+      stroke = false;
+    }
+    openOn = on;
+  };
+  // 押した所に、いちばん近い帯の作品。帯から離れていれば -1。
+  const workAt = (x: number, y: number) => {
+    let best = -1;
+    let bd = 1e9;
+    for (let j = 0; j < M; j++) {
+      if (path[(M + j) * 4 + 3] < 0.5) continue;
+      const d = Math.hypot(path[j * 4] - x, path[j * 4 + 1] - y);
+      if (d < bd) {
+        bd = d;
+        best = j;
+      }
+    }
+    return best >= 0 && bd < W * 1.1 ? Math.round(path[(2 * M + best) * 4 + 3]) : -1;
+  };
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(-1); });
   addEventListener('keydown', (e) => { if (e.key === 'Escape') setPanel(false); });
   root.append(ind, label, snd, pf, panel);
   // 音のボタンの幅に合わせて、プロフィールのボタンを左に並べる。
@@ -1613,16 +1663,37 @@ export function mountMorph(root: HTMLElement) {
   let lightX = 0; // 光と視点(指を、ゆっくり追う)
   let lightY = 0;
   const isUI = (t: EventTarget | null) => t instanceof Element && !!t.closest('a,button,[data-panel]');
+  let downX = 0;
+  let downY = 0;
+  let downT = 0;
+  let strayed = 0; // 押してから、指がどれだけ動いたか
+  let waitMove = false;
   function onDown(e: PointerEvent) {
     if (isUI(e.target) || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (panelOpen) { setPanel(false); return; }
     const r = root.getBoundingClientRect();
     ptX = penX = e.clientX - r.left;
     ptY = penY = e.clientY - r.top;
+    if (openOn) {
+      // ひらいている作品を押すと、作品のページへ。外を押すと、閉じる。
+      const b = openBox();
+      if (ptX >= b.x && ptX <= b.x + b.w && ptY >= b.y && ptY <= b.y + b.h) label.click();
+      else setOpen(-1);
+      e.preventDefault();
+      return;
+    }
+    downX = ptX;
+    downY = ptY;
+    downT = now;
+    strayed = 0;
     drawing = true;
     auto = false;
     over = 1;
-    begin(penX, penY);
+    // 入れ替えた並びでは、指が動いてから描きはじめる(押しただけでは、跡を使わない)。
+    if (sharp) {
+      stroke = false;
+      waitMove = true;
+    } else begin(penX, penY);
     sfx.pluck(K / SEG);
     try {
       root.setPointerCapture(e.pointerId);
@@ -1634,12 +1705,22 @@ export function mountMorph(root: HTMLElement) {
     ptX = e.clientX - r.left;
     ptY = e.clientY - r.top;
     if (e.pointerType === 'mouse') over = 1;
+    if (drawing) strayed = Math.max(strayed, Math.hypot(ptX - downX, ptY - downY));
+    if (drawing && waitMove && strayed >= 8) {
+      waitMove = false;
+      begin(downX, downY);
+    }
   }
   function onUp() {
     if (!drawing) return;
     drawing = false;
     stroke = false;
     idle = 0.9;
+    // 描かずに押しただけなら、そこの作品をひらく。
+    if (sharp && strayed < 8 && now - downT < 0.45) {
+      const w = workAt(downX, downY);
+      if (w >= 0) setOpen(w);
+    }
   }
   function onLeave(e: PointerEvent) {
     if (e.pointerType === 'mouse' && !drawing) over = 0;
@@ -1668,7 +1749,7 @@ export function mountMorph(root: HTMLElement) {
     last = t;
     now = (t - t0) / 1000;
     // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
-    if (!panelOpen) {
+    if (!panelOpen && !openOn) {
       const n = Math.max(0, Math.floor(phase));
       seqAt(n + 1);
       phase += (dt / (BEAT * lenOf[n])) * (drawing ? 0.6 : 1);
@@ -1679,7 +1760,7 @@ export function mountMorph(root: HTMLElement) {
       penX += (ptX - penX) * k;
       penY += (ptY - penY) * k;
       lineTo(penX, penY);
-    } else if (autoOn && !panelOpen) {
+    } else if (autoOn && !panelOpen && !openOn) {
       idle -= dt;
       if (idle <= 0) {
         if (!auto) {
@@ -1716,13 +1797,29 @@ export function mountMorph(root: HTMLElement) {
     const pv = Math.max(0, (ovX - 0.55) / 0.45, (frameW - 0.6) / 0.4);
     panel.style.opacity = String(pv);
     panel.classList.toggle('is-shown', pv > 0.5);
-    const ovOn = ovX > 0.001;
-    gl!.uniform1f(u.phase, ovOn ? HOLD + ovX * (1 - HOLD) : phase);
+    // ひらいた作品: ひらくとき・閉じるときの動き。しばらく触られなければ、閉じる。
+    if (openOn && now - openAt > 9) setOpen(-1);
+    openX += ((openOn ? 1 : 0) - openX) * (1 - Math.exp(-dt / 0.2));
+    if (Math.abs(openX - (openOn ? 1 : 0)) < 0.002) openX = openOn ? 1 : 0;
+    const opOn = openX > 0.001;
+    const showLb = openOn && openX > 0.8;
+    if (sharp) {
+      label.style.display = opOn ? 'block' : 'none';
+      label.style.opacity = showLb ? '1' : '0';
+      label.style.pointerEvents = showLb ? 'auto' : 'none';
+    }
+    gl!.uniform1f(u.openW, opOn ? openWk : -1);
+    const ovOn = ovX > 0.001 || opOn;
+    if (opOn) {
+      ovFrom = openFrom;
+      ovX = Math.max(ovX, 0);
+    }
+    gl!.uniform1f(u.phase, opOn ? HOLD + openX * (1 - HOLD) : ovX > 0.001 ? HOLD + ovX * (1 - HOLD) : phase);
     gl!.uniform1f(u.k, Math.max(1, K));
     gl!.uniform1f(u.focus, focus);
     gl!.uniform1f(u.focusAsp, asp[focus]);
-    gl!.uniform1f(u.from, ovOn ? ovFrom : sFrom);
-    gl!.uniform1f(u.to, ovOn ? 28 : sTo);
+    gl!.uniform1f(u.from, opOn ? openFrom : ovOn ? ovFrom : sFrom);
+    gl!.uniform1f(u.to, opOn ? 27 : ovOn ? 28 : sTo);
     gl!.uniform1f(u.sty, ovOn ? 1 : styAt(Math.max(0, Math.floor(phase))));
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
@@ -1834,7 +1931,7 @@ export function mountMorph(root: HTMLElement) {
       focus = n;
     },
     get state() {
-      return { phase, K, focus, trail, solid, sFrom, sTo, analog, seq: seq.slice(0, 12) };
+      return { phase, K, focus, trail, solid, sFrom, sTo, analog, seq: seq.slice(0, 12), openOn, openX, openWk, now };
     },
   };
 
