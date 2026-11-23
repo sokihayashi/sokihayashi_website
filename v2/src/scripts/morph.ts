@@ -25,6 +25,7 @@ const NV = 64; // 帯の幅方向の枚数
 const NU = M * 2; // 帯の長さ方向の枚数
 const TILES = NU * NV;
 const HOLD = 0.5; // 1つの状態のうち、変わらずにいる割合
+const RAMP = 26; // つなぎ方 4(描いた先から)で、前の表現から次の表現へ変わっていく継ぎ目の長さ(跡の数)
 const SPREAD = 1.5; // 変わり目が、帯の後ろへ伝わるのにかかる長さ
 const STATE_LEN = 0.62; // 1つの状態ぶんの、描く長さ(帯の長さに対する割合)
 const ACOLS = 6;
@@ -65,6 +66,7 @@ const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
 const float HOLD = ${HOLD};
+const float RAMP = ${RAMP.toFixed(1)}; // つなぎ方 4 の継ぎ目の長さ(跡の数)
 const float SP = ${SPREAD};
 const float SEGf = ${SEG}.0;
 const vec3 PAPER = vec3(0.957, 0.945, 0.918);
@@ -758,10 +760,12 @@ void main(){
   else if (sty == 4) {
     // 描いた先から: いまある帯は、前の表現のまま変えない。切り替わったあとに描いた分だけが、次の表現で出てくる。
     // 古い帯は、新しく描いた分だけ、いちばん古い所から巻き取られる。
-    bool nw = gR1.z >= uSw;
-    w = nw ? 1.0 : 0.0;
-    if (!nw) {
-      float rank = clamp((gAge - uNew) / max(1.0, uOld), 0.0, 1.0); // 0 = 切り替わりのすぐ手前、1 = いちばん古い
+    // 継ぎ目: 切り替わった所で ぶつ切りにしない。切り替わってから RAMP の跡ぶんは、前の表現から次の表現へ、帯に沿って少しずつ変わる。
+    float idx = uNew - gAge; // 切り替わってから何番目の跡か(負なら、切り替わる前の跡)
+    w = gR1.z >= uSw ? smoothstep(0.0, RAMP, idx) : 0.0;
+    if (idx < RAMP) {
+      // 前の帯と継ぎ目は、新しく描いた分だけ、いちばん古い所から巻き取られる。
+      float rank = clamp((RAMP - idx) / max(1.0, uOld + RAMP), 0.0, 1.0); // 0 = 次の表現になりきる所、1 = いちばん古い
       float e = 1.0 - uRet * 1.1;
       keep = 1.0 - smoothstep(e, e + 0.1, rank);
     }
@@ -1508,7 +1512,7 @@ export function mountMorph(root: HTMLElement) {
   const RET = 110; // 新しくこれだけ描くと、前の表現の帯は巻き取られきる(跡の数)
   /** 前の表現の帯が残っているうちは、次へ進まない(残したまま進むと、残りが一度に次の表現へ変わってしまう)。 */
   const hold4 = () => {
-    if (swN >= 0 && K - swK < RET) phase = Math.min(phase, swN + 0.999);
+    if (swN >= 0 && K - swK < RET + RAMP) phase = Math.min(phase, swN + 0.999);
   };
   function onPhase() {
     const A = Math.max(0, Math.floor(phase));
@@ -1516,7 +1520,8 @@ export function mountMorph(root: HTMLElement) {
     const x = Math.max(0, (f - HOLD) / (1 - HOLD));
     if (swN >= 0 && A !== swN) {
       // 切り替わり終わり: 前の表現の帯(もう巻き取られて見えない)を、しまう。
-      for (let j = 0; j < M; j++) if (path[(M + j) * 4 + 2] < swAt) path[(M + j) * 4 + 3] = 0;
+      // 継ぎ目(次の表現になりきる前の跡)も、いっしょにしまう。
+      for (let k = Math.max(0, K - M); k < Math.min(K, swK + RAMP); k++) path[(M + (k % M)) * 4 + 3] = 0;
       swN = -1;
       swAt = 1e9;
     }
@@ -1874,7 +1879,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.sw, swAt);
     gl!.uniform1f(u.nw, K - swK);
     gl!.uniform1f(u.old, Math.max(1, Math.min(K, M) - (K - swK)));
-    gl!.uniform1f(u.ret, swN >= 0 ? Math.min(1, (K - swK) / RET) : 0);
+    gl!.uniform1f(u.ret, swN >= 0 ? Math.max(0, Math.min(1, (K - swK - RAMP) / RET)) : 0);
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
@@ -1992,6 +1997,12 @@ export function mountMorph(root: HTMLElement) {
     // 確認用: 点の並びを、ひと筆として一気に描く。
     draw(pts: number[][]) {
       begin(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts) lineTo(x, y);
+      stroke = false;
+    },
+    // 確認用: 筆を離さずに、続きを描く。
+    more(pts: number[][]) {
+      stroke = true;
       for (const [x, y] of pts) lineTo(x, y);
       stroke = false;
     },
