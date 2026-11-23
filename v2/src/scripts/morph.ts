@@ -42,7 +42,8 @@ uniform highp sampler2D uShadow;
 uniform vec2 uView;
 uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK, uPass;
 uniform float uFrom, uTo; // いま変わっている途中の、2つの表現の番号
-uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 古い所から順に / 2 一瞬で切り替わる / 3 指から外へ
+uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 古い所から順に / 2 一瞬で切り替わる / 3 指から外へ / 4 描いた先から
+uniform float uSw, uNew, uOld, uRet; // 4 のとき: 切り替わった時刻、そのあと描いた跡の数、それより前の跡の数、古い帯の巻き取り(0..1)
 uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
@@ -750,15 +751,27 @@ void main(){
   float x = clamp((f - HOLD) / (1.0 - HOLD), 0.0, 1.0);
   int sty = int(uSty + 0.5);
   float w;
+  float keep = 1.0;
   if (sty == 1) w = smoothstep(gHd * 0.6, gHd * 0.6 + 0.4, x);
   else if (sty == 2) w = smoothstep(0.47, 0.53, x);
   else if (sty == 3) { float dd = distance(gP, uPen.xy) / max(uView.x, uView.y); w = smoothstep(dd * 0.75, dd * 0.75 + 0.3, x); }
+  else if (sty == 4) {
+    // 描いた先から: いまある帯は、前の表現のまま変えない。切り替わったあとに描いた分だけが、次の表現で出てくる。
+    // 古い帯は、新しく描いた分だけ、いちばん古い所から巻き取られる。
+    bool nw = gR1.z >= uSw;
+    w = nw ? 1.0 : 0.0;
+    if (!nw) {
+      float rank = clamp((gAge - uNew) / max(1.0, uOld), 0.0, 1.0); // 0 = 切り替わりのすぐ手前、1 = いちばん古い
+      float e = 1.0 - uRet * 1.1;
+      keep = 1.0 - smoothstep(e, e + 0.1, rank);
+    }
+  }
   else {
     // 入れ替えた並びでは、面ごとの ばらつきを ほとんど無くす(変わり目が、帯の上を1本の線として走る)。
     float jit = mix(0.28, 0.03, uSharp);
     w = clamp(x * (1.0 + SP) - SP * ((1.0 - jit) * gHd + jit * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w);
   }
-  float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0));
+  float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0)); // 4 は 0(散らさない)
 
   // 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
   gTq = (gFr - 0.5) + aQ.x * 0.25;
@@ -795,7 +808,7 @@ void main(){
   vec3 cc = mix(A.centre, B.centre, w);
   // 出てくるところ(ペン先)と、巻き取られるところ(いちばん古い所)。帯に乗る表現だけ。
   float sc0 = gR1.w * smoothstep(0.0, 0.16, uTime - gR1.z) * smoothstep(Mf, Mf - 22.0, gAge);
-  float sc = mix(A.gate < 0.0 ? sc0 : A.gate, B.gate < 0.0 ? sc0 : B.gate, w);
+  float sc = mix(A.gate < 0.0 ? sc0 : A.gate, B.gate < 0.0 ? sc0 : B.gate, w) * keep;
   vec3 wp = cc + (corner - cc) * sc + bulge;
 
   float solidW = float(idA == 1) * (1.0 - w) + float(idB == 1) * w;
@@ -1040,7 +1053,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1397,6 +1410,7 @@ export function mountMorph(root: HTMLElement) {
     const n = Math.max(0, Math.floor(phase));
     seqAt(n + 1);
     phase += len / (Lmax * STATE_LEN * lenOf[n]);
+    hold4();
     onPhase();
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
@@ -1425,12 +1439,13 @@ export function mountMorph(root: HTMLElement) {
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
-        A: { n: [1, 2], len: 0.95, pool: [0, 1, 14], sty: [0, 1, 3] },
-        B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [1, 3, 2] },
-        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 29], sty: [3, 0] },
+        // つなぎ方 4: いまある帯は変えず、描いた先から次の表現が出てくる(本人の案。ドロップの一撃だけは、帯ごと切り替える)。
+        A: { n: [1, 2], len: 0.95, pool: [0, 1, 14], sty: [4] },
+        B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [4] },
+        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 29], sty: [4] },
         drop: { n: [5, 8], len: 0.2, pool: [29, 8, 20, 19, 17, 14], sty: [2] },
         P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
-        C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [1] },
+        C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [4] },
       }
     : {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
@@ -1486,10 +1501,30 @@ export function mountMorph(root: HTMLElement) {
   let sFrom = 0;
   let sTo = 0;
   let analog = 1;
+  // つなぎ方 4(描いた先から)の帳面: どの切り替わりの途中か、いつ切り替わったか、そのとき跡をいくつ書いていたか。
+  let swN = -1;
+  let swAt = 1e9;
+  let swK = 0;
+  const RET = 110; // 新しくこれだけ描くと、前の表現の帯は巻き取られきる(跡の数)
+  /** 前の表現の帯が残っているうちは、次へ進まない(残したまま進むと、残りが一度に次の表現へ変わってしまう)。 */
+  const hold4 = () => {
+    if (swN >= 0 && K - swK < RET) phase = Math.min(phase, swN + 0.999);
+  };
   function onPhase() {
     const A = Math.max(0, Math.floor(phase));
     const f = phase - A;
     const x = Math.max(0, (f - HOLD) / (1 - HOLD));
+    if (swN >= 0 && A !== swN) {
+      // 切り替わり終わり: 前の表現の帯(もう巻き取られて見えない)を、しまう。
+      for (let j = 0; j < M; j++) if (path[(M + j) * 4 + 2] < swAt) path[(M + j) * 4 + 3] = 0;
+      swN = -1;
+      swAt = 1e9;
+    }
+    if (swN < 0 && x > 0 && styAt(A) === 4) {
+      swN = A;
+      swAt = now;
+      swK = K;
+    }
     sFrom = seqAt(A);
     sTo = seqAt(A + 1);
     const wOf = (id: number) => (sFrom === id ? 1 - x : 0) + (sTo === id ? x : 0);
@@ -1766,6 +1801,7 @@ export function mountMorph(root: HTMLElement) {
       const n = Math.max(0, Math.floor(phase));
       seqAt(n + 1);
       phase += (dt / (BEAT * lenOf[n])) * (drawing ? 0.6 : 1);
+      hold4();
       onPhase();
     }
     if (drawing) {
@@ -1835,6 +1871,10 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.from, opOn ? openFrom : ovOn ? ovFrom : sFrom);
     gl!.uniform1f(u.to, opOn ? 27 : ovOn ? 28 : sTo);
     gl!.uniform1f(u.sty, ovOn ? 1 : styAt(Math.max(0, Math.floor(phase))));
+    gl!.uniform1f(u.sw, swAt);
+    gl!.uniform1f(u.nw, K - swK);
+    gl!.uniform1f(u.old, Math.max(1, Math.min(K, M) - (K - swK)));
+    gl!.uniform1f(u.ret, swN >= 0 ? Math.min(1, (K - swK) / RET) : 0);
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
