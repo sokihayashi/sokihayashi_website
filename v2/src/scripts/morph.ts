@@ -8,9 +8,14 @@
 //   3 作品   … 粒が集まり、1つの作品が奥行きを持った粒の像として立つ。視点が回り込む(写真は2層、平面の作品は紙)
 //   → 0 帯   … 棒が、なぞった跡へ戻る
 //
-// 進めるのは時間ではなく、描いた長さ。手を止めると、その状態のまま漂う。
-// 変わり目は、ペン先から帯の後ろへ向かって伝わる(1枚ずつ、決まった遅れで)。
-// しばらく誰も触らないと、ペンがひとりでに描く(なので、放っておいても一周する)。
+// 進めるのは時間(曲)。区間の長さは拍の数で、切り替えは いつもテンポの格子(BPM)の上に来る。触らなくても進み続ける。
+// なぞると、帯がそこに描かれ、たくさん なぞると、いまの表現の残りを拍の数ごと飛ばして先へ進む。
+// 変わり目は2種類: 形が変わっていく(ペン先から帯の後ろへ伝わる)/ 拍の頭で切り替わる(カット)。
+//
+// 組版の層(文字): 作品の題(和文)を、縦に、画面からはみ出す大きさで組み、画面の素材にする。
+//   字の窓(字の中だけ作品が見える)/ 線の版(作品を線だけで刷り、字は線の向きで見せる)/ 引き伸ばし(字の下のふちが下へ伸びる)
+//   / 字で反転(ドロップ)。なぞった帯は、どの場面でも「字と地を入れ替える」。
+//   題の場面は「字 → 字の中へ入る → その作品が画面いっぱい」と、1つの作品について進む。
 //
 // 手札は 映像表現研究 から: 粒子列ロープ(輪になった記録で、尽きないように見せる / 撚りの見た目)、UzU(根元から順に、遅れて)、
 // Ringwriter(1枚ごとの決まった しきい値)、網点(大きさで見せる)、Topographic(操作の音)。
@@ -24,7 +29,7 @@ const SEG = 32; // 作品1つぶんの長さ(跡の数)
 const NV = 64; // 帯の幅方向の枚数
 const NU = M * 2; // 帯の長さ方向の枚数
 const TILES = NU * NV;
-const HOLD = 0.5; // 1つの状態のうち、変わらずにいる割合
+const HOLD = 0.75; // 1つの状態のうち、変わらずにいる割合(残りの4分の1で、次の表現へ変わる)
 const SPREAD = 1.5; // 変わり目が、帯の後ろへ伝わるのにかかる長さ
 const STATE_LEN = 0.62; // 1つの状態ぶんの、描く長さ(帯の長さに対する割合)
 const ACOLS = 6;
@@ -44,7 +49,8 @@ uniform float uDp, uW, uTime, uPhase, uK, uTwK, uZK, uPass;
 uniform float uFrom, uTo; // いま変わっている途中の、2つの表現の番号
 uniform float uSty;       // つなぎ方: 0 ふくらんで入れ替わる / 1 古い所から順に / 2 一瞬で切り替わる / 3 指から外へ
 uniform float uAsp[30];
-uniform float uFocus, uFocusAsp;
+uniform float uFocus, uFocusAsp; // 全画面で見せる作品と、その縦横比
+uniform vec2 uBig;   // 全画面の写真: 横(縦)の送り -1..1, 拡大率
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -586,23 +592,25 @@ O sPhoto3D(){
 // 27 一枚を大きく: 帯がほどけて、いま描いている作品が画面いっぱいの立体写真になる。指で傾く。
 O sBig(){
   O o = base();
-  // いちばん新しく描いた所の作品
-  float wk = texelFetch(uPath, ivec2(int(mod(uK - 1.0, Mf)), 2), 0).w;
-  float asp = max(uAsp[int(wk)], 0.2);
-  vec2 box = uView * vec2(0.86, 0.72);
-  vec2 sz = box.x / asp <= box.y ? vec2(box.x, box.x / asp) : vec2(box.y * asp, box.y);
+  // 画面いっぱい(端で裁ち落とす)。横長の写真は、画面より広いので、区間の間にカメラが横へ送る。
+  float wk = uFocus;
+  float asp = max(uFocusAsp, 0.2);
+  float va = uView.x / uView.y;
+  vec2 sz = (asp > va ? vec2(uView.y * asp, uView.y) : vec2(uView.x, uView.x / asp)) * uBig.y;
+  vec2 slack = max(sz - uView, vec2(0.0)) * 0.5;
+  vec2 ctr = uView * 0.5 - (asp > va ? vec2(uBig.x * slack.x, 0.0) : vec2(0.0, uBig.x * slack.y));
   float u = (float(gIu) + 0.5 + aQ.x * 0.5) / float(${NU});
   float uc = (float(gIu) + 0.5) / float(${NU});
   float v = gVc + 0.5, vc = gV + 0.5;
-  float rx = uTilt.y * 0.42, ry = -uTilt.x * 0.55;
+  float rx = uTilt.y * 0.09, ry = -uTilt.x * 0.11;
   mat3 R = mat3(cos(ry), 0.0, -sin(ry), 0.0, 1.0, 0.0, sin(ry), 0.0, cos(ry)) * mat3(1.0, 0.0, 0.0, 0.0, cos(rx), sin(rx), 0.0, -sin(rx), cos(rx));
-  vec3 C = vec3(uView * 0.5, uW * 0.6);
+  vec3 C = vec3(ctr, 0.0);
   o.corner = C + R * vec3((u - 0.5) * sz.x, (v - 0.5) * sz.y, 0.0);
   o.centre = C + R * vec3((uc - 0.5) * sz.x, (vc - 0.5) * sz.y, 0.0);
   o.uv = vec2(u, v); o.work = wk; o.gate = 1.0; o.par = 1.4;
   vec3 n = R * vec3(0.0, 0.0, 1.0);
   vec3 l = litBy(o.corner, n);
-  o.lit = 0.75 + 0.45 * l.x; o.gloss = 0.12 * l.y;
+  o.lit = 0.82 + 0.3 * l.x; o.gloss = 0.08 * l.y;
   return o;
 }
 // 28 額縁(プロフィールを開いたとき): 帯が画面のふちに回り込んで、細い額になる。中に文字が入る。
@@ -634,6 +642,13 @@ O sFrame(){
   o.gate = 1.0; o.line = 1.0; o.par = 0.6;
   return o;
 }
+// 29 帯の先だけ(題の場面): なぞったばかりの所だけが帯として残り、後ろは小さな面にほどけて消える。
+// 題の場面では、この帯が「字と地を入れ替える」ので、指の通った所だけが入れ替わり、後から元に戻っていく。
+O sHead(){
+  O o = base();
+  o.gate = gR1.w * smoothstep(0.0, 0.16, uTime - gR1.z) * (1.0 - smoothstep(0.15, 0.21, gHd + 0.02 * h1));
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -663,7 +678,8 @@ O stateOf(int id){
   if (id == 25) return sRipple();
   if (id == 26) return sPhoto3D();
   if (id == 27) return sBig();
-  return sFrame();
+  if (id == 28) return sFrame();
+  return sHead();
 }
 
 void main(){
@@ -688,7 +704,7 @@ void main(){
   int sty = int(uSty + 0.5);
   float w;
   if (sty == 1) w = smoothstep(gHd * 0.6, gHd * 0.6 + 0.4, x);
-  else if (sty == 2) w = smoothstep(0.47, 0.53, x);
+  else if (sty == 2) w = 0.0; // 切り替え(カット): 途中の形を見せない。区間の終わり = 拍の頭で、次の表現に替わる
   else if (sty == 3) { float dd = distance(gP, uPen.xy) / max(uView.x, uView.y); w = smoothstep(dd * 0.75, dd * 0.75 + 0.3, x); }
   else { w = clamp(x * (1.0 + SP) - SP * (0.72 * gHd + 0.28 * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w); }
   float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0));
@@ -770,6 +786,8 @@ in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
 in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr;
 uniform sampler2D uDAtlas;
 uniform sampler2D uBAtlas; // 被写体を抜いて補った背景
+uniform sampler2D uPhoto;  // 全画面で見せる作品の、大きい写真
+uniform float uPhotoOn;
 uniform vec3 uLight;
 uniform vec2 uTilt;
 out vec4 o;
@@ -820,7 +838,7 @@ void main(){
       sh = max(sh, clamp((hi - h0 - float(i) * 0.012) * 10.0, 0.0, 1.0));
     }
     float lit = 0.28 + 1.15 * dif - 0.5 * sh + 0.55 * spc;
-    shade = mix(1.0, lit, clamp(vPar, 0.0, 1.0));
+    shade = mix(1.0, lit, clamp(vPar, 0.0, 1.0) * (vPar > 1.2 ? 0.3 : 1.0)); // 全画面のときは、作品そのものの調子を保つ(光は弱く)
     // 全画面の写真(par>1.2): 被写体と背景を別の層にして、のぞき込む向きで逆に動かす(3D写真)。
     // 被写体がずれた跡には、補った背景が見える。被写体は背景に影を落とす。
     if (vPar > 1.2 && flatW < 0.5) {
@@ -830,7 +848,7 @@ void main(){
       float m = smoothstep(0.3, 0.7, texture(uDAtlas, (vCell + fq) / AT2).b);
       vec2 bq = clamp(uv0 + sh * 0.4, 0.004, 0.996);
       vec4 bg = texture(uBAtlas, (vCell + bq) / AT2);
-      vec3 fgc = texture(uAtlas, (vCell + fq) / AT2).rgb;
+      vec3 fgc = uPhotoOn > 0.5 ? texture(uPhoto, fq).rgb : texture(uAtlas, (vCell + fq) / AT2).rgb;
       vec3 bgc = bg.a > 0.5 ? bg.rgb : texture(uAtlas, (vCell + bq) / AT2).rgb;
       float ms = smoothstep(0.3, 0.7, texture(uDAtlas, (vCell + clamp(uv0 - sh * 1.6 + normalize(vScr - uLight.xy + 1e-4) * 0.025, 0.004, 0.996)) / AT2).b);
       bgc *= 0.78 - 0.4 * ms;
@@ -838,7 +856,8 @@ void main(){
     }
     #undef HGT
   }
-  vec3 tc = layC.x >= 0.0 ? layC * vTint : texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
+  vec3 flatC = vPar > 1.2 && uPhotoOn > 0.5 ? texture(uPhoto, uv).rgb : texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb;
+  vec3 tc = layC.x >= 0.0 ? layC * vTint : flatC * vTint * shade;
   if (vMix.w < 0.0) tc = PAPER;
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
   // 帯のふちと、作品の境目の線。
@@ -899,30 +918,100 @@ void main(){ o = vec4(max(texture(uPrev, vUv).rgb * uKeep - 0.006, 0.0), 1.0); }
 const POST_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uImg;
+uniform sampler2D uType;   // 組版の層: r 大きい字 / g 小さい字 / b 字から下への距離(引き伸ばし用)
+uniform sampler2D uPhoto;  // いまの作品の大きい写真
+uniform sampler2D uAtlas;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
+uniform int uShot;   // 0 なし / 1 字の窓 / 2 引き伸ばし / 3 線の版 / 4 字で反転 / 5 小さい字だけ
+uniform vec4 uTX;    // 大きい字: 拡大率, 拡大の軸 x, y, 小さい字を出すか(2 なら、暗い作品: 字を紙の色で載せる)
+uniform vec4 uPh;    // 写真: 縦横比, 送り(-1..1), 拡大率, 大きい写真が届いているか
+uniform vec4 uCell;  // 大きい写真が届くまでの代わり(まとめ画像の升目)
+uniform vec3 uFx;    // x 引き伸ばしの長さ / y 線の間隔(px) / z 帯の効き
 in vec2 vUv;
 out vec4 o;
+const vec3 PAPER = vec3(0.957, 0.945, 0.918);
 float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// 写真を画面いっぱいに(端で裁ち落とす)。全画面の写真(面の集まり)と同じ決まり。
+vec3 photoAt(vec2 st){
+  float sa = uRes.x / uRes.y; float pa = uPh.x; float Z = uPh.z;
+  vec2 uv;
+  if (pa > sa) { float fw = sa / pa / Z; uv = vec2(0.5 + (st.x - 0.5) * fw + uPh.y * (1.0 - fw) * 0.5, 0.5 + (st.y - 0.5) / Z); }
+  else { float fh = pa / sa / Z; uv = vec2(0.5 + (st.x - 0.5) / Z, 0.5 + (st.y - 0.5) * fh + uPh.y * (1.0 - fh) * 0.5); }
+  uv = clamp(uv, 0.004, 0.996);
+  return uPh.w > 0.5 ? texture(uPhoto, uv).rgb : texture(uAtlas, (uCell.xy + uv) / uCell.zw).rgb;
+}
 void main(){
   float an = uAnalog; float dg = 1.0 - an;
   vec2 px = 1.0 / uRes;
-  vec3 c = texture(uImg, vUv).rgb;
+  vec2 st = vec2(vUv.x, 1.0 - vUv.y);
+  vec4 sc = texture(uImg, vUv);
+  vec3 c = sc.rgb;
   // デジタル: 色が少し割れ、細い走査線が入る
   float sh = dg * 1.2;
   c.r = mix(c.r, texture(uImg, vUv + vec2(px.x * sh, 0.0)).r, dg);
   c.b = mix(c.b, texture(uImg, vUv - vec2(px.x * sh, 0.0)).b, dg);
   c *= 1.0 - dg * 0.07 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159 * 0.5));
+  float sm = 0.0;
+  if (uShot > 0) {
+    vec2 tq = (st - uTX.yz) / uTX.x + uTX.yz;
+    vec4 T = texture(uType, tq) * step(0.0, tq.x) * step(tq.x, 1.0) * step(0.0, tq.y) * step(tq.y, 1.0);
+    float g = smoothstep(0.38, 0.62, T.r);
+    sm = smoothstep(0.3, 0.6, texture(uType, st).g) * step(0.5, uTX.w);
+    float band = clamp(sc.a, 0.0, 1.0) * uFx.z; // なぞった帯のある所
+    float m = abs(g - band); // 字と帯の排他: なぞった帯は、字と地を入れ替える
+    if (uShot == 1 || uShot == 2) {
+      // 字の窓: 字の中だけ、作品が見える(暗い作品は逆に、作品の上に紙の色の字)。
+      vec3 ph = photoAt(st);
+      c = uTX.w > 1.5 ? mix(ph, PAPER, m) : ph * m;
+      if (uShot == 2) {
+        // 引き伸ばし: 字の下のふちの色が、列ごとに違う長さで、下へ引き伸ばされる。
+        float cg = h(vec2(floor(gl_FragCoord.x / 3.0), 3.0));
+        float len = uFx.x * (0.12 + 0.88 * cg * cg);
+        float dist = 1.0 - T.b;
+        float tail = step(0.004, T.b) * step(dist, len) * (1.0 - g) * (1.0 - band);
+        vec3 src = uTX.w > 1.5 ? PAPER : photoAt(vec2(st.x, st.y - dist * 0.6));
+        float fade = pow(clamp(1.0 - dist / max(len, 0.001), 0.0, 1.0), 0.55);
+        c = mix(c, src, tail * fade);
+      }
+    } else if (uShot == 3) {
+      // 線の版: 作品を、太さの変わる線だけで刷る。字の外は横の線、字の中は縦の線。なぞった帯は、それを入れ替える。
+      vec3 ph = photoAt(st);
+      float lum = dot(ph, vec3(0.3, 0.59, 0.11));
+      float flip = step(0.5, m);
+      float coord = mix(gl_FragCoord.y, gl_FragCoord.x, flip);
+      float t = abs(fract(coord / uFx.y) - 0.5) * 2.0;
+      // 字の外は細い線(暗い)、字の中は太い線(明るい)。どんな明るさの作品でも、字が読める。その幅の中で、作品の明暗が線の太さになる。
+      float tone = pow(lum, 0.8);
+      float w = mix(mix(0.07, 0.46, tone), mix(0.54, 0.92, tone), flip);
+      float aa = 1.4 / uFx.y;
+      c = PAPER * smoothstep(w + aa, w - aa, t);
+    } else if (uShot == 4) {
+      c = mix(c, 1.0 - c, g);
+    }
+  }
   // アナログ: 粒子、周辺の落ち、黒の浮き、わずかな暖かさ
   float n = h(floor(gl_FragCoord.xy / 1.5) + fract(uTime * 7.0) * 91.0) - 0.5;
   c += n * 0.05 * an;
   vec2 q = vUv - 0.5;
   c *= mix(1.0, 1.0 - 0.45 * dot(q, q) * 2.0, an);
   c = mix(c, c * vec3(1.03, 1.0, 0.93) + 0.012, an);
+  // 小さい字(題): 下の明るさに合わせて、紙の色か黒で載せる。
+  c = mix(c, dot(c, vec3(0.3, 0.59, 0.11)) > 0.55 ? vec3(0.03) : PAPER, sm);
   o = vec4(max(c, 0.0), 1.0);
 }`;
 
 export function mountMorph(root: HTMLElement) {
+  // 乱数: ふだんは毎回違う並び。確認用に ?seed=数字 で同じ並びを再現できる。
+  const seedQ = Number(new URLSearchParams(location.search).get('seed'));
+  let rs = (seedQ || Math.floor(Math.random() * 2 ** 31)) >>> 0;
+  const rand = () => {
+    rs = (rs + 0x6d2b79f5) >>> 0;
+    let t = rs;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   const cv = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
   const gl = cv.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance' });
   if (!gl) return () => {};
@@ -959,7 +1048,11 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  gl.uniform1i(gl.getUniformLocation(post, 'uType'), 10);
+  gl.uniform1i(gl.getUniformLocation(post, 'uPhoto'), 11);
+  gl.uniform1i(gl.getUniformLocation(post, 'uAtlas'), 1);
+  const PU = (n: string) => gl.getUniformLocation(post, n);
+  const pu = { analog: PU('uAnalog'), time: PU('uTime'), res: PU('uRes'), shot: PU('uShot'), tx: PU('uTX'), ph: PU('uPh'), cell: PU('uCell'), fx: PU('uFx') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -969,13 +1062,14 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), big: U('uBig'), photoOn: U('uPhotoOn'), from: U('uFrom'), to: U('uTo'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
   gl.uniform1i(U('uShadow'), 3);
   gl.uniform1i(U('uDAtlas'), 8);
   gl.uniform1i(U('uBAtlas'), 9);
+  gl.uniform1i(U('uPhoto'), 11);
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -983,7 +1077,7 @@ export function mountMorph(root: HTMLElement) {
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   gl.depthFunc(gl.LEQUAL);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  gl.clearColor(0, 0, 0, 1);
+  gl.clearColor(0, 0, 0, 0); // 透明で消す: 面が描かれた所だけ不透明になり、組版の層が「帯のある所」として使う
 
   // なぞった跡(輪): 3行。 0: x, y, 向き / 1: (空き), 生まれた時刻, 有効 / 2: 写真の中心, 写真の幅, 作品の番号
   const path = new Float32Array(M * 4 * 3);
@@ -1041,9 +1135,13 @@ export function mountMorph(root: HTMLElement) {
   }
   // 網点に向く写真かどうか(色が鮮やかで、明暗の幅があるほど高い)。
   const score = new Float32Array(30);
+  const lumOf = new Float32Array(30).fill(0.5); // 作品の明るさの平均(暗い作品は、字の窓の見せ方を変える)
   const tiny = document.createElement('canvas');
   tiny.width = tiny.height = 16;
   const tinyCtx = tiny.getContext('2d', { willReadFrequently: true })!;
+  let lumLast = 0.5;
+  let boxLast = [0, 1, 0, 1];
+  const boxOf: number[][] = [];
   const vivid = (im: HTMLImageElement) => {
     tinyCtx.drawImage(im, 0, 0, 16, 16);
     const d = tinyCtx.getImageData(0, 0, 16, 16).data;
@@ -1058,6 +1156,16 @@ export function mountMorph(root: HTMLElement) {
       m2 += mx * mx;
     }
     const n = d.length / 4;
+    lumLast = m / n;
+    // 絵のある範囲(四隅の色と違う所)。ロゴのように余白の多い作品を全画面で見せるとき、余白だけの画面にしないため。
+    const L = (i: number) => d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11;
+    const c0 = (L(0) + L(15 * 4) + L(240 * 4) + L(255 * 4)) / 4;
+    let x0 = 16, x1 = -1, y0 = 16, y1 = -1;
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      if (Math.abs(L((y * 16 + x) * 4) - c0) < 26) continue;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    boxLast = x1 < 0 ? [0, 1, 0, 1] : [x0 / 16, (x1 + 1) / 16, y0 / 16, (y1 + 1) / 16];
     return sat / n + 1.5 * Math.sqrt(Math.max(0, m2 / n - (m / n) ** 2));
   };
   // 作品ごとの奥行きを1枚にまとめたもの(浮き彫りに使う)。
@@ -1085,6 +1193,8 @@ export function mountMorph(root: HTMLElement) {
       if (dead) return;
       asp[k] = im.naturalWidth / im.naturalHeight;
       score[k] = vivid(im);
+      lumOf[k] = lumLast;
+      boxOf[k] = boxLast;
       cellCtx.drawImage(im, 0, 0, CELL, CELL); // 升目いっぱいに引き伸ばして持つ(見せるときに、もとの比率へ戻す)
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, atlas);
@@ -1124,6 +1234,199 @@ export function mountMorph(root: HTMLElement) {
     }
   });
   gl.uniform1fv(u.asp, asp);
+
+  // ---------- 作品の大きい写真(全画面で見せるとき・字の窓の中)。使う直前に読み、数枚だけ持つ。
+  const photoOf = new Map<number, { tex: WebGLTexture | null; ok: boolean }>();
+  const blackTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE11);
+  gl.bindTexture(gl.TEXTURE_2D, blackTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+  function needPhoto(k: number) {
+    if (k < 0) return;
+    const had = photoOf.get(k);
+    if (had) {
+      // 使われたものを新しい側へ(古いものから捨てるので、使っている写真は残る)
+      photoOf.delete(k);
+      photoOf.set(k, had);
+      return;
+    }
+    const src = works[k]?.dataset.big;
+    if (!src) return;
+    const rec = { tex: null as WebGLTexture | null, ok: false };
+    photoOf.set(k, rec);
+    if (photoOf.size > 5) {
+      const old = photoOf.keys().next().value as number;
+      gl!.deleteTexture(photoOf.get(old)!.tex);
+      photoOf.delete(old);
+    }
+    const im = new Image();
+    im.decoding = 'async';
+    im.onload = () => {
+      if (dead || photoOf.get(k) !== rec) return;
+      rec.tex = gl!.createTexture();
+      gl!.activeTexture(gl!.TEXTURE11);
+      gl!.bindTexture(gl!.TEXTURE_2D, rec.tex);
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, im);
+      for (const p of [gl!.TEXTURE_MIN_FILTER, gl!.TEXTURE_MAG_FILTER]) gl!.texParameteri(gl!.TEXTURE_2D, p, gl!.LINEAR);
+      for (const p of [gl!.TEXTURE_WRAP_S, gl!.TEXTURE_WRAP_T]) gl!.texParameteri(gl!.TEXTURE_2D, p, gl!.CLAMP_TO_EDGE);
+      rec.ok = true;
+    };
+    im.onerror = () => photoOf.delete(k);
+    im.src = src;
+  }
+
+  // ---------- 組版の層: 文字を画面の素材にする。
+  // 使う文字は、作品の題だけ(名前や、飾りの英単語は使わない)。和文の題を、縦に、画面からはみ出す大きさで組む。
+  // 2D の画面に白で描いたものを1枚の絵として渡し、画面全体の仕上げ(POST)で、写真・帯と組み合わせる。
+  //   r: 大きい字 / g: 小さい字(題の1行) / b: 字から下への距離(引き伸ばしに使う)
+  // 書体は仮(端末のゴシックの太いもの)。林さんの書体・ロゴの仕事に差し替える前提。
+  const TYPE_FONT = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", sans-serif';
+  const titles = works.map((a) => (a.dataset.title || a.textContent || '').trim());
+  const roles = works.map((a) => a.dataset.role || '');
+  const typeWorks: number[] = []; // 大きく組める題(和文だけ、8字まで)
+  titles.slice(0, nW).forEach((t, k) => {
+    if (/^[\u3040-\u30ff\u4e00-\u9fff々]+$/.test(t) && [...t].length <= 8) typeWorks.push(k);
+  });
+  const typeCv = document.createElement('canvas');
+  const typeCtx = typeCv.getContext('2d', { willReadFrequently: true })!;
+  const typeTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE10);
+  gl.bindTexture(gl.TEXTURE_2D, typeTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.LINEAR);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+  let typeKey = '';
+  let pivX = 0.5; // 字の中の1点(字の中へ入っていくときの軸)
+  let pivY = 0.5;
+  // 縦に1行。和文は正立、長音は縦に寝かせ、欧文と数字は横倒しにする(縦組みの決まり)。
+  function vline(str: string, xc: number, y: number, size: number, weight: number, gap: number) {
+    const c = typeCtx;
+    c.font = `${weight} ${size}px ${TYPE_FONT}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    for (const ch of str) {
+      if (ch === ' ' || ch === '\u3000') { y += size * 0.5; continue; }
+      const lat = ch.charCodeAt(0) < 0x2000;
+      if (lat || /[ー〜―—…：:（）()「」\-\/]/.test(ch)) {
+        const w = lat ? c.measureText(ch).width : size;
+        c.save();
+        c.translate(xc, y + w / 2);
+        c.rotate(Math.PI / 2);
+        c.fillText(ch, 0, lat ? size * 0.04 : 0);
+        c.restore();
+        y += w + (lat ? size * 0.06 : size * gap);
+      } else {
+        c.fillText(ch, xc, y + size / 2);
+        y += size * (1 + gap);
+      }
+    }
+    return y;
+  }
+  function vlen(str: string, size: number, weight: number, gap: number) {
+    typeCtx.font = `${weight} ${size}px ${TYPE_FONT}`;
+    let y = 0;
+    for (const ch of str) {
+      if (ch === ' ' || ch === '\u3000') y += size * 0.5;
+      else if (ch.charCodeAt(0) < 0x2000) y += typeCtx.measureText(ch).width + size * 0.06;
+      else y += size * (1 + gap);
+    }
+    return y;
+  }
+  // comp: 'one' 題の i 字目を1字だけ、画面からはみ出す大きさで / 'all' 題の全部を縦に / 'info' 小さい題だけ
+  function drawType(work: number, comp: string, i: number, field: boolean) {
+    const key = `${work}|${comp}|${i}|${vw}x${vh}|${field}`;
+    if (key === typeKey) return;
+    typeKey = key;
+    const TS = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.max(2, Math.round(vw * TS));
+    const chh = Math.max(2, Math.round(vh * TS));
+    if (typeCv.width !== cw || typeCv.height !== chh) { typeCv.width = cw; typeCv.height = chh; }
+    const c = typeCtx;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.globalCompositeOperation = 'source-over';
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, cw, chh);
+    c.setTransform(TS, 0, 0, TS, 0, 0);
+    c.globalCompositeOperation = 'lighter';
+    const chars = [...(titles[work] || '')];
+    const n = chars.length;
+    const small = 11;
+    const info = titles[work] + (roles[work] ? `\u3000${roles[work]}` : '');
+    let infoX = 17;
+    let infoTop = true;
+    c.fillStyle = '#f00';
+    if (comp === 'one' || (comp === 'all' && n === 1)) {
+      // 1字を、画面の幅より大きく。左右のどちらかと、上か下のどちらかで裁ち落とす。空いた側に、小さい題を置く。
+      const size = Math.min(vw * 1.22, vh * 1.3);
+      const odd = i % 2 === 1;
+      const xc = vw * (0.5 + (odd ? 0.1 : -0.1));
+      const yc = vw > vh ? vh * 0.5 : odd ? vh - size * 0.4 : size * 0.4 + 40;
+      c.font = `900 ${size}px ${TYPE_FONT}`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(chars[i % Math.max(1, n)] || '', xc, yc);
+      infoTop = odd;
+      infoX = odd ? 17 : vw - 17;
+    } else if (comp === 'all') {
+      // 題の全部を縦に組む。字の大きさは、画面の幅か高さを使い切る方。2行のときは、右の行を上、左の行を下に寄せる(段違い)。
+      let cols = 1;
+      let sz = 0;
+      for (let k = 1; k <= Math.max(1, Math.ceil(n / 2)); k++) {
+        const s = Math.min((vw * 0.98) / k, vh / Math.ceil(n / k));
+        if (s > sz * 1.02) { sz = s; cols = k; }
+      }
+      const rows = Math.ceil(n / cols);
+      sz *= 1.045;
+      for (let k = 0; k < cols; k++) {
+        const part = chars.slice(k * rows, (k + 1) * rows).join('');
+        const len = [...part].length * sz;
+        const narrow = cols === 1 && sz < vw * 0.8;
+        const xc = narrow ? vw - sz * 0.47 : vw / 2 + (cols * sz) / 2 - sz / 2 - k * sz;
+        const y0 = cols === 1 ? (vh - len) / 2 : k === 0 ? -sz * 0.03 : vh - len + sz * 0.03;
+        vline(part, xc, y0, sz, 900, 0);
+      }
+      infoX = 17;
+      infoTop = cols === 1;
+      if (!(cols === 1 && sz < vw * 0.8)) infoX = -99; // 画面を字で埋めるときは、小さい題は出さない
+    }
+    if (infoX > -50) {
+      c.fillStyle = '#0f0';
+      const len = vlen(info, small, 500, 0.16);
+      vline(info, infoX, infoTop ? 84 : Math.max(84, vh - 76 - len), small, 500, 0.16);
+    }
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    gl!.activeTexture(gl!.TEXTURE10);
+    gl!.bindTexture(gl!.TEXTURE_2D, typeTex);
+    if (field) {
+      // 字から下への距離(列ごと)と、字の中の1点(画面の中央にいちばん近い、まわりも字の所)。
+      const im = c.getImageData(0, 0, cw, chh);
+      const d = im.data;
+      const L = chh * 0.6;
+      for (let x = 0; x < cw; x++) {
+        let run = 1e9;
+        for (let y = 0; y < chh; y++) {
+          const o = (y * cw + x) * 4;
+          if (d[o] > 127) run = 0;
+          else run++;
+          d[o + 2] = run < L ? Math.round(255 * (1 - run / L)) : 0;
+        }
+      }
+      const r = Math.round(9 * TS);
+      let best = 1e9;
+      pivX = pivY = 0.5;
+      for (let y = r; y < chh - r; y += 6) {
+        for (let x = r; x < cw - r; x += 6) {
+          const o = (y * cw + x) * 4;
+          if (d[o] < 250 || d[o - r * 4] < 250 || d[o + r * 4] < 250 || d[o - r * cw * 4] < 250 || d[o + r * cw * 4] < 250) continue;
+          const dd = Math.hypot(x / cw - 0.5, (y / chh - 0.45) * (chh / cw));
+          if (dd < best) { best = dd; pivX = x / cw; pivY = y / chh; }
+        }
+      }
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, im);
+    } else {
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, typeCv);
+    }
+  }
 
   // 描く先: いったん別の面に描いてから、画面へ写す(残像を残すため。ふちを なめらかにするため)。
   const drawFbo = gl.createFramebuffer();
@@ -1281,7 +1584,7 @@ export function mountMorph(root: HTMLElement) {
       path[o + 3] = curWork;
     }
     K++;
-    if (!auto) advance(dp * 0.6);
+    if (!auto) drawn += dp;
   }
   function lineTo(x: number, y: number) {
     if (!stroke) return;
@@ -1322,16 +1625,11 @@ export function mountMorph(root: HTMLElement) {
     const t = Math.max(0, Math.min(1, (v - a) / (b - a)));
     return t * t * (3 - 2 * t);
   };
-  function advance(len: number) {
-    const n = Math.max(0, Math.floor(phase));
-    seqAt(n + 1);
-    phase += len / (Lmax * STATE_LEN * lenOf[n]);
-    onPhase();
-  }
+  let drawn = 0; // 指でなぞった長さ(たまると、いまの表現を拍の数ごと飛ばして、先へ進む)
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 29;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8]; // アナログらしさ(画面全体の質感に使う)
+  const KINDS = 30;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 1]; // アナログらしさ(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -1339,33 +1637,75 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
   };
-  // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
-  // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
-  type Sec = { n: [number, number]; len: number; pool: number[]; sty: number[] };
+  // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ / 題 / プロフィール)ごとに、使う表現・長さ・つなぎ方を変える。
+  // 長さは拍の数(整数)。すべての切り替えは、テンポの格子(BPM)の上で起こる。ドロップは1拍ずつ刻み、Cメロは4小節伸ばす。
+  const BPM = 128;
+  const BEAT = 60 / BPM; // 1拍の秒数
+  type Sec = { n: [number, number]; beats: number; pool: number[]; sty: number[] };
   const SECS: Record<string, Sec> = {
-    intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
-    A: { n: [1, 2], len: 0.95, pool: [0, 14, 1, 23], sty: [0, 1, 3] },
-    B: { n: [2, 3], len: 0.5, pool: [12, 15, 16, 2, 24], sty: [1, 3, 2] },
-    chorus: { n: [1, 2], len: 1.2, pool: [27, 25, 22, 1], sty: [3, 0] },
-    drop: { n: [5, 8], len: 0.2, pool: [13, 22, 12, 24, 19, 2, 15, 27, 25, 14], sty: [2] },
-    P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
-    C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
+    intro: { n: [1, 1], beats: 8, pool: [0], sty: [0] },
+    A: { n: [1, 2], beats: 4, pool: [0, 14, 1], sty: [0, 1, 3] },
+    B: { n: [2, 3], beats: 4, pool: [12, 15, 16, 24], sty: [1, 3, 2] },
+    chorus: { n: [1, 2], beats: 4, pool: [27, 25, 22, 1], sty: [3, 0] },
+    drop: { n: [6, 8], beats: 1, pool: [13, 22, 12, 24, 19, 2, 15, 27, 25, 14, 23], sty: [2] },
+    P: { n: [1, 1], beats: 12, pool: [28], sty: [1] },
+    C: { n: [1, 1], beats: 8, pool: [19, 16, 25], sty: [1] },
   };
-  // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
-  const FORM = ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
-  const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
-  const LOOP = 1; // 2周目以降は Aメロから
+  // 題(T): 作品の題の字を、画面の素材にする場面。1つの作品について「字 → 作品そのもの」へ進む、ひとまとまり。
+  const FORM = ['intro', 'T', 'A', 'B', 'drop', 'chorus', 'T', 'P', 'B', 'drop', 'A', 'T', 'chorus', 'drop', 'C', 'T', 'drop', 'chorus', 'P'];
+  const LOOP = 1; // 2周目以降は、題から
   let formI = 0;
   const seq: number[] = [];
   const secOf: string[] = [];
-  const lenOf: number[] = [];
+  const lenOf: number[] = []; // 拍の数
   const styOf: number[] = [];
-  const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+  const shotOf: number[] = []; // 組版の層の使い方: 0 なし / 1 字の窓 / 2 引き伸ばし / 3 線の版 / 4 字で反転 / 5 小さい題だけ
+  const compOf: string[] = []; // 字の組み方: one / all / info
+  const workOf: number[] = []; // その場面の作品(なければ -1)
+  const ciOf: number[] = []; // one のとき、題の何字目か(-1 なら、拍ごとに1字ずつ進む)
+  const pick = <T,>(a: T[]) => a[Math.floor(rand() * a.length)];
+  const push = (st: number, sec: string, beats: number, sty: number, shot = 0, comp = '', work = -1, ci = -1) => {
+    seq.push(st);
+    secOf.push(sec);
+    lenOf.push(beats);
+    styOf.push(sty);
+    shotOf.push(shot);
+    compOf.push(comp);
+    workOf.push(work);
+    ciOf.push(ci);
+  };
+  for (let i = typeWorks.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [typeWorks[i], typeWorks[j]] = [typeWorks[j], typeWorks[i]];
+  }
+  let typeI = 0;
+  let typeVar = 0;
   const grow = () => {
-    const name = FORM[formI];
+    let name = FORM[formI];
     formI = formI + 1 < FORM.length ? formI + 1 : LOOP;
+    if (name === 'T' && !typeWorks.length) name = 'A';
+    if (name === 'T') {
+      const w = typeWorks[typeI++ % typeWorks.length];
+      const n = [...titles[w]].length;
+      const v = typeVar++ % 3;
+      if (seq.length) styOf[seq.length - 1] = 2; // 題の場面には、切り替えで入る
+      if (v === 0) {
+        // 字の窓: 題を1拍に1字ずつ(画面からはみ出す大きさ) → 題の全部 → 字の中へ入っていき、その作品が画面いっぱいになる
+        if (n > 1) push(29, 'T', Math.min(n, 6), 2, 1, 'one', w);
+        push(29, 'T', 6, 2, 1, 'all', w);
+        push(27, 'T', 8, 2, 5, 'info', w);
+      } else if (v === 1) {
+        // 線の版: 作品を線だけで刷る。字は線の向きで見せる。拍ごとに線が細かくなり、そのまま作品そのものへ
+        push(29, 'T', 8, 2, 3, 'all', w);
+        push(27, 'T', 8, 2, 5, 'info', w);
+      } else {
+        // 引き伸ばし: 題の字の中に作品。字の下のふちが、下へ引き伸ばされていく
+        push(29, 'T', 8, 2, 2, 'all', w);
+      }
+      return;
+    }
     const S = SECS[name];
-    const cnt = S.n[0] + Math.floor(Math.random() * (S.n[1] - S.n[0] + 1));
+    const cnt = S.n[0] + Math.floor(rand() * (S.n[1] - S.n[0] + 1));
     for (let i = 0; i < cnt; i++) {
       const a = seq.length ? seq[seq.length - 1] : -1;
       const b = seq.length > 1 ? seq[seq.length - 2] : -1;
@@ -1373,10 +1713,17 @@ export function mountMorph(root: HTMLElement) {
       let guard = 0;
       // 直前と同じ表現・同じ系統は避ける(区間の候補が少ないときは、同じ表現だけ避ける)。
       while (S.pool.length > 1 && (c === a || (guard < 60 && (FAM[c] === FAM[a] || c === b))) && guard++ < 200) c = pick(S.pool);
-      seq.push(c);
-      secOf.push(name);
-      lenOf.push(S.len * (0.85 + Math.random() * 0.3));
-      styOf.push(pick(S.sty));
+      const sty = pick(S.sty);
+      if (c === 27) {
+        // 全画面の作品には、切り替えで入り、切り替えで出る(途中の形を見せない)
+        if (seq.length) styOf[seq.length - 1] = 2;
+        push(c, name, name === 'drop' ? 1 : 8, 2, 5, 'info', Math.floor(rand() * nW));
+      }
+      else if (name === 'drop' && typeWorks.length && rand() < 0.4) {
+        // ドロップ: 題の1字が、画面を反転させる(1拍)
+        const w = pick(typeWorks);
+        push(c, name, 1, 2, 4, 'one', w, Math.floor(rand() * [...titles[w]].length));
+      } else push(c, name, S.beats, sty);
     }
   };
   const seqAt = (n: number) => {
@@ -1389,6 +1736,7 @@ export function mountMorph(root: HTMLElement) {
   };
   let secHook: (name: string, cut: boolean) => void = () => {};
   let frameW = 0; // 曲の中で、プロフィールの額になっている強さ
+  let lastSi = -1;
   let lastSec = '';
   let sFrom = 0;
   let sTo = 0;
@@ -1396,19 +1744,26 @@ export function mountMorph(root: HTMLElement) {
   function onPhase() {
     const A = Math.max(0, Math.floor(phase));
     const f = phase - A;
-    const x = Math.max(0, (f - HOLD) / (1 - HOLD));
     sFrom = seqAt(A);
     sTo = seqAt(A + 1);
+    seqAt(A + 3);
+    const cutSty = styOf[A] === 2; // 切り替え(カット)のときは、区間の終わりまで いまの表現のまま
+    const x = cutSty ? 0 : Math.max(0, (f - HOLD) / (1 - HOLD));
     const wOf = (id: number) => (sFrom === id ? 1 - x : 0) + (sTo === id ? x : 0);
     trail = Math.max(sstep(0.15, 0.75, wOf(2)), sstep(0.3, 0.9, wOf(8)) * 0.8);
     solid = sstep(0.25, 1, wOf(1));
     frameW = wOf(28);
     analog = ANALOG[sFrom] * (1 - x) + ANALOG[sTo] * x;
-    const st = x > 0.5 ? sTo : sFrom;
+    // 全画面で見せる作品: いまの場面のもの。なければ、次の場面のもの(変わっていく先)。
+    const fw = workOf[A] >= 0 ? workOf[A] : workOf[A + 1];
+    if (fw >= 0) focus = fw;
+    for (let k = A; k <= A + 3; k++) if (workOf[k] >= 0 && shotOf[k] !== 4) needPhoto(workOf[k]);
     const si = x > 0.5 ? A + 1 : A;
+    const st = seq[si];
     const sec = secOf[si] || 'A';
-    if (st !== lastState || sec !== lastSec) {
-      const cut = st !== lastState;
+    if (si !== lastSi || sec !== lastSec) {
+      const cut = si !== lastSi;
+      lastSi = si;
       lastState = st;
       lastSec = sec;
       if (cut) sfx.pon(ANALOG[st]);
@@ -1461,20 +1816,10 @@ export function mountMorph(root: HTMLElement) {
     <p style="margin:0;font-size:.8rem;line-height:1.7;color:var(--muted)">デザイナー / クリエイティブディレクター / 映像作家 / VJ<br>東京</p>
     <p style="margin:0;font-size:1rem;line-height:1.9;max-width:34em">世界観を作ります。<br>店やブランドに必要なのは、説明しきることではなく、想像させる入口を持つこと。小さなビジュアルの中に、その先の世界を予感させる。</p>
     <p style="margin:0;display:flex;gap:1.2rem;font-size:.8rem;letter-spacing:.06em"><a href="${base}/works/">作品一覧</a><a href="${base}/about/">プロフィール</a><a href="${base}/contact/">お問い合わせ</a></p>`;
-  // ---------- 画面そのものも曲に合わせて動く: 文字の層、窓になる画面、ドロップの反転とナビの崩れ。
-  const typeL = mk('div', 'position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden;color:#fff;mix-blend-mode:difference;');
-  typeL.dataset.type = '';
-  typeL.setAttribute('aria-hidden', 'true');
-  const big = document.createElement('div');
-  big.className = 'mt-big';
-  big.innerHTML = 'SOKI<br>HAYASHI';
-  // 名前を大きく出すのはやめた(本人判断)。文字・図形は、名前ではなく画面の素材として使う方向で作り直す。
-  big.style.display = 'none';
-  typeL.append(big);
-  root.append(typeL);
+  // ---------- 画面そのものも曲に合わせて動く: 窓になる画面、ドロップの反転とナビの崩れ。
   const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
   const html = document.documentElement;
-  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+  const rnd = (a: number, b: number) => a + rand() * (b - a);
   secHook = (name, cut) => {
     if (panelOpen) return;
     html.dataset.sec = name;
@@ -1483,13 +1828,9 @@ export function mountMorph(root: HTMLElement) {
         const fx = pick(['is-flash', 'is-hue', 'is-punch', 'is-flash', 'is-mono']);
         root.classList.add(fx);
         setTimeout(() => root.classList.remove(fx), fx === 'is-punch' ? 160 : 90);
-        big.style.opacity = Math.random() < 0.35 ? '1' : '0';
-        big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
         for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
       }
     } else {
-      big.style.opacity = '';
-      big.style.transform = '';
       for (const el of navA) el.style.transform = '';
     }
   };
@@ -1502,7 +1843,6 @@ export function mountMorph(root: HTMLElement) {
     if (on) ovFrom = Math.max(0, (phase - Math.floor(phase) - HOLD) / (1 - HOLD)) > 0.5 ? sTo : sFrom;
     if (on) {
       html.dataset.sec = 'panel';
-      big.style.transform = '';
       for (const el of navA) el.style.transform = '';
     } else secHook(lastSec, false);
     pf.textContent = on ? '閉じる' : 'プロフィール';
@@ -1529,7 +1869,7 @@ export function mountMorph(root: HTMLElement) {
   let idle = 0.25; // ひとりでに描きはじめるまでの秒
   let auto = false;
   let autoOn = true;
-  let tau = Math.random() * 20;
+  let tau = rand() * 20;
   let swingX = 0;
   let swingY = 0;
   let lightX = 0; // 光と視点(指を、ゆっくり追う)
@@ -1583,17 +1923,28 @@ export function mountMorph(root: HTMLElement) {
   // ---------- 毎コマ
   let raf = 0;
   let last = performance.now();
-  const t0 = last;
+  let manual = false; // 確認用: 自分ではコマを進めない
   function tick(t: number) {
     raf = requestAnimationFrame(tick);
+    if (manual) return;
     const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
     last = t;
-    now = (t - t0) / 1000;
-    // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
+    sim(dt);
+    render(dt);
+  }
+  function sim(dt: number) {
+    now += dt;
+    // 曲は時間で進む(触らなくても動き続ける)。区間の長さは拍の数なので、切り替えは いつも拍の頭に来る。
     if (!panelOpen) {
       const n = Math.max(0, Math.floor(phase));
       seqAt(n + 1);
-      phase += (dt / (BEAT * lenOf[n])) * (drawing ? 0.6 : 1);
+      phase += dt / (BEAT * lenOf[n]);
+      // なぞると先へ進む: 拍の格子は崩さずに、いまの表現の残りを、拍の数ごと飛ばす。
+      if (drawn > Lmax * 0.3) {
+        drawn = 0;
+        const skip = Math.floor((HOLD - (phase - n)) * lenOf[n]);
+        if (skip >= 1 && !shotOf[n] && Math.floor(phase) === n) phase += skip / lenOf[n];
+      }
       onPhase();
     }
     if (drawing) {
@@ -1626,7 +1977,11 @@ export function mountMorph(root: HTMLElement) {
       lightX += (fx - lightX) * k;
       lightY += (fy - lightY) * k;
     }
-
+    simPen = [fx, fy, fon];
+  }
+  let simPen = [0, 0, 0];
+  function render(dt: number) {
+    const [fx, fy, fon] = simPen;
     gl!.useProgram(prog);
     gl!.activeTexture(gl!.TEXTURE0);
     gl!.bindTexture(gl!.TEXTURE_2D, pathTex);
@@ -1643,13 +1998,75 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.k, Math.max(1, K));
     gl!.uniform1f(u.focus, focus);
     gl!.uniform1f(u.focusAsp, asp[focus]);
+    const tiltX = Math.max(-1, Math.min(1, ((lightX - vw / 2) / vw) * 2.2));
+    // いまの場面(拍の中の位置)から、全画面の写真の送りと、組版の層の動きを決める。
+    const stepA = Math.max(0, Math.floor(phase));
+    const stepF = phase - stepA;
+    const beatsA = lenOf[stepA] || 1;
+    const tb = stepF * beatsA; // この場面に入ってからの拍
+    const big27 = seq[stepA] === 27;
+    const bigZ = big27 ? 1.1 + 0.07 * stepF : 1.1;
+    // 横長の作品は、区間の間にカメラが横へ送る。送る範囲は、絵のある所(余白だけの画面にしない)。
+    const fa = asp[focus] || 1;
+    const va = vw / Math.max(1, vh);
+    const wide = fa > va;
+    const fwin = Math.min(1, (wide ? va / fa : fa / va) / bigZ); // 画面に入る割合
+    const bx = boxOf[focus] || [0, 1, 0, 1];
+    const lo = wide ? bx[0] : bx[2];
+    const hi = wide ? bx[1] : bx[3];
+    const cl = (v: number) => Math.max(fwin / 2, Math.min(1 - fwin / 2, v));
+    let ca = cl(lo + fwin * 0.35);
+    let cb = cl(hi - fwin * 0.35);
+    if (cb < ca) ca = cb = cl((lo + hi) / 2);
+    const toPan = (c: number) => (fwin < 0.999 ? ((c - 0.5) * 2) / (1 - fwin) : 0);
+    const panA = toPan(ca);
+    const panB = toPan(cb);
+    const bigPan = big27 ? panA + (panB - panA) * stepF : panA;
+    let shot = ovOn ? 0 : shotOf[stepA] || 0;
+    const shotW = workOf[stepA] ?? -1;
+    if (shotW < 0) shot = 0;
+    let txS = 1;
+    let smear = 0;
+    let pitchPx = 6;
+    let phPan = bigPan;
+    let small = 1;
+    let bandK = 1;
+    if (shot) {
+      const comp = compOf[stepA];
+      const ci = comp === 'one' ? (ciOf[stepA] >= 0 ? ciOf[stepA] : Math.floor(tb)) : 0;
+      drawType(shotW, comp, ci, shot === 2 || (shot === 1 && comp === 'all'));
+      const bf = tb - Math.floor(tb);
+      if (comp === 'one') {
+        txS = 1 + 0.07 * Math.exp(-bf * 7); // 拍の頭で、わずかに打つ
+        phPan = (ci % 2 ? panB : panA) + tiltX * 0.4; // 指の位置で、字の中の作品がずれる
+        bandK = 0; // 1字のときは、字の形をそのまま見せる
+      }
+      if (shot === 1 && comp === 'all') {
+        // 入り: 大きい所から定位置へ。抜け: 字の中へ入っていき、作品が画面いっぱいになる(次の場面と同じ絵で終わる)。
+        txS = 1 + 0.3 * Math.exp(-tb * 5);
+        const zu = (tb - (beatsA - 1.5)) / 1.5;
+        if (zu > 0) {
+          txS *= Math.exp(Math.pow(zu, 2.4) * Math.log(90));
+          bandK = 0;
+        }
+      }
+      if (shot === 2) smear = sstep(0.4, beatsA * 0.8, tb);
+      if (shot === 3) pitchPx = [16, 16, 11, 11, 8, 6, 5, 4][Math.min(7, Math.floor(tb))];
+      if (shot === 5 && styOf[stepA] !== 2 && stepF > HOLD) small = 0;
+    }
+    const prec = photoOf.get(focus);
+    const photoOk = !!prec && prec.ok;
+    gl!.activeTexture(gl!.TEXTURE11);
+    gl!.bindTexture(gl!.TEXTURE_2D, photoOk ? prec!.tex : blackTex);
+    gl!.uniform2f(u.big, bigPan, bigZ);
+    gl!.uniform1f(u.photoOn, photoOk ? 1 : 0);
     gl!.uniform1f(u.from, ovOn ? ovFrom : sFrom);
     gl!.uniform1f(u.to, ovOn ? 28 : sTo);
     gl!.uniform1f(u.sty, ovOn ? 1 : styAt(Math.max(0, Math.floor(phase))));
     gl!.uniform3f(u.pen, fx, fy, fon);
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
     gl!.uniform2f(u.cam, (lightX - vw / 2) * 0.2, (lightY - vh / 2) * 0.2);
-    gl!.uniform2f(u.tilt, Math.max(-1, Math.min(1, ((lightX - vw / 2) / vw) * 2.2)), Math.max(-1, Math.min(1, ((lightY - vh / 2) / vh) * 2.2)));
+    gl!.uniform2f(u.tilt, tiltX, Math.max(-1, Math.min(1, ((lightY - vh / 2) / vh) * 2.2)));
 
     // 0) 影の地図(立体が少しでもあるとき)
     const shadowOn = K > 0 && (sFrom === 1 || sTo === 1);
@@ -1717,6 +2134,11 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.time, now);
     gl!.uniform2f(pu.res, cv.width, cv.height);
+    gl!.uniform1i(pu.shot, shot);
+    gl!.uniform4f(pu.tx, txS, pivX, pivY, small ? (shot === 1 || shot === 2) && lumOf[focus] < 0.3 ? 2 : 1 : 0);
+    gl!.uniform4f(pu.ph, asp[focus] || 1, phPan, bigZ, photoOk ? 1 : 0);
+    gl!.uniform4f(pu.cell, focus % ACOLS, Math.floor(focus / ACOLS), ACOLS, AROWS);
+    gl!.uniform3f(pu.fx, smear, (pitchPx * cv.width) / Math.max(1, vw), bandK);
     gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
     gl!.useProgram(prog);
   }
@@ -1725,15 +2147,21 @@ export function mountMorph(root: HTMLElement) {
 
   (window as unknown as Record<string, unknown>).__morph = {
     // 確認用: 表現の並びを指定する
-    seq(list: number[], sec = 'A', len = 1) {
-      seq.length = secOf.length = lenOf.length = styOf.length = 0;
-      seq.push(...list);
-      for (let i = 0; i < list.length; i++) {
-        secOf.push(sec);
-        lenOf.push(len);
-        styOf.push(i % 4);
-      }
+    seq(list: number[], sec = 'A', beats = 4) {
+      seq.length = secOf.length = lenOf.length = styOf.length = shotOf.length = compOf.length = workOf.length = ciOf.length = 0;
+      list.forEach((st, i) => push(st, sec, beats, i % 4, st === 27 ? 5 : 0, st === 27 ? 'info' : '', st === 27 ? i % nW : -1));
+      phase = 0;
       onPhase();
+    },
+    // 確認用: 場面を細かく指定する [表現, 拍, つなぎ方, 組版, 組み方, 作品, 何字目]
+    steps(list: [number, number, number, number, string, number, number][], sec = 'T') {
+      seq.length = secOf.length = lenOf.length = styOf.length = shotOf.length = compOf.length = workOf.length = ciOf.length = 0;
+      for (const [st, beats, sty, shot, comp, work, ci] of list) push(st, sec, beats, sty, shot, comp, work, ci ?? -1);
+      phase = 0;
+      onPhase();
+    },
+    get typeWorks() {
+      return typeWorks.map((k) => [k, titles[k]]);
     },
     phase(v: number) {
       phase = v;
@@ -1755,8 +2183,19 @@ export function mountMorph(root: HTMLElement) {
     focus(n: number) {
       focus = n;
     },
+    // 確認用: 自動のコマ送りを止めて、指定した秒数だけ進めてから1コマ描く。
+    manual(on: boolean) {
+      manual = on;
+      last = performance.now();
+    },
+    step(sec: number) {
+      const n = Math.max(1, Math.round(sec * 60));
+      for (let i = 0; i < n; i++) sim(1 / 60);
+      render(1 / 60);
+    },
     get state() {
-      return { phase, K, focus, trail, solid, sFrom, sTo, analog, seq: seq.slice(0, 12) };
+      const A = Math.max(0, Math.floor(phase));
+      return { phase, K, focus, lum: lumOf[focus], trail, solid, sFrom, sTo, analog, shot: shotOf[A], comp: compOf[A], work: workOf[A], beats: lenOf[A], seq: seq.slice(0, 12) };
     },
   };
 
@@ -1771,7 +2210,6 @@ export function mountMorph(root: HTMLElement) {
     window.removeEventListener('resize', onResize);
     ind.remove();
     label.remove();
-    typeL.remove();
     delete document.documentElement.dataset.sec;
     for (const el of navA) el.style.transform = '';
     snd.remove();

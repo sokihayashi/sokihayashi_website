@@ -23,7 +23,7 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       {
         works.map((w) => (
           <li>
-            <a data-work data-src={wallSrc(w.data.images[0], 560)} data-depth={`${base}/img/depth/${idOf(w.data.images[0])}.png`} data-bg={`${base}/img/depth/${idOf(w.data.images[0])}-bg.webp`} data-flat={isFlat(w.data.images[0]) ? '' : undefined} href={`${base}/works/${w.id}/`}>
+            <a data-work data-src={wallSrc(w.data.images[0], 560)} data-depth={`${base}/img/depth/${idOf(w.data.images[0])}.png`} data-bg={`${base}/img/depth/${idOf(w.data.images[0])}-bg.webp`} data-flat={isFlat(w.data.images[0]) ? '' : undefined} data-big={wallSrc(w.data.images[0], 1500)} data-title={w.data.title} data-role={w.data.role.join('・')} href={`${base}/works/${w.id}/`}>
               {w.data.title}
             </a>
           </li>
@@ -137,6 +137,10 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   .morph.is-punch .morph-canvas {
     transform: scale(1.14) rotate(-1.5deg);
   }
+  /* 上のナビは、下の絵と差の合成にする(字や写真の上でも読める。この試作のページだけ)。 */
+  html.morph-on .site-bar {
+    mix-blend-mode: difference;
+  }
   /* 曲の中で出るプロフィール: 文字の上だけ押せる(それ以外は描ける) */
   [data-panel].is-shown a {
     pointer-events: auto;
@@ -150,54 +154,4 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
   html[data-sec='drop'] .site-bar .logo {
     transition: none;
   }
-  .mt-credits,
-  .mt-big,
-  .mt-role {
-    position: absolute;
-    opacity: 0;
-    transition: opacity 0.4s;
-  }
-  .mt-credits {
-    left: var(--pad);
-    top: 0;
-    white-space: pre;
-    font-size: 0.7rem;
-    line-height: 1.55;
-    letter-spacing: 0.04em;
-    font-variant-numeric: tabular-nums;
-    animation: mt-roll 9s linear infinite;
-  }
-  @keyframes mt-roll {
-    from { transform: translateY(100vh); }
-    to { transform: translateY(-100%); }
-  }
-  .mt-big {
-    left: 4vw;
-    top: 22vh;
-    font-size: 27vw;
-    line-height: 0.82;
-    font-weight: 700;
-    letter-spacing: -0.04em;
-    transform-origin: 30% 50%;
-    transition: opacity 0.4s, transform 1.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
-  .mt-role {
-    left: 7%;
-    right: 7%;
-    top: calc(64px + 4vh);
-    font-size: clamp(1.1rem, 5.6vw, 2rem);
-    line-height: 1.2;
-    font-weight: 500;
-  }
-  .mt-role span {
-    display: block;
-    margin-top: 0.8em;
-    font-size: 0.55em;
-    font-weight: 400;
-    letter-spacing: 0.06em;
-  }
-  html[data-sec='B'] .mt-credits { opacity: 0.85; }
-  html[data-sec='chorus'] .mt-big { opacity: 1; }
-  html[data-sec='drop'] .mt-big { opacity: 1; transition: opacity 0.1s; }
-  html[data-sec='C'] .mt-role { opacity: 1; transition: opacity 0.6s 0.6s; }
 </style>
