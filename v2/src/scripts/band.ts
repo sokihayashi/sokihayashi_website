@@ -6,6 +6,8 @@
 //
 // [data-band] の付いた要素(帯の切れ端)から始まるときは、その帯の形から太りはじめる。
 
+import { loosen, tighten } from './gsplat';
+
 const ANGLE = 28; // 画面の長辺からの角度(度)
 const COVER = 300; // 覆うまで(ms)
 const OPEN = 420; // 割れてひらくまで(ms)
@@ -22,6 +24,7 @@ let origin: Origin | null = null;
 let wipe: HTMLElement | null = null;
 let geo = { cx: 0, cy: 0, dx: 1, dy: 0, nx: 0, ny: 1, reach: 0 };
 let safety = 0;
+let gs = false; // 粒の移り変わりの途中
 // 引っぱって描いた帯から始めるとき、その軌跡(画面上の座標)と太さ。
 let pulled: { pts: { x: number; y: number }[]; width: number; at: number } | null = null;
 
@@ -193,6 +196,15 @@ if (typeof window !== 'undefined' && !(window as any).__band) {
     if (reduced()) return;
     const e = ev as Event & { loader: () => Promise<void> };
     const load = e.loader;
+    // 試作: /lab/morph-sharp/ から出るときだけ、帯の代わりに ガウシアンの粒でほどけて移る。
+    if (document.querySelector('[data-morph-root][data-set="sharp"]')) {
+      const o = origin && performance.now() - origin.at < 1500 ? origin : null;
+      e.loader = async () => {
+        const [, ok] = await Promise.all([load(), loosen(o ? o.x : window.innerWidth / 2, o ? o.y : window.innerHeight / 2)]);
+        gs = ok;
+      };
+      return;
+    }
     e.loader = async () => {
       const st = pulled && performance.now() - pulled.at < 1500 ? pulled : null;
       pulled = null;
@@ -202,6 +214,11 @@ if (typeof window !== 'undefined' && !(window as any).__band) {
 
   // 替わったら、ひらく。
   document.addEventListener('astro:after-swap', () => {
+    if (gs) {
+      gs = false;
+      void tighten();
+      return;
+    }
     if (!wipe) return;
     // ページが替わると <html> の class は新しいページのものに置き換わる。付け直して、
     // 下で起きるフェードを止める(止めないと、帯が割れる動きがフェードの陰に隠れる)。

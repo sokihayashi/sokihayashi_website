@@ -1908,7 +1908,17 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform2f(pu.res, cv.width, cv.height);
     gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
     gl!.useProgram(prog);
+    // 描いた直後の画面を渡す(ページの移り変わりが、この画面を粒にするため)。
+    if (shotFn) {
+      const f = shotFn;
+      shotFn = null;
+      f(cv);
+    }
   }
+  let shotFn: ((c: HTMLCanvasElement) => void) | null = null;
+  (window as unknown as Record<string, unknown>).__morphShot = (fn: (c: HTMLCanvasElement) => void) => {
+    shotFn = fn;
+  };
   size(true);
   raf = requestAnimationFrame(tick);
 
