@@ -351,7 +351,7 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
   }
   const inView = (r: DOMRect) => r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
   for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
-    if (el.closest('.band-wipe')) continue;
+    if (el.closest('.band-wipe, .site-bar')) continue; // 上のメニューは粒にしない(その場に残す)
     const r = el.getBoundingClientRect();
     if (!inView(r) || !seen(el)) continue;
     const cs = getComputedStyle(el);
@@ -389,7 +389,7 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
   for (let n = tw.nextNode(); n; n = tw.nextNode()) {
     const txt = (n.textContent || '').trim();
     const el = n.parentElement;
-    if (!txt || !el || el.closest('.band-wipe, script, style, noscript') || !seen(el)) continue;
+    if (!txt || !el || el.closest('.band-wipe, .site-bar, script, style, noscript') || !seen(el)) continue;
     range.selectNodeContents(n);
     const rects = [...range.getClientRects()].filter(inView);
     if (!rects.length) continue;
@@ -453,14 +453,14 @@ function mount(g: GL) {
   }
   wrap.getAnimations().forEach((a) => a.cancel());
   if (!wrap.isConnected) document.documentElement.appendChild(wrap);
-  document.documentElement.classList.add('band-wiping');
+  document.documentElement.classList.add('band-wiping', 'gs-on');
 }
 
 function clear() {
   cancelAnimationFrame(raf);
   window.clearTimeout(safety);
   wrap?.remove();
-  document.documentElement.classList.remove('band-wiping');
+  document.documentElement.classList.remove('band-wiping', 'gs-on');
 }
 
 function run(dur: number, step: (x: number) => void): Promise<void> {

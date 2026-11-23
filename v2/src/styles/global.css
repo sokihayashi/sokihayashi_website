@@ -348,6 +348,17 @@ html.lenis body {
   stroke: var(--fg);
 }
 /* 帯で覆っているあいだは、下で起きるフェードを止める(待ち時間を増やさない)。 */
+/* 粒で移るあいだ(src/scripts/gsplat.ts): 上のメニューは粒にせず、その場に残して、粒の面より上に置く。
+   トップで傾いて散っていたメニューは、まっすぐな位置に戻す。 */
+html.gs-on .site-bar {
+  z-index: 1001;
+  view-transition-name: site-bar;
+}
+html.gs-on .site-bar .mainnav a,
+html.gs-on .site-bar .logo {
+  transform: none !important;
+}
+
 html.band-wiping::view-transition-group(*),
 html.band-wiping::view-transition-old(*),
 html.band-wiping::view-transition-new(*) {
