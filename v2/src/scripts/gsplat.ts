@@ -36,13 +36,25 @@ void main(){
   float lum = dot(c, vec3(0.299, 0.587, 0.114));
   // 奥行き: ほどけると、面が厚みを持つ。明るい所が手前。粒ごとに少し前後する。
   float zw = (isB ? uZb : 0.0) - ((lum - 0.5) * 0.26 + (h(sd + 1.0) - 0.5) * 0.045) * uD * L;
+  // 点は、まっすぐ動かない。押した場所のまわりを巻き(点ごとに速さが違う)、見えない流れに揺られる。
+  // いまのページは巻きながら出ていき、次のページは同じ回り方で巻き戻りながら、元の場所に着く。
+  vec2 r0 = p0 - uO;
+  float rr = length(r0) / uReach;
+  float th = L * (0.55 + 0.9 * (h(sd + 2.0) - 0.5) + 0.35 * sin(rr * 5.0 - uTime * 1.4)) * (isB ? -1.0 : 1.0);
+  vec2 pw = uO + mat2(cos(th), sin(th), -sin(th), cos(th)) * r0;
+  vec3 flow = vec3(
+    sin(p0.y * 0.011 + uTime * 1.9 + sd * 2.0) + 0.5 * sin(p0.x * 0.027 - uTime * 2.7),
+    sin(p0.x * 0.013 - uTime * 1.6 + sd * 2.0) + 0.5 * sin(p0.y * 0.031 + uTime * 2.3),
+    sin((p0.x + p0.y) * 0.009 + uTime * 1.3 + sd * 3.0));
+  pw += flow.xy * 0.035 * uD * L;
+  zw += flow.z * 0.05 * uD * L;
   float depth = uD + zw - uCam * uZb; // 視点からの距離
   float a = (isB ? uBin : smoothstep(0.0, 0.06, L)) * smoothstep(0.1, 0.38, depth / uD);
   if (depth < 0.08 * uD || a < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); return; }
   // 透視: 消える点は、押した場所。視点は、進むあいだ少し横に揺れる(手前と奥のずれが見える)。
   float s = uD / depth;
   vec2 sway = vec2(sin(uTime * 0.9), cos(uTime * 0.7)) * 0.035 * uD * sin(3.14159 * clamp(uCam, 0.0, 1.0));
-  vec2 p = uO + (p0 - uO) * s + sway * (1.0 - s);
+  vec2 p = uO + (pw - uO) * s + sway * (1.0 - s);
   // 粒は丸いまま。元の大きさ(となりと重なって絵になる)から、点の大きさへ縮む。近づけば大きく見えるが、上限を置く。
   float sig = min(uCell * mix(0.56, 0.34, L) * s, 3.6);
   sig = max(sig, 0.62);
@@ -106,7 +118,7 @@ let wrap: HTMLElement | null = null;
 let raf = 0;
 let safety = 0;
 // t1: いまのページがほどける波 / cam: 視点の進み / t2: 次のページが締まる波 / bin: 次のページの現れ
-const S = { t1: 0, cam: 0, t2: 0, bin: 0, x: 0, y: 0, t0: 0 };
+const S = { t1: 0, cam: 0, t2: 0, bin: 0, x: 0, y: 0, t0: 0, tm: -1 };
 
 const ease = (x: number) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 
@@ -209,7 +221,7 @@ function draw(g: GL) {
     gl.uniform1f(u.uT2, S.t2);
     gl.uniform1f(u.uCam, S.cam);
     gl.uniform1f(u.uBin, S.bin);
-    gl.uniform1f(u.uTime, (performance.now() - S.t0) / 1000);
+    gl.uniform1f(u.uTime, S.tm >= 0 ? S.tm : (performance.now() - S.t0) / 1000);
     gl.uniform1f(u.uReach, reach);
     gl.uniform1f(u.uCell, CELL);
     gl.uniform1f(u.uLod0, Math.max(0, Math.log2(CELL * SNAP)));
@@ -406,6 +418,13 @@ function run(dur: number, step: (x: number) => void): Promise<void> {
   });
 }
 
+const phase1 = (p: number) => ({ t1: ease(p), cam: CAM0 * p * p });
+const phase2 = (p: number, cam0: number) => ({
+  bin: Math.min(1, p / 0.22),
+  cam: cam0 + (1 - cam0) * ease(Math.min(1, p / 0.86)),
+  t2: ease(Math.max(0, (p - 0.42) / 0.58)),
+});
+
 /** 次のページを待つあいだも、視点はゆっくり進み続ける(止まらない)。 */
 function idle() {
   const a = performance.now();
@@ -428,13 +447,10 @@ export async function loosen(x: number, y: number): Promise<boolean> {
   upload(g, g.texA, a.c);
   upload(g, g.texB, a.c);
   bgA = bgB = a.bg;
-  Object.assign(S, { t1: 0, cam: 0, t2: 0, bin: 0, x, y, t0: performance.now() });
+  Object.assign(S, { t1: 0, cam: 0, t2: 0, bin: 0, x, y, t0: performance.now(), tm: -1 });
   mount(g);
   safety = window.setTimeout(clear, 6000); // 何かあっても、覆ったままにはしない
-  await run(T_LOOSE, (p) => {
-    S.t1 = ease(p);
-    S.cam = CAM0 * p * p;
-  });
+  await run(T_LOOSE, (p) => Object.assign(S, phase1(p)));
   idle();
   return true;
 }
@@ -456,11 +472,7 @@ export async function tighten() {
   upload(g, g.texB, b.c);
   bgB = b.bg;
   const cam0 = S.cam;
-  await run(T_TIGHT, (p) => {
-    S.bin = Math.min(1, p / 0.22);
-    S.cam = cam0 + (1 - cam0) * ease(Math.min(1, p / 0.86));
-    S.t2 = ease(Math.max(0, (p - 0.42) / 0.58));
-  });
+  await run(T_TIGHT, (p) => Object.assign(S, phase2(p, cam0)));
   // 粒の絵から、本物のページへ。
   await wrap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 110, fill: 'forwards' }).finished.catch(() => undefined);
   clear();
@@ -484,9 +496,16 @@ if (typeof window !== 'undefined') {
       upload(G, G.texB, b.c);
       bgA = (kept ?? b).bg;
       bgB = b.bg;
-      Object.assign(S, { t1, cam, t2, bin, x, y, t0: performance.now() - 900 });
+      Object.assign(S, { t1, cam, t2, bin, x, y, t0: performance.now() - 900, tm: -1 });
       mount(G);
       cancelAnimationFrame(raf);
+      draw(G);
+      return true;
+    },
+    /** 動きの ms ミリ秒目の1コマ(待ち時間なしで通したとき)。先に still() を1回呼んでおく。 */
+    at(ms: number) {
+      if (!G) return false;
+      Object.assign(S, { t1: 1, t2: 0, bin: 0, tm: ms / 1000 }, ms < T_LOOSE ? phase1(ms / T_LOOSE) : phase2(Math.min(1, (ms - T_LOOSE) / T_TIGHT), CAM0));
       draw(G);
       return true;
     },
