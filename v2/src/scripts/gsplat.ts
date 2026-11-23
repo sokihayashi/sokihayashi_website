@@ -20,8 +20,8 @@ const VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec2 aQ;
 layout(location=1) in vec3 aI; // 粒の元の場所(px)、乱数
-uniform vec2 uView, uO;
-uniform float uT1, uT2, uCam, uBin, uTime, uReach, uCell, uLod0, uLayer, uD, uZb, uDpr;
+uniform vec2 uView, uO, uV, uOff;
+uniform float uT1, uT2, uCam, uBin, uTime, uReach, uCell, uLod0, uLayer, uD, uZb, uDpr, uRoll;
 uniform sampler2D uA, uB;
 out vec2 vQ; out vec4 vCol;
 float h(float n){ return fract(sin(n * 127.1) * 43758.5453); }
@@ -51,10 +51,12 @@ void main(){
   float depth = uD + zw - uCam * uZb; // 視点からの距離
   float a = (isB ? uBin : smoothstep(0.0, 0.06, L)) * smoothstep(0.1, 0.38, depth / uD);
   if (depth < 0.08 * uD || a < 0.004) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = vec4(0.0); return; }
-  // 透視: 消える点は、押した場所。視点は、進むあいだ少し横に揺れる(手前と奥のずれが見える)。
+  // 透視。視点は、まっすぐ奥へ進まない: 横へ弧を描いて回り込み(uOff)、傾き(uRoll)、向かう先(uV)も弧を描いて動く。
+  // はじまりと終わりでは、ずれも傾きも 0 になり、ページはそのままの位置に重なる。
   float s = uD / depth;
-  vec2 sway = vec2(sin(uTime * 0.9), cos(uTime * 0.7)) * 0.035 * uD * sin(3.14159 * clamp(uCam, 0.0, 1.0));
-  vec2 p = uO + (pw - uO) * s + sway * (1.0 - s);
+  vec2 rel = pw - uV - uOff;
+  rel = mat2(cos(uRoll), sin(uRoll), -sin(uRoll), cos(uRoll)) * rel;
+  vec2 p = uV + rel * s;
   // 粒は丸いまま。元の大きさ(となりと重なって絵になる)から、点の大きさへ縮む。近づけば大きく見えるが、上限を置く。
   float sig = min(uCell * mix(0.56, 0.34, L) * s, 3.6);
   sig = max(sig, 0.62);
@@ -144,7 +146,7 @@ function build(): GL | null {
   const prog = mk(VS, FS);
   const back = mk(BVS, BFS);
   const U = (p: WebGLProgram, names: string[]) => Object.fromEntries(names.map((n) => [n, gl.getUniformLocation(p, n)]));
-  const names = ['uView', 'uO', 'uT1', 'uT2', 'uCam', 'uBin', 'uTime', 'uReach', 'uCell', 'uLod0', 'uLayer', 'uD', 'uZb', 'uDpr', 'uA', 'uB', 'uBgA', 'uBgB'];
+  const names = ['uView', 'uO', 'uV', 'uOff', 'uRoll', 'uT1', 'uT2', 'uCam', 'uBin', 'uTime', 'uReach', 'uCell', 'uLod0', 'uLayer', 'uD', 'uZb', 'uDpr', 'uA', 'uB', 'uBgA', 'uBgB'];
   const vao = gl.createVertexArray()!;
   gl.bindVertexArray(vao);
   const quad = gl.createBuffer()!;
@@ -213,10 +215,25 @@ function draw(g: GL) {
   gl.bindTexture(gl.TEXTURE_2D, g.texB);
   const reach = Math.max(Math.hypot(S.x, S.y), Math.hypot(g.w - S.x, S.y), Math.hypot(S.x, g.h - S.y), Math.hypot(g.w - S.x, g.h - S.y));
   const D = g.h * 1.2; // 視点から面までの距離
+  // 視点の道すじ。向かう先は、押した場所から画面のまん中へ、弧を描いて移る。
+  // 視点そのものは、横へふくらんで回り込み(ねじを巻くような道)、途中で傾く。進みが 0 と 1 では、どれも 0。
+  const c = Math.min(1, Math.max(0, S.cam));
+  const arc = Math.sin(Math.PI * c);
+  const tx = g.w / 2 - S.x, ty = g.h * 0.45 - S.y;
+  const tl = Math.hypot(tx, ty) || 1;
+  const side = S.x > g.w / 2 ? 1 : -1; // 押した側と反対へふくらむ
+  const vx = S.x + tx * c + (-ty / tl) * side * g.h * 0.16 * arc;
+  const vy = S.y + ty * c + (tx / tl) * side * g.h * 0.16 * arc;
+  const ph = Math.atan2(ty, tx) + side * (1.2 + 3.4 * c);
+  const ox = Math.cos(ph) * D * 0.2 * arc, oy = Math.sin(ph) * D * 0.2 * arc;
+  const roll = side * 0.5 * arc;
   const set = (p: WebGLProgram, u: Record<string, WebGLUniformLocation | null>) => {
     gl.useProgram(p);
     gl.uniform2f(u.uView, g.w, g.h);
     gl.uniform2f(u.uO, S.x, S.y);
+    gl.uniform2f(u.uV, vx, vy);
+    gl.uniform2f(u.uOff, ox, oy);
+    gl.uniform1f(u.uRoll, roll);
     gl.uniform1f(u.uT1, S.t1);
     gl.uniform1f(u.uT2, S.t2);
     gl.uniform1f(u.uCam, S.cam);
@@ -296,6 +313,15 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
   const bg = [px[0] / 255, px[1] / 255, px[2] / 255];
   const live = document.querySelector<HTMLCanvasElement>('[data-morph-root] canvas[data-canvas]');
   const liveCopy = live ? await morphCanvas() : null;
+  // ページに入るときの動き(下から上がってくる見出しなど)の途中で写すと、着いたときに二重に見える。
+  // 写すあいだだけ、動き終わった位置に置いて測り、すぐ元に戻す(画面には出ない)。
+  const rv = [...document.querySelectorAll<HTMLElement>('[data-reveal]')];
+  const rvKeep = rv.map((el) => [el.style.transform, el.style.opacity, el.style.visibility]);
+  for (const el of rv) {
+    el.style.transform = 'none';
+    el.style.opacity = '1';
+    el.style.visibility = 'visible';
+  }
   const inView = (r: DOMRect) => r.width >= 1 && r.height >= 1 && r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
   for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
     if (el.closest('.band-wipe')) continue;
@@ -348,14 +374,18 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
     g.font = `${cs.fontStyle} ${cs.fontWeight} ${fs}px ${cs.fontFamily}`;
     (g as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = cs.letterSpacing === 'normal' ? '0px' : cs.letterSpacing;
     g.textBaseline = 'alphabetic';
+    // 行の箱の中での、文字の基準線の位置(書体の上端・下端から求める)。
+    const mt = g.measureText('Mg') as TextMetrics & { fontBoundingBoxAscent?: number; fontBoundingBoxDescent?: number };
+    const asc = mt.fontBoundingBoxAscent ?? fs * 0.8, dsc = mt.fontBoundingBoxDescent ?? fs * 0.2;
+    const base = (top: number, hh: number) => top + (hh - (asc + dsc)) / 2 + asc;
     if (rects.length === 1) {
       const r = rects[0];
-      g.fillText(up ? txt.toUpperCase() : txt, r.left, r.top + r.height / 2 + fs * 0.35);
+      g.fillText(up ? txt.toUpperCase() : txt, r.left, base(r.top, r.height));
     } else if (raw.length <= 700) {
       // 複数行: 1文字ずつ位置を見て、行に分ける。
       let line = '', lx = 0, ly = -1e9, lh = 0;
       const flush = () => {
-        if (line.trim()) g.fillText(up ? line.toUpperCase() : line, lx, ly + lh / 2 + fs * 0.35);
+        if (line.trim()) g.fillText(up ? line.toUpperCase() : line, lx, base(ly, lh));
         line = '';
       };
       for (let i = 0; i < raw.length; i++) {
@@ -378,6 +408,9 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
       g.globalAlpha = 1;
     }
   }
+  rv.forEach((el, i) => {
+    [el.style.transform, el.style.opacity, el.style.visibility] = rvKeep[i];
+  });
   return { c, bg };
 }
 
