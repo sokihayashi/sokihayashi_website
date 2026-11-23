@@ -634,6 +634,62 @@ O sFrame(){
   o.gate = 1.0; o.line = 1.0; o.par = 0.6;
   return o;
 }
+// 29 粒(デジタル。2 光の粒 の入れ替え): 帯が、細かい四角い粒になる。光として足さない(白く飛ばさない)。
+//   速く引いた所は細い筋、ゆっくり引いた所は帯の幅(写真が粒で読める)。描いた直後は、まわりから粒が飛び込む。
+//   古い所ほど、見えない流れに運ばれて ほどけ、暗い灰の霧になる。
+O sGrain(){
+  if (((gIu + gIv) % 2) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0); // 市松に間引く(規則正しい網点になる)
+  int jn2 = gJ + 1 == Mi ? 0 : gJ + 1;
+  int jp2 = gJ == 0 ? Mi - 1 : gJ - 1;
+  vec4 n1 = texelFetch(uPath, ivec2(jn2, 1), 0);
+  vec4 p1 = texelFetch(uPath, ivec2(jp2, 1), 0);
+  // 跡は等しい間隔で記録されるので、となりの跡との時間の差が、そこを引いた速さになる。
+  float dtj = (n1.w > 0.5 && n1.z > gR1.z) ? n1.z - gR1.z : ((p1.w > 0.5 && gR1.z > p1.z) ? gR1.z - p1.z : 0.05);
+  float speed = uDp / max(dtj, 0.004);
+  float wide = 1.0 - smoothstep(260.0, 1100.0, speed);
+  float tAge = uTime - gR1.z;
+  float lat = gV * mix(0.07, 1.0, wide);
+  // 帯の幅のときは、網点の並びを崩さない。細い筋のときだけ、少し散らす。
+  vec2 p = gP + gT * (gFr - 0.5 + (h2 - 0.5) * 0.6 * (1.0 - wide)) * uDp + gN * (lat + (h3 - 0.5) * 0.02 * (1.0 - wide)) * uW;
+  float inn = 1.0 - smoothstep(0.0, 0.32, tAge);
+  float a0 = h2 * 6.2832;
+  p += vec2(cos(a0), sin(a0)) * uW * (0.6 + 1.8 * h3) * inn * inn;
+  float loose = smoothstep(0.10, 0.75, gHd);
+  float amt = loose * loose * uW * (0.25 + 0.9 * h3);
+  for (int i = 0; i < 5; i++) {
+    float a = sin(p.x * 0.0058 + uTime * 0.17) * 2.1 + cos(p.y * 0.0066 - uTime * 0.13) * 2.1;
+    p += vec2(cos(a), sin(a)) * amt;
+  }
+  vec3 pc = photo(gR2.w, gUVp);
+  float l = dot(pc, vec3(0.3, 0.59, 0.11));
+  vec3 col = mix(mix(vec3(0.93, 0.92, 0.88) * (0.45 + 0.75 * l), pc * 1.08 + 0.03, wide), vec3(0.42, 0.41, 0.39) * (0.35 + 0.65 * l), loose);
+  float r = mix(mix(0.85, uW / float(NVi) * 0.72, wide), 0.7, loose);
+  float alive = gR1.w * smoothstep(Mf, Mf - 22.0, gAge);
+  O o = dotAt(vec3(p, 0.0), vec2(r * alive), col, 0.0, 1.0);
+  o.gate = 1.0;
+  return o;
+}
+// 30 割れる(22 の作り直し): 帯が、幅いっぱいの大きな破片に割れて、その場で ずれる。
+//   飛び散らない・回りながら落ちない。切り口は帯の切れ目と同じく、まっすぐ。ペン先の近くは、まだ割れていない。少し古くなった所で、一気に割れる。
+O sShards(){
+  O o = base();
+  float Ls = 26.0;
+  float bu = floor((float(gIu) + 7.0 * sin(float(gIu) * 0.045)) / Ls); // 切り口は まっすぐ(帯の切れ目と同じ)。長さは不ぞろい
+  float hb = fract(sin(bu * 37.1 + 1.7) * 43758.5453), hb2 = fract(hb * 13.7 + 0.3), hb3 = fract(hb * 7.3 + 0.61);
+  int jb = int(mod((bu + 0.5) * Ls * 0.5, Mf));
+  vec4 b0 = texelFetch(uPath, ivec2(jb, 0), 0);
+  vec3 bc = vec3(b0.xy, 0.0);
+  vec2 bn = vec2(-b0.w, b0.z);
+  float ageB = mod(uK - 1.0 - float(jb), Mf) / Mf;
+  float t = smoothstep(0.030 + 0.02 * hb3, 0.036 + 0.02 * hb3, ageB);
+  float ang = t * (hb3 - 0.5) * 0.8;
+  mat2 R = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
+  vec2 off = (bn * (hb - 0.5) * 0.95 + b0.zw * (hb2 - 0.5) * 0.5) * uW * t;
+  o.corner = vec3(bc.xy + R * (gX0.xy - bc.xy) + off, 0.0);
+  o.centre = vec3(bc.xy + R * (gC0.xy - bc.xy) + off, 0.0);
+  o.line = 1.0;
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -663,6 +719,8 @@ O stateOf(int id){
   if (id == 25) return sRipple();
   if (id == 26) return sPhoto3D();
   if (id == 27) return sBig();
+  if (id == 29) return sGrain();
+  if (id == 30) return sShards();
   return sFrame();
 }
 
@@ -1330,27 +1388,44 @@ export function mountMorph(root: HTMLElement) {
   }
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
-  const KINDS = 29;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8]; // アナログらしさ(画面全体の質感に使う)
+  const KINDS = 31;
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
   const FAM: Record<number, string> = {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
+    8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
   type Sec = { n: [number, number]; len: number; pool: number[]; sty: number[] };
-  const SECS: Record<string, Sec> = {
-    intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
-    A: { n: [1, 2], len: 0.95, pool: [0, 14, 1, 23], sty: [0, 1, 3] },
-    B: { n: [2, 3], len: 0.5, pool: [12, 15, 16, 2, 24], sty: [1, 3, 2] },
-    chorus: { n: [1, 2], len: 1.2, pool: [27, 25, 22, 1], sty: [3, 0] },
-    drop: { n: [5, 8], len: 0.2, pool: [13, 22, 12, 24, 19, 2, 15, 27, 25, 14], sty: [2] },
-    P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
-    C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
-  };
+  // 入れ替えた並び(data-set="sharp"。2026-11-23): 29表現を1つずつ見て、締まっているものに絞った。
+  //   残す: 0 帯 / 1 立体の紙 / 17 奥行きの点 / 14 蛇腹 / 19 垂れる
+  //   戻す: 8 点群の線 / 18 線だけの帯 / 20 流れに乗る
+  //   入れ替え: 2 光の粒 → 29 粒、22 割れる → 30 割れる
+  //   外す: 12 画素の落下 / 13 塵 / 15 棒の街 / 16 房 / 23 ばね / 24 積もる / 25 波紋 / 27 一枚を大きく(全面に写真を敷かない)
+  const sharp = root.dataset.set === 'sharp';
+  const SECS: Record<string, Sec> = sharp
+    ? {
+        intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
+        A: { n: [1, 2], len: 0.95, pool: [0, 18, 1, 14], sty: [0, 1, 3] },
+        B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [1, 3, 2] },
+        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 30, 29], sty: [3, 0] },
+        drop: { n: [5, 8], len: 0.2, pool: [29, 30, 8, 18, 20, 19], sty: [2] },
+        P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
+        C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [1] },
+      }
+    : {
+        intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
+        A: { n: [1, 2], len: 0.95, pool: [0, 14, 1, 23], sty: [0, 1, 3] },
+        B: { n: [2, 3], len: 0.5, pool: [12, 15, 16, 2, 24], sty: [1, 3, 2] },
+        chorus: { n: [1, 2], len: 1.2, pool: [27, 25, 22, 1], sty: [3, 0] },
+        drop: { n: [5, 8], len: 0.2, pool: [13, 22, 12, 24, 19, 2, 15, 27, 25, 14], sty: [2] },
+        P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
+        C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
+      };
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
   const FORM = ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
   const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
