@@ -27,11 +27,17 @@
 //   ほかの帯をまたぐところには影が落ちる(黒い地には影は見えない)。
 //   描いているあいだ、先端は指に持ち上げられて浮く。離すと、すっと降りる。写真は歪めない。
 //
+// 表現を繋ぐ版(data-fx): 帯を土台に、指を離すたびに表現が切り替わる。いまは 帯 ⇄ 粒 の2つ。
+//   帯 → 粒 … 帯の画素がそのまま粒になり、ほどけて霧になる
+//   粒 → 帯 … 次に描いた線に粒が集まり、指を離すと、粒が帯に組み直る
+//   行き先の区切り(mix)は、粒にせず帯のまま残す(押せるように)。
+//
 // スマホを基準にしている: 指で描くだけ。送る操作はない。
 // 誰も触っていないあいだは、ペンがひとりでに描く。写真は歪めない・透かさない。
 
 import { navigate } from 'astro:transitions/client';
 import { coverFromStroke } from './band';
+import { createDots, type DotsEnv, type DotsPull } from './fx-dots';
 
 type Pt = { x: number; y: number };
 
@@ -44,6 +50,7 @@ interface Seg {
   calm: boolean; // 太さが落ち着いた
   prev: Seg | null; // ひと続きに描いた、ひとつ前の帯
   nav: number; // 行き先の番号。作品の帯なら -1
+  fx: boolean; // いまは粒になっている(帯としては描かない)
   sid: number; // ひと筆の番号(同じ筆で描いた帯は、同じ番号)
   u0: number; // 筆の描きはじめから、この帯の始まりまでの長さ
   len: number;
@@ -92,6 +99,9 @@ export function mountDraw(root: HTMLElement): () => void {
   const html = document.documentElement;
   const gum = root.hasAttribute('data-gum'); // 描く帯もゴムにする版
   const paper = root.hasAttribute('data-paper'); // 紙の版(浮きと影)
+  // 表現を繋ぐ版。0=帯 / 1=粒。
+  const dots = root.hasAttribute('data-fx') ? createDots(root, canvas, works.map((x) => x.img)) : null;
+  let fxState = 0;
   let strokeId = 0;
   let liftSid = -1; // いま(または直前に)持ち上げている筆
   let lift = 0; // 先端の浮き(0〜1)
@@ -181,6 +191,7 @@ export function mountDraw(root: HTMLElement): () => void {
     dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
+    dots?.resize(w, h, dpr);
     const small = Math.min(w, h) < 640;
     W = small ? Math.round(Math.min(w, h) * 0.27) : 168;
     L = Math.round(W * 1.5);
@@ -224,6 +235,7 @@ export function mountDraw(root: HTMLElement): () => void {
       calm: !gum,
       prev,
       nav: -1,
+      fx: false,
       sid: prev ? prev.sid : ++strokeId,
       u0: prev ? prev.u0 + prev.len : 0,
       len: 0,
@@ -252,6 +264,8 @@ export function mountDraw(root: HTMLElement): () => void {
       nextWork = (nextWork + 1) % works.length;
       sinceNav++;
     }
+    // 粒のあいだに描いた線は、帯としては描かない(粒が集まって線になる)。
+    s.fx = !!dots && fxState === 1 && s.nav < 0;
     segs.push(s);
     if (pointerDown || releasing) stroke.push(s);
     return s;
@@ -447,8 +461,29 @@ export function mountDraw(root: HTMLElement): () => void {
       sinceNav = Math.max(0, sinceNav - 1);
     }
   }
+  const env = (): DotsEnv => ({ W, w, h, dpr, offX, offY, dx, dy });
+  // 指を離したら、表現を切り替える。
+  function switchFx(now: number) {
+    if (!dots) return;
+    if (bloom) closeBloom();
+    const list = segs.filter((s) => s.nav < 0 && !s.trimming && s.pts.length > 1 && s !== bloom?.seg);
+    if (fxState === 0) {
+      for (const s of list) if (!s.pat) lock(s);
+      dots.toDots(list, env(), now);
+      for (const s of list) s.fx = true;
+      fxState = 1;
+    } else {
+      for (const s of list) if (!s.pat) lock(s);
+      dots.toBands(list, env(), now, () => {
+        for (const s of list) s.fx = false;
+      });
+      fxState = 0;
+    }
+  }
   function penUp() {
     if (!cur) return;
+    let drawn = 0;
+    for (let s: Seg | null = cur; s; s = s.prev) drawn += s.len;
     settleTip();
     cur.open = false;
     if (cur.pts.length < 2) dropSeg(cur); // 点だけで終わったものは残さない
@@ -461,6 +496,7 @@ export function mountDraw(root: HTMLElement): () => void {
       s.trimming = true;
       live--;
     }
+    if (dots && drawn > W * 1.2) switchFx(performance.now() / 1000);
   }
 
   let labelText = idleLabel;
@@ -476,7 +512,7 @@ export function mountDraw(root: HTMLElement): () => void {
     const py = y - offY;
     for (let i = segs.length - 1; i >= 0; i--) {
       const s = segs[i];
-      if (s.trimming) continue;
+      if (s.trimming || s.fx) continue;
       if (px < s.x0 - W / 2 || px > s.x1 + W / 2 || py < s.y0 - W / 2 || py > s.y1 + W / 2) continue;
       for (let j = 1; j < s.pts.length; j++) {
         const a = s.pts[j - 1];
@@ -947,7 +983,7 @@ export function mountDraw(root: HTMLElement): () => void {
         i = j;
       }
     } else {
-      for (const s of segs) paintSeg(s);
+      for (const s of segs) if (!s.fx) paintSeg(s);
     }
     if (bloom && bloom.t > 0.001) paintBloom(bloom);
     paintTape();
@@ -961,6 +997,25 @@ export function mountDraw(root: HTMLElement): () => void {
       }
     }
     root.classList.toggle('is-open', !!bloom && bloom.dir > 0);
+
+    if (dots) {
+      // 筆が指から遅れている長さ(=指の速さ)。速く引いたところは細い筋に、ゆっくり引いたところは帯の幅に広がる。
+      // ひとりでに描くペンは、いつも帯の幅で描く。
+      let pull: DotsPull | null = null;
+      if (cur && fxState === 1) {
+        // いま描いている線の帯。行き先の区切りには粒を呼ばない。
+        const list: Seg[] = [];
+        for (let s: Seg | null = cur; s; s = s.prev) {
+          if (s.nav >= 0) continue;
+          if (!s.pat) lock(s);
+          list.push(s);
+        }
+        const lag = pointerDown || releasing ? Math.hypot(finger.x - pen.x, finger.y - pen.y) : 0;
+        const e = Math.max(0, Math.min(1, (lag - 12) / 46));
+        pull = { segs: list, spread: 1 - 0.93 * e * e * (3 - 2 * e) };
+      }
+      dots.frame(dt, now / 1000, env(), pull);
+    }
   }
 
   // ---- 入力 ----
@@ -1113,6 +1168,7 @@ export function mountDraw(root: HTMLElement): () => void {
 
   return () => {
     cancelAnimationFrame(raf);
+    dots?.dispose();
     root.removeEventListener('click', onClickCapture, true);
     root.removeEventListener('pointerdown', onDown);
     window.removeEventListener('pointermove', onMove);
