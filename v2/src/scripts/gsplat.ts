@@ -457,6 +457,7 @@ function mount(g: GL) {
 }
 
 function clear() {
+  busy = false;
   cancelAnimationFrame(raf);
   window.clearTimeout(safety);
   wrap?.remove();
@@ -490,10 +491,31 @@ function idle() {
 
 let shotA: Shot | null = null;
 
+// 移っている途中は、押しても何も起きないようにする。
+// (途中でもう一度押すと、別の移り方が始まったり、下に来た次のページの何かを押してしまったりしていた。)
+let busy = false;
+export const isBusy = () => busy;
+export const lock = () => {
+  busy = true;
+};
+if (typeof window !== 'undefined') {
+  const block = (e: Event) => {
+    if (!busy) return;
+    if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return;
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault();
+  };
+  for (const type of ['click', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'keydown'])
+    window.addEventListener(type, block, { capture: true, passive: false });
+}
+
 /** いまのページが、(x, y) から点群にほどける。 */
 export async function loosen(x: number, y: number): Promise<boolean> {
   G ??= build();
-  if (!G) return false;
+  if (!G) {
+    busy = false;
+    return false;
+  }
   const g = G;
   layout(g);
   const a = await snap();
@@ -513,7 +535,10 @@ export async function loosen(x: number, y: number): Promise<boolean> {
 /** 同じ粒が、次のページの絵を作る場所へ移り、元の大きさに戻って、次のページになる。 */
 export async function tighten() {
   const g = G;
-  if (!g || !wrap || !shotA) return;
+  if (!g || !wrap || !shotA) {
+    busy = false;
+    return;
+  }
   mount(g); // ページが替わると <html> の class が置き換わる。付け直す
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   // 画面内の画像が出そろうのを、少しだけ待つ。

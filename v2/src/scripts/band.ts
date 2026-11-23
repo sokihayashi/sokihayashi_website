@@ -6,7 +6,7 @@
 //
 // [data-band] の付いた要素(帯の切れ端)から始まるときは、その帯の形から太りはじめる。
 
-import { loosen, tighten } from './gsplat';
+import { isBusy, lock, loosen, tighten } from './gsplat';
 
 const ANGLE = 28; // 画面の長辺からの角度(度)
 const COVER = 300; // 覆うまで(ms)
@@ -195,10 +195,16 @@ if (typeof window !== 'undefined' && !(window as any).__band) {
   document.addEventListener('astro:before-preparation', (ev) => {
     if (reduced()) return;
     const e = ev as Event & { loader: () => Promise<void> };
+    // 粒で移っている途中の、次の移動は受けない。
+    if (isBusy()) {
+      e.preventDefault();
+      return;
+    }
     const load = e.loader;
     // 試作: /lab/morph-sharp/ から出るときだけ、帯の代わりに ガウシアンの粒でほどけて移る。
     if (document.querySelector('[data-morph-root][data-set="sharp"]')) {
       const o = origin && performance.now() - origin.at < 1500 ? origin : null;
+      lock(); // ここから着くまで、押しても何も起きない
       e.loader = async () => {
         const [, ok] = await Promise.all([load(), loosen(o ? o.x : window.innerWidth / 2, o ? o.y : window.innerHeight / 2)]);
         gs = ok;
