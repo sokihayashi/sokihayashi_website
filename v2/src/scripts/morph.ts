@@ -1510,7 +1510,9 @@ export function mountMorph(root: HTMLElement) {
   let swN = -1;
   let swAt = 1e9;
   let swK = 0;
-  const RET = 110; // 新しくこれだけ描くと、前の表現の帯は巻き取られきる(跡の数)
+  // 継ぎ目のあと、新しくこれだけ描くと、前の表現の帯は巻き取られきる(跡の数)。切り替わるたびに決める。
+  // 短すぎると、前の帯が一気に消えて、画面の帯が短くなりすぎる(本人の収録で確認)。前の帯の長さの半分にする。
+  let RET = 110;
   /** 前の表現の帯が残っているうちは、次へ進まない(残したまま進むと、残りが一度に次の表現へ変わってしまう)。 */
   const hold4 = () => {
     if (swN >= 0 && K - swK < RET + RAMP) phase = Math.min(phase, swN + 0.999);
@@ -1530,6 +1532,7 @@ export function mountMorph(root: HTMLElement) {
       swN = A;
       swAt = now;
       swK = K;
+      RET = Math.max(110, Math.min(M / 2, 0.5 * Math.min(K, M)));
     }
     sFrom = seqAt(A);
     sTo = seqAt(A + 1);
