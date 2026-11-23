@@ -309,9 +309,10 @@ O sScan(){
   float band = exp(-pow((pos - sweep) * 18.0, 2.0));
   vec3 pc = photo(gR2.w, gUVp);
   float l = dot(pc, vec3(0.3, 0.59, 0.11));
-  vec3 col = mix(vec3(0.1, 0.75, 0.7) * (0.12 + 0.35 * l), vec3(1.0), band);
+  // 色は付け替えない(以前は青緑)。写真の色のまま、点の列になる。走査の光が通る所だけ白く光る。
+  vec3 col = mix(pc * 1.05 + 0.02, vec3(1.0), band * 0.85);
   bool on = (gIu % 2) == 0;
-  return dotAt(c, vec2(on ? 0.75 + band * 0.8 : 0.0), col, 1.0, 0.0);
+  return dotAt(c, vec2(on ? 0.8 + band * 0.8 : 0.0), col, 1.0, 1.0);
 }
 // 9 グリッチ(デジタル): 帯の塊が、ずれる・色が割れる・止まる。
 O sGlitch(){
@@ -636,7 +637,7 @@ O sFrame(){
 }
 // 29 粒(デジタル。2 光の粒 の入れ替え): 帯が、細かい四角い粒になる。光として足さない(白く飛ばさない)。
 //   速く引いた所は細い筋、ゆっくり引いた所は帯の幅(写真が粒で読める)。描いた直後は、まわりから粒が飛び込む。
-//   古い所ほど、見えない流れに運ばれて ほどけ、暗い灰の霧になる。
+//   古い所ほど、見えない流れに運ばれて ほどけ、霧になる。色は、最後まで写真の色。
 O sGrain(){
   if (((gIu + gIv) % 2) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0); // 市松に間引く(規則正しい網点になる)
   int jn2 = gJ + 1 == Mi ? 0 : gJ + 1;
@@ -661,8 +662,8 @@ O sGrain(){
     p += vec2(cos(a), sin(a)) * amt;
   }
   vec3 pc = photo(gR2.w, gUVp);
-  float l = dot(pc, vec3(0.3, 0.59, 0.11));
-  vec3 col = mix(mix(vec3(0.93, 0.92, 0.88) * (0.45 + 0.75 * l), pc * 1.08 + 0.03, wide), vec3(0.42, 0.41, 0.39) * (0.35 + 0.65 * l), loose);
+  // 写真の色は落とさない。細い筋でも、ほどけて霧になっても、その場所の写真の色のまま。
+  vec3 col = (pc * mix(1.22, 1.08, wide) + 0.03) * mix(1.0, 0.82, loose);
   float r = mix(mix(0.85, uW / float(NVi) * 0.72, wide), 0.7, loose);
   float alive = gR1.w * smoothstep(Mf, Mf - 22.0, gAge);
   O o = dotAt(vec3(p, 0.0), vec2(r * alive), col, 0.0, 1.0);
@@ -1406,14 +1407,16 @@ export function mountMorph(root: HTMLElement) {
   //   戻す: 8 点群の線 / 18 線だけの帯 / 20 流れに乗る
   //   入れ替え: 2 光の粒 → 29 粒、22 割れる → 30 割れる
   //   外す: 12 画素の落下 / 13 塵 / 15 棒の街 / 16 房 / 23 ばね / 24 積もる / 25 波紋 / 27 一枚を大きく(全面に写真を敷かない)
+  //   本人の評価のあとで外した: 18 線だけの帯(写真の色を落として線にしている)/ 30 割れる(写真が分かれているだけ。割れる瞬間が無い)
+  //   決まり: 写真が持っている色は落とさない(色を付け替える表現は、一段弱い)。8 は青緑をやめて、写真の色の点にした。
   const sharp = root.dataset.set === 'sharp';
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
-        A: { n: [1, 2], len: 0.95, pool: [0, 18, 1, 14], sty: [0, 1, 3] },
+        A: { n: [1, 2], len: 0.95, pool: [0, 1, 14], sty: [0, 1, 3] },
         B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [1, 3, 2] },
-        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 30, 29], sty: [3, 0] },
-        drop: { n: [5, 8], len: 0.2, pool: [29, 30, 8, 18, 20, 19], sty: [2] },
+        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 29], sty: [3, 0] },
+        drop: { n: [5, 8], len: 0.2, pool: [29, 8, 20, 19, 17, 14], sty: [2] },
         P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
         C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [1] },
       }
