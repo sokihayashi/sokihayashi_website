@@ -51,11 +51,47 @@ vec3 shade(vec3 base, vec3 n, vec3 v, vec3 T, vec3 wp, float iri, float rim, flo
   col = mix(col, vec3(back / (0.5 + dot(lp - wp, lp - wp) * 0.22) + 0.012), rim);
   return col;
 }
+// 貼り込み: 作品の写真を、切り抜いたステッカーのように、向きも大きさも ばらばらに 重ねて貼る。
+// 面の向きで 貼る方向を選び(3方向)、3層ぶん重ねる。dens が上がるほど、1枚ずつ増えていく。
+vec4 stickers(sampler2D atlas, float np, vec3 p, vec3 n, float dens){
+  vec3 an = abs(n); vec2 uv; float ax;
+  if (an.x > an.y && an.x > an.z) { uv = vec2(-p.z * sign(n.x), p.y); ax = 0.0; }
+  else if (an.y > an.z) { uv = p.xz; ax = 1.0; }
+  else { uv = vec2(p.x * sign(n.z), p.y); ax = 2.0; }
+  vec4 acc = vec4(0.0);
+  for (int L = 0; L < 3; L++) {
+    float fl = float(L);
+    vec2 q = uv * (1.05 + fl * 0.7) + vec2(fl * 3.7, ax * 5.3 + fl * 1.9);
+    vec2 g = floor(q);
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+      vec2 c = g + vec2(float(i), float(j));
+      vec3 sd = vec3(c, fl * 13.0 + ax * 29.0);
+      float r0 = h31(sd), r1 = h31(sd + 1.3), r2 = h31(sd + 2.9), r3 = h31(sd + 4.1), r4 = h31(sd + 6.7), r5 = h31(sd + 8.3), r6 = h31(sd + 9.9);
+      if (r4 > dens) continue;
+      vec2 d = q - (c + 0.5 + (vec2(r0, r1) - 0.5) * 0.7);
+      float a = (r2 - 0.5) * 1.6, cs = cos(a), sn = sin(a);
+      d = vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+      float hw = 0.34 + 0.3 * r3, hh = hw / 1.5, kind = floor(r5 * 4.0), sdf, edge = 0.03;
+      vec2 e = d;
+      if (kind < 0.5) sdf = max(abs(d.x) - hw, abs(d.y) - hh);                                     // 四角いステッカー(白フチ)
+      else if (kind < 1.5) { sdf = length(d) - hh * 1.2; }                                        // 丸く抜く
+      else if (kind < 2.5) { sdf = max(abs(d.x) - hw, abs(d.y) - hh) + (n3(vec3(d * 11.0, r0 * 50.0)) - 0.5) * 0.11; edge = 0.0; } // 手で ちぎった紙
+      else { e.x = d.x - d.y * 0.53; sdf = max(abs(e.x) - hw, abs(e.y) - hh); }                   // 斜め28度に切る
+      if (sdf < 0.05 && sdf >= 0.0) acc.rgb *= mix(0.5, 1.0, sdf / 0.05);                          // 下の1枚に落ちる影
+      if (sdf < 0.0) {
+        vec2 pu = clamp(e / vec2(hw, hh) * 0.5 + 0.5, 0.01, 0.99);
+        vec3 col = texture2D(atlas, vec2((floor(r6 * np) + pu.x) / np, pu.y)).rgb;
+        acc = vec4(sdf > -edge ? vec3(0.96) : col, 1.0);
+      }
+    }
+  }
+  return acc;
+}
 `;
 
 type Subject = { name: string; geo: THREE.BufferGeometry | null; p: Float32Array; n: Float32Array; area: number; hx: number; hz: number };
 type Lay = 'band' | 'ribbon' | 'plane' | 'wrap' | 'surf' | 'blob';
-const PK = ['size', 'round', 'flip', 'fur', 'relief', 'scat', 'half', 'photo', 'iri', 'rim', 'lit', 'pat', 'solid', 'blob', 'trail', 'mosh', 'dith'] as const;
+const PK = ['size', 'round', 'flip', 'fur', 'relief', 'scat', 'half', 'photo', 'iri', 'rim', 'lit', 'pat', 'solid', 'blob', 'trail', 'mosh', 'dith', 'stick'] as const;
 type PKey = (typeof PK)[number];
 type State = { id: string; lay: Lay; p: Partial<Record<PKey, number>>; cam: [number, number, number] };
 // 状態 = 並び × 面の形 × 質感。見本帳の札を、組み合わせ直したもの。
@@ -74,6 +110,9 @@ const STATES: State[] = [
   { id: '虹の鱗', lay: 'surf', p: { iri: 1, size: 1.5, round: 1, flip: 0.6 }, cam: [0.2, 0.3, 4.6] },
   { id: '虹を引きずる', lay: 'surf', p: { iri: 1, solid: 1, round: 1, trail: 0.94, mosh: 1 }, cam: [-0.7, 0.1, 4.8] },
   { id: '逆光の立体', lay: 'surf', p: { rim: 1, solid: 1, round: 1 }, cam: [0, 0.1, 4.6] },
+  // 本人(2026-11-25):「3Dにも、虹色とかを除き、テクスチャとして ベタベタに ストリート的に 切り抜きとかかけて 張り込む案もある」
+  { id: '貼り込んだ立体', lay: 'surf', p: { photo: 1, stick: 1, solid: 1, round: 1, lit: 0.4 }, cam: [0.4, 0.1, 4.8] },
+  { id: '虹に貼り込む', lay: 'surf', p: { iri: 1, stick: 0.42, solid: 1, round: 1, lit: 0.3 }, cam: [-0.5, 0.15, 4.8] },
   { id: '写真の色の点', lay: 'surf', p: { photo: 1, size: 0.55, round: 1 }, cam: [0.4, 0.05, 5.0] },
   { id: '流れる点', lay: 'surf', p: { photo: 1, size: 0.5, round: 1, scat: 1, trail: 0.88 }, cam: [-0.3, 0.2, 5.2] },
   { id: '模様の這う立体', lay: 'surf', p: { pat: 1, lit: 1, solid: 1, round: 1 }, cam: [0.5, 0.2, 4.8] },
@@ -82,7 +121,7 @@ const STATES: State[] = [
   { id: '粒の塊', lay: 'blob', p: { pat: 1, lit: 1, blob: 1, size: 1.5, round: 1 }, cam: [-0.3, 0.25, 5.4] },
   { id: '毛の塊', lay: 'blob', p: { photo: 1, blob: 1, fur: 1, lit: 0.4 }, cam: [0, 0.2, 5.6] },
 ];
-const DEF: Record<PKey, number> = { size: 1.04, round: 0, flip: 0, fur: 0, relief: 0, scat: 0, half: 0, photo: 0, iri: 0, rim: 0, lit: 0, pat: 0, solid: 0, blob: 0, trail: 0, mosh: 0, dith: 0 };
+const DEF: Record<PKey, number> = { size: 1.04, round: 0, flip: 0, fur: 0, relief: 0, scat: 0, half: 0, photo: 0, iri: 0, rim: 0, lit: 0, pat: 0, solid: 0, blob: 0, trail: 0, mosh: 0, dith: 0, stick: 0 };
 
 export function mountFlow(root: HTMLElement): () => void {
   const canvas = root.querySelector<HTMLCanvasElement>('[data-canvas]')!;
@@ -224,11 +263,11 @@ export function mountFlow(root: HTMLElement): () => void {
   geo.instanceCount = N;
   const U: Record<string, { value: unknown }> = {
     uTime: { value: 0 }, uBeat: { value: 0 }, uPulse: { value: 0 }, uX: { value: 1 }, uTo: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) },
-    uPtr: { value: new THREE.Vector2() }, uTouch: { value: new THREE.Vector3() }, uTouchK: { value: 0 }, tAtlas: { value: atlas },
+    uNP: { value: NP }, uPtr: { value: new THREE.Vector2() }, uTouch: { value: new THREE.Vector3() }, uVel: { value: new THREE.Vector3() }, uTouchK: { value: 0 }, tAtlas: { value: atlas },
     uCell0: { value: slot[0].cell }, uCell1: { value: slot[1].cell }, uUvc0: { value: slot[0].uvc }, uUvc1: { value: slot[1].uvc },
   };
   PK.forEach((k) => (U[`u_${k}`] = { value: DEF[k] }));
-  const UD = `uniform float uTime, uBeat, uPulse, uX, uTo, uTouchK, ${PK.map((k) => `u_${k}`).join(', ')}; uniform vec2 uRes, uPtr, uCell0, uCell1, uUvc0, uUvc1; uniform vec3 uTouch; uniform sampler2D tAtlas;\n${NOISE}`;
+  const UD = `uniform sampler2D tAtlas; uniform float uNP, uTime, uBeat, uPulse, uX, uTo, uTouchK, ${PK.map((k) => `u_${k}`).join(', ')}; uniform vec2 uRes, uPtr, uCell0, uCell1, uUvc0, uUvc1; uniform vec3 uTouch, uVel;\n${NOISE}`;
   const mat = new THREE.ShaderMaterial({ uniforms: U, side: THREE.DoubleSide,
     vertexShader: UD + /* glsl */ `
       attribute vec3 aP0, aN0, aT0, aP1, aN1, aT1; attribute vec2 aUV0, aUV1; attribute float aKey;
@@ -248,7 +287,7 @@ export function mountFlow(root: HTMLElement): () => void {
         P += Nn * lum * 0.5 * u_relief * (1.0 + 0.25 * uPulse);                                        // 高さ: 明るい所が浮く
         for (int i = 0; i < 2; i++) P += flow(P * 1.6 + aKey, uTime * 0.25 + float(i)) * u_scat * (0.12 + 0.5 * uPulse * uPulse); // 散り
         float nf = uTouchK * exp(-dot(P - uTouch, P - uTouch) / 0.2);                                   // 指のまわり
-        P += Nn * nf * 0.22;
+        P += Nn * nf * 0.22 + uVel * nf * 0.14;                                                       // 指の速さの向きへ、あおられる
         cell *= mix(1.0, 0.25 + 1.1 * (1.0 - lum), u_half);                                            // 網点: 暗い所ほど大きい点
         float fl = 3.1416 * (u_flip * (0.5 + 0.5 * sin(uTime * 1.1 + P.x * 3.0 + P.y * 2.0 + aKey * 6.0)) * (0.35 + 0.65 * uPulse) + nf); // 返り
         vec2 qd = position.xy;
@@ -283,13 +322,15 @@ export function mountFlow(root: HTMLElement): () => void {
 
   // ---- なめらかな立体(同じ質感の式で塗る。模様の しきい値で、面と入れ替わる)
   const solidMat = new THREE.ShaderMaterial({ uniforms: U, side: THREE.DoubleSide,
-    vertexShader: UD + `varying vec3 vN, vT, vW, vV, vP; void main(){ vP = position; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vec4 mv = viewMatrix * w; vV = normalize(-mv.xyz); vN = normalize(normalMatrix * normal); vT = normalize(normalMatrix * normalize(cross(vec3(0.0, 1.0, 0.0), normal) + 1e-4)); gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: UD + /* glsl */ `varying vec3 vN, vT, vW, vV, vP;
+    vertexShader: UD + `varying vec3 vN, vT, vW, vV, vP, vNo; void main(){ vP = position; vNo = normal; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vec4 mv = viewMatrix * w; vV = normalize(-mv.xyz); vN = normalize(normalMatrix * normal); vT = normalize(normalMatrix * normalize(cross(vec3(0.0, 1.0, 0.0), normal) + 1e-4)); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: UD + /* glsl */ `varying vec3 vN, vT, vW, vV, vP, vNo;
       void main(){
         float r = fbm(vP * 1.6), th = u_solid * 1.08 - 0.04;
         if (r > th) discard;
         vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0);
-        vec3 col = shade(${PAPER}, n, normalize(vV), normalize(vT), vW, u_iri, u_rim, max(u_lit, 1.0 - u_iri - u_rim - u_pat), u_pat, uPulse, uPtr, uTouchK, uBeat, uTime);
+        vec4 st = u_stick > 0.001 ? stickers(tAtlas, uNP, vP, normalize(vNo), u_stick) : vec4(0.0);
+        vec3 base = mix(mix(${PAPER}, vec3(0.07), min(1.0, u_stick * 1.5)), st.rgb, st.a);
+        vec3 col = shade(base, n, normalize(vV), normalize(vT), vW, u_iri * (1.0 - st.a), u_rim, max(u_lit, 1.0 - u_iri - u_rim - u_pat - u_stick), u_pat, uPulse, uPtr, uTouchK, uBeat, uTime);
         col += (1.0 - smoothstep(0.0, 0.04, th - r)) * step(u_solid, 0.98) * 1.2;   // 現れる縁が光る
         gl_FragColor = vec4(col, 1.0);
       }` });
@@ -320,7 +361,7 @@ export function mountFlow(root: HTMLElement): () => void {
   }
 
   // ---- 進行: 状態から状態へ、つながって移る
-  let from = STATES[0], to = STATES[0], toSlot = 0, x = 1, startBeat = 0, beat = 0, t = 0, last = performance.now(), frozen = false;
+  let from = STATES[0], to = STATES[0], toSlot = 0, x = 1, startBeat = 0, beat = 0, t = 0, last = performance.now(), frozen = false, moveLen = MOVE, nextAt = PERIOD, afterDraw = false;
   let subjFrom: Subject | null = null, subjTo: Subject | null = null, swapped = true;
   const camNow = [0, 0, 5.2];
   fill(0, 'band', null); fill(1, 'band', null);
@@ -332,24 +373,29 @@ export function mountFlow(root: HTMLElement): () => void {
     const i = bag.findIndex((s) => (s.lay !== 'surf' && s.lay !== 'wrap') || subjects.length > 0);
     return bag.splice(Math.max(0, i), 1)[0];
   }
-  function goto(s: State, sub?: Subject) {
+  function goto(s: State, sub?: Subject, fast = false) {
     from = to; to = s; subjFrom = subjTo;
     const needs = s.lay === 'surf' || s.lay === 'wrap';
     // 立体は、ときどき替える(立体から立体へ、面が飛び移る)。
     subjTo = needs ? (sub ?? (subjTo && from.lay !== 'band' && from.lay !== 'plane' && Math.random() < 0.45 ? subjTo : subjects[Math.floor(Math.random() * subjects.length)])) : subjTo;
     toSlot = 1 - toSlot; fill(toSlot, s.lay, subjTo);
-    x = 0; startBeat = beat; swapped = false;
+    x = 0; startBeat = beat; swapped = false; moveLen = fast ? 2 : MOVE; nextAt = beat + PERIOD;
     U.uTo.value = toSlot;
     if (label) label.textContent = s.id;
   }
   const ptr = new THREE.Vector2(0.3, 0.3), touch = new THREE.Vector3();
   let touchK = 0, lastMove = -10, down = false, drawing = false, moved = false, downX = 0, downY = 0, lastX = 0, lastY = 0, downAt = 0, dYaw = 0, dPitch = 0, vYaw = 0, vPitch = 0, pts: number[][] = [], redraw = 0;
+  const vel = new THREE.Vector3(), tv = new THREE.Vector3(), prevT = new THREE.Vector3(); let hadT = false;
   const ray = new THREE.Raycaster(), plane = new THREE.Plane(), fwd = new THREE.Vector3();
   const P: Record<PKey, number> = { ...DEF };
   function frame(now: number) {
     if (dead) return;
     const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
-    if (!frozen) { t += dt; beat += (dt * BPM) / 60; if (!drawing && beat - startBeat >= PERIOD) goto(pick()); x = Math.min(1, (beat - startBeat) / MOVE); }
+    if (!frozen) { t += dt; beat += (dt * BPM) / 60; if (!drawing && beat >= nextAt) {
+      // 描いた帯の次は、多くの場合、その帯が立体に巻きつく(描いた線が、次の形の材料になる)。
+      const wrap = STATES.find((s) => s.lay === 'wrap')!;
+      goto(afterDraw && subjects.length && Math.random() < 0.6 ? wrap : pick()); afterDraw = false;
+    } x = Math.min(1, (beat - startBeat) / moveLen); }
     const e = smooth(x), sameSubj = subjFrom === subjTo;
     PK.forEach((k) => { const a = from.p[k] ?? DEF[k], b = to.p[k] ?? DEF[k]; P[k] = a + (b - a) * e; });
     // なめらかな立体は、先に引っ込んでから並びが変わり、並びが整ってから現れる。
@@ -364,14 +410,15 @@ export function mountFlow(root: HTMLElement): () => void {
     for (let i = 0; i < 3; i++) camNow[i] = from.cam[i] + (to.cam[i] - from.cam[i]) * e;
     const active = t - lastMove < 0.25 || down; touchK += ((active ? 1 : 0) - touchK) * Math.min(1, dt * (active ? 10 : 1.6));
     dYaw += vYaw; dPitch += vPitch; vYaw *= 0.92; vPitch *= 0.92; if (!down) { dYaw *= 1 - Math.min(1, dt * 0.6); dPitch *= 1 - Math.min(1, dt * 0.6); }
-    const flat = to.lay === 'band' && x > 0.9 ? 0 : 1; // 平らな帯のときは、真正面から(描けるように)
-    const yaw = camNow[0] + (0.25 * Math.sin(t * 0.21) + dYaw) * flat, pitch = Math.max(-1.4, Math.min(1.4, camNow[1] + (0.1 * Math.sin(t * 0.17 + 1) + dPitch) * flat)), need = (rd: number) => (rd * 1.12) / (Math.tan((17.5 * Math.PI) / 180) * Math.min(1, vw / vh));
+    const flat = to.lay === 'band' ? 1 - e : from.lay === 'band' ? e : 1; // 平らな帯のときは、真正面から(描けるように)
+    const yaw = camNow[0] + 0.25 * Math.sin(t * 0.21) * flat, pitch = Math.max(-1.4, Math.min(1.4, camNow[1] + 0.1 * Math.sin(t * 0.17 + 1) * flat)), need = (rd: number) => (rd * 1.12) / (Math.tan((17.5 * Math.PI) / 180) * Math.min(1, vw / vh));
     const wide = (s: State, sb: Subject | null) => s.lay === 'plane' ? need(1.08 * Math.abs(Math.cos(yaw)) + 0.1) : ((s.lay === 'surf' || s.lay === 'wrap') && sb ? need(Math.abs(Math.cos(yaw)) * sb.hx + Math.abs(Math.sin(yaw)) * sb.hz + 0.12) : 0);
     const r = Math.max(camNow[2] * (vw / vh < 0.8 ? 1 + (0.8 - vw / vh) * 0.9 : 1), wide(from, subjFrom) * (1 - e) + wide(to, subjTo) * e);
     cam.position.set(Math.sin(yaw) * Math.cos(pitch) * r, Math.sin(pitch) * r, Math.cos(yaw) * Math.cos(pitch) * r); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
     cam.getWorldDirection(fwd); plane.setFromNormalAndCoplanarPoint(fwd, scene.position); ray.setFromCamera(ptr, cam); ray.ray.intersectPlane(plane, touch);
-    (U.uPtr.value as THREE.Vector2).copy(ptr); (U.uTouch.value as THREE.Vector3).copy(touch); U.uTouchK.value = touchK;
-    if (redraw && drawing && pts.length > 3) { redraw = 0; setPath(pts); fill(toSlot, 'band', null); }
+    (U.uPtr.value as THREE.Vector2).copy(ptr); (U.uTouch.value as THREE.Vector3).copy(touch);
+    if (hadT) { tv.copy(touch).sub(prevT).divideScalar(Math.max(dt, 1e-3)).clampLength(0, 8); vel.lerp(tv, Math.min(1, dt * 8)); } prevT.copy(touch); hadT = true; (U.uVel.value as THREE.Vector3).copy(vel); U.uTouchK.value = touchK;
+    if (redraw && drawing && pts.length > 1) { redraw = 0; setPath(pts); fill(toSlot, 'band', null); }
     renderer.setRenderTarget(rtS); renderer.render(scene, cam);
     fb.uniforms.tS.value = rtS.texture; fb.uniforms.tP.value = rtA.texture; quad.material = fb; renderer.setRenderTarget(rtB); renderer.render(qScene, qCam);
     fin.uniforms.tS.value = rtB.texture; quad.material = fin; renderer.setRenderTarget(null); renderer.render(qScene, qCam);
@@ -381,15 +428,22 @@ export function mountFlow(root: HTMLElement): () => void {
 
   // ---- 入力
   const setPtr = (e: PointerEvent) => { const r = root.getBoundingClientRect(); ptr.set(((e.clientX - r.left) / vw) * 2 - 1, -(((e.clientY - r.top) / vh) * 2 - 1)); lastMove = t; };
-  const onDown = (e: PointerEvent) => { if ((e.target as HTMLElement).closest('a,button')) return; down = true; moved = false; drawing = false; downX = lastX = e.clientX; downY = lastY = e.clientY; downAt = performance.now(); setPtr(e); };
+  // 指の位置を、真正面から見た帯の面(z=0)の座標にする(視点が移っている途中でも、描いた線が指の下に来るように)。
+  const frontXY = () => { const r = 5.2 * (vw / vh < 0.8 ? 1 + (0.8 - vw / vh) * 0.9 : 1), hh = r * Math.tan((17.5 * Math.PI) / 180); return [ptr.x * hh * (vw / vh), ptr.y * hh]; };
+  let downXY = [0, 0];
+  const onDown = (e: PointerEvent) => { if ((e.target as HTMLElement).closest('a,button')) return; down = true; moved = false; drawing = false; downX = lastX = e.clientX; downY = lastY = e.clientY; downAt = performance.now(); setPtr(e); downXY = frontXY(); };
   const onMove = (e: PointerEvent) => {
     setPtr(e); if (!down) return;
-    if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 10) { moved = true; if (to.lay === 'band' && x > 0.9) { drawing = true; pts = []; } }
-    if (drawing) { ray.setFromCamera(ptr, cam); const o = ray.ray.origin, d = ray.ray.direction, k = -o.z / (d.z || -1e-6), X = o.x + d.x * k, Y = o.y + d.y * k, l = pts[pts.length - 1]; if (!l || Math.hypot(X - l[0], Y - l[1]) > 0.03) { pts.push([X, Y]); redraw = 1; startBeat = beat - MOVE; } }
-    else if (moved) { vYaw = -(e.clientX - lastX) * 0.006; vPitch = (e.clientY - lastY) * 0.006; }
+    // 本人(2026-11-25):「3Dのやつは、操作が回転に吸われている」「ガッツリ指を動かすと変化するのがいい」
+    // → なぞりを視点の回転に使うのをやめた。大きく なぞった線は、どの状態からでも帯になる(4万枚が、いまの形から ほどけて、指の線へ走る)。
+    if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 24) {
+      moved = true; drawing = true; pts = [downXY, frontXY()];
+      if (to.lay !== 'band') { setPath(pts); goto(STATES[0], undefined, true); }
+    }
+    if (drawing) { const c = frontXY(), l = pts[pts.length - 1]; if (Math.hypot(c[0] - l[0], c[1] - l[1]) > 0.03) { pts.push(c); redraw = 1; } nextAt = Math.max(nextAt, beat + 3); }
     lastX = e.clientX; lastY = e.clientY;
   };
-  const onUp = () => { if (!down) return; down = false; if (drawing) { drawing = false; if (pts.length > 3) { path = pts; setPath(path); fill(toSlot, 'band', null); startBeat = beat - PERIOD + 2; } } else if (!moved && performance.now() - downAt < 500) goto(pick()); };
+  const onUp = () => { if (!down) return; down = false; if (drawing) { drawing = false; if (pts.length > 1) { path = pts; setPath(path); fill(toSlot, 'band', null); } nextAt = beat + 3.5; afterDraw = true; } else if (!moved && performance.now() - downAt < 500) goto(pick()); };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'ArrowRight' || e.key === ' ') goto(pick()); };
   root.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp); window.addEventListener('keydown', onKey); window.addEventListener('resize', resize);
   resize();
@@ -400,7 +454,7 @@ export function mountFlow(root: HTMLElement): () => void {
   // 確認用: __flow.set('虹の立体', 'antiquecamera') で その状態へ向かう。__flow.x(0.5) で移りの途中に止める(null で戻す)。
   (window as unknown as { __flow?: unknown }).__flow = {
     set(id: string, sub?: string) { const s = STATES.find((v) => v.id === id); if (s) goto(s, subjects.find((v) => v.name === sub)); return !!s; },
-    x(v: number | null) { frozen = v !== null; if (v !== null) { x = v; beat = startBeat + v * MOVE; t = (beat * 60) / BPM; } },
+    x(v: number | null) { frozen = v !== null; if (v !== null) { x = v; beat = startBeat + v * moveLen; nextAt = beat + PERIOD; t = (beat * 60) / BPM; } },
     touch(a: number | null, b = 0) { if (a === null) { lastMove = -10; touchK = 0; } else { ptr.set(a, b); lastMove = 1e9; touchK = 1; } },
     get ids() { return STATES.map((s) => s.id); }, get ready() { return subjects.length >= 1 + FREE.length && imgs.length >= 2; },
   };
