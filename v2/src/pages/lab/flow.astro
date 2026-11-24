@@ -1,0 +1,78 @@
+---
+// 試作: 手札の見本帳。1枚の札 = 1つの見せ方。叩くと次の札へ(左端を叩くと前へ)。
+// 一覧は、プロジェクトの claude/generative-3d-hand.md。/lab/morph/ と /lab/morph-sharp/ には触れていない。
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { wallSrc } from '../../data/wall';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort((a, b) => a.data.order - b.data.order);
+const photos = works.slice(0, 12).map((w) => wallSrc(w.data.images[0], 1500));
+---
+
+<Base title="Soki Hayashi — flow (試作)">
+  <div class="flow" data-flow-root data-base={base} data-photos={JSON.stringify(photos)}>
+    <canvas class="flow-canvas" data-canvas aria-hidden="true"></canvas>
+    <p class="flow-label" data-label></p>
+  </div>
+
+  <script>
+    import { mountFlow } from '../../scripts/flow';
+
+    let dispose: (() => void) | undefined;
+    const off = () => {
+      dispose?.();
+      dispose = undefined;
+      document.documentElement.classList.remove('flow-on');
+    };
+    document.addEventListener('astro:page-load', () => {
+      off();
+      const root = document.querySelector<HTMLElement>('[data-flow-root]');
+      if (!root) return;
+      if (!document.createElement('canvas').getContext('webgl2')) return;
+      document.documentElement.classList.add('flow-on');
+      dispose = mountFlow(root);
+    });
+    document.addEventListener('astro:before-swap', off);
+  </script>
+</Base>
+
+<style is:global>
+  html.flow-on,
+  html.flow-on body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html.flow-on .site-foot {
+    display: none;
+  }
+  .flow {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: pointer;
+  }
+  .flow-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  /* いまの状態の名前(どの状態の話かを伝え合うための目印。試作だけのもの)。 */
+  .flow-label {
+    position: absolute;
+    left: var(--pad);
+    bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+    margin: 0;
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+    color: rgba(244, 241, 233, 0.75);
+    mix-blend-mode: difference;
+    pointer-events: none;
+  }
+</style>
