@@ -217,7 +217,13 @@ O sSolid(){
     // ・つやは、ほとんど無い(樹脂の板のような、鋭い照り返しを出さない)。
     float wrap = max((dot(nn, L) + 0.3) / 1.3, 0.0);
     float back = max(dot(-nn, L), 0.0);
-    o.lit = 0.15 + 0.08 * (nn.z * 0.5 + 0.5) + (1.25 * wrap * att + 0.08 * rim) * (1.0 - 0.75 * sh) + 0.4 * back * att;
+    // 光の配分(2回目)。1回目は、指の光だけが頼りで、全体が暗く、指から遠い所と陰が黒く沈み、写真の色がくすんでいた。
+    // ・部屋の明るさ(どこにも届く光)を大きく取る。こちらを向いた面は、それだけで写真の色が出る。
+    // ・指の光は、その上に乗る「向きと近さ」の差。遠くでも消えきらない。
+    // ・影は、黒く塗りつぶさない(紙は まわりの光を拾う)。
+    float room = 0.52 + 0.12 * (nn.z * 0.5 + 0.5);
+    float near = 0.4 + 0.6 * att;
+    o.lit = room + (0.6 * wrap * near + 0.05 * rim) * (1.0 - 0.6 * sh) - 0.12 * sh + 0.22 * back * near;
     o.gloss = 0.06 * pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 7.0) * att * (1.0 - sh);
   }
   o.line = 1.0;
@@ -1499,8 +1505,8 @@ export function mountMorph(root: HTMLElement) {
   const sharp = root.dataset.set === 'sharp';
   // 立体の紙のねじりの強さ。塩梅を実機で探れるように、URL の ?tw=0.9 のように指定できる(既定 1.15。本人: 強めか、かなり強め)。
   const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 1.15));
-  // 立体の紙の、写真の貼り方を比べるための切り替え(?map=strip で、帯に沿って貼る)。
-  const mapStrip = new URLSearchParams(location.search).get('map') === 'strip';
+  // 既定は「帯に沿って貼る」(本人: よくて自然)。?map=window で、以前の「窓」。
+  const mapStrip = new URLSearchParams(location.search).get('map') !== 'window';
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
