@@ -108,6 +108,7 @@ vec3 gX0, gC0;   // 帯の四隅と中心
 vec2 gUVp;       // 帯の中心での、写真の位置
 vec2 gUVb;       // 帯の四隅での、写真の位置
 vec2 gUVs;       // 同じく、写真を帯に沿って貼る場合の位置
+float gPhiQ;     // 立体の紙の傾き(この頂点の位置での値。跡と跡の間は なめらかにつなぐ)
 
 // ---- 表現の出力
 struct O {
@@ -169,35 +170,27 @@ O sBand(){
   return o;
 }
 // 1 立体(アナログ): 床から浮いて、ねじれて波うつ紙。指の光を受けて、影を落とす。
-// 紙のねじれ角(入れ替えた並び)。大きくねじるが、紙として破綻しない範囲に収める。
-// 紙は伸びない。帯をねじると、ふちは芯より長い道のりを通る。ねじりがきつすぎると、ふちが伸びて、幅が1点に絞られた形になる。
-// 上限は「幅 × ねじりの速さ」(uTwLim)。0.75 = 幅の約4倍の長さで半回転。細長い紙の帯を手でねじったときに、無理なくできるくらい。
-// (0.42 では静かすぎた。以前の一定のねじれは 0.9、ねじれを不規則にした最初の版は最大 1.75 で、破綻していた。)
-// 同じ向きに回り続ける分と、行って戻る波を重ねる。回るのが止まって平らに寝る所と、上限いっぱいで返る所が、帯に沿って並ぶ。
-float paperTw(float u){
-  if (uSharp < 0.5) return u * uTwK + uTime * 0.4;
-  float lim = uTwLim * uDp / uW; // ねじりの速さの上限(跡1つあたりの角度)
-  return u * lim * 0.45 + uTime * 0.3
-    + 1.3 * sin(u * lim * 0.25 + uTime * 0.21 + 0.7)
-    + 0.5 * sin(u * lim * 0.40 - uTime * 0.13 + 2.1);
+// 紙の傾き(入れ替えた並び)は、跡ごとに先に計算して渡してある(下の bankPaper)。ここでは、それを読むだけ。
+// 以前の版(元の並び)は、帯に沿って一定の割合でねじる。
+float paperTw(float u, float phi){
+  return uSharp < 0.5 ? u * uTwK + uTime * 0.4 : phi;
 }
-// 紙の高さ。入れ替えた並びでは、波を1つの周期にしない。床(高さ 0)より下には沈まない:
-// 低い所では、平らな紙が床すれすれに寝る。立った所は、そのぶん持ち上がって、下のふちが床に乗る。
-float paperZ(float u){
+// 紙の高さ。入れ替えた並びでは、紙は床の近くにある: 寝た所は床すれすれで ゆるく波うち、立った所は、下のふちが床に乗る高さ。
+float paperZ(float u, float th){
   float zph = u * uZK - uTime * 0.6;
   if (uSharp < 0.5) return uW * (0.6 + 0.45 * sin(zph));
-  return uW * (0.78 + 0.45 * sin(zph) + 0.28 * sin(zph * 0.37 + 1.7)) + 0.46 * uW * abs(sin(paperTw(u)));
+  return uW * (0.17 + 0.10 * sin(zph) + 0.06 * sin(zph * 0.37 + 1.7)) + 0.5 * uW * abs(sin(th));
 }
 O sSolid(){
   O o = base();
-  float th = paperTw(gUc);
+  float th = paperTw(gUc, gPhiQ);
   float cs = cos(th); float sn = sin(th);
   float zph = gUc * uZK - uTime * 0.6;
-  float zc = paperZ(gUc);
+  float zc = paperZ(gUc, th);
   o.corner = vec3(gPq + gNq * gVc * uW * cs, zc + gVc * uW * sn);
-  float thc = paperTw(float(gJ) + gFr);
-  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr) + gV * uW * sin(thc));
-  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * 0.45 + uSharp * 0.28 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
+  float thc = paperTw(float(gJ) + gFr, gR1.x);
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr, thc) + gV * uW * sin(thc));
+  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * mix(0.45, 0.10, uSharp) + uSharp * 0.06 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
   o.face = nrm.z;
   vec3 nn = o.face < 0.0 ? -nrm : nrm;
   vec3 Ld = uLight - o.corner;
@@ -826,7 +819,9 @@ void main(){
   int jn = gTq < 0.0 ? (gJ == 0 ? Mi - 1 : gJ - 1) : (gJ + 1 == Mi ? 0 : gJ + 1);
   vec4 q0 = texelFetch(uPath, ivec2(jn, 0), 0);
   float seam = gTq < 0.0 ? step(Mf - 1.5, gAge) : step(gAge, 0.5);
-  float ok = gR1.w * texelFetch(uPath, ivec2(jn, 1), 0).w * step(distance(q0.xy, gP), uDp * 1.6) * (1.0 - seam);
+  vec4 q1 = texelFetch(uPath, ivec2(jn, 1), 0);
+  float ok = gR1.w * q1.w * step(distance(q0.xy, gP), uDp * 1.6) * (1.0 - seam);
+  gPhiQ = ok > 0.5 ? mix(gR1.x, q1.x, abs(gTq)) : gR1.x;
   if (ok > 0.5) {
     if (gTq < 0.0) { gPq = mix(q0.xy, gP, gTq + 1.0); gTq2 = mix(q0.zw, gT, gTq + 1.0); }
     else { gPq = mix(gP, q0.xy, gTq); gTq2 = mix(gT, q0.zw, gTq); }
@@ -1582,6 +1577,55 @@ export function mountMorph(root: HTMLElement) {
   let sFrom = 0;
   let sTo = 0;
   let analog = 1;
+  /**
+   * 立体の紙の傾きを、跡ごとに決める(入れ替えた並び)。「曲がる所で、紙が立つ」。
+   *
+   * 紙は伸びないので、自分の面の中では曲がれない。床に寝たまま、曲がった線に沿うことはできない
+   * (内側のふちと外側のふちで、長さが合わなくなる)。紙の帯を曲がった線に沿わせるには、縁で立たせるしかない。
+   * 傾きを φ(0 = 寝る、90° = 縁で立つ)とすると、ふちの長さのずれは およそ 曲がり × 幅 × cos φ ÷ 2。
+   * これが EPS(紙がごまかせる範囲)を超えないだけ、立たせる。まっすぐな所は、ずれが出ないので、自由に転がってよい。
+   * そのうえで、傾きが帯に沿って変わる速さ(ねじりの速さ)に上限をかける。きつい ねじれで、幅が1点に絞られるのを防ぐ。
+   */
+  const phi = new Float32Array(M);
+  const kap = new Float32Array(M);
+  // 0.04 だと、ゆるい曲がりでも ほぼ真横を向いて、上から見ると糸のように細くなり、写真が見えなくなった。
+  // 0.10 まで ごまかしを許し、立つ角度も 75° で止める(真横にはしない。面が少し見える)。
+  const EPS = 0.1;
+  const TILT_MAX = (75 / 90);
+  function bankPaper() {
+    const n = Math.min(K, M);
+    if (n < 2) return;
+    const lim = (twLim * dp) / W; // ねじりの速さの上限(跡1つあたりの角度)
+    const at = (i: number) => (((K - n + i) % M) + M) % M; // 古い順の i 番目が、輪のどこにあるか
+    // 曲がり: 3つ前と3つ先の、向きの差から。
+    for (let i = 0; i < n; i++) {
+      const a = at(Math.max(0, i - 3)), b = at(Math.min(n - 1, i + 3));
+      const cr = path[a * 4 + 2] * path[b * 4 + 3] - path[a * 4 + 3] * path[b * 4 + 2];
+      const span = Math.max(1, Math.min(n - 1, i + 3) - Math.max(0, i - 3)) * dp;
+      kap[i] = Math.asin(Math.max(-1, Math.min(1, cr))) / span;
+    }
+    for (let i = 0; i < n; i++) {
+      // 曲がりは、前後で ならす(手の震えで、紙が ばたつかないように)。
+      let k = 0, c = 0;
+      for (let d = -4; d <= 4; d++) if (i + d >= 0 && i + d < n) (k += kap[i + d]), c++;
+      k /= c;
+      const abs = K - n + i; // 描きはじめからの通し番号(輪を回っても途切れない)
+      // まっすぐな所での、自由な転がり(場所で決まる。時間では回し続けない)。
+      // 表(写真の面)が上を向く向きを中心に揺れ、長い間隔で たまに裏返る。
+      const free = abs * lim * 0.1 + 0.9 * Math.sin(abs * lim * 0.25 + 0.7) + 0.4 * Math.sin(abs * lim * 0.4 + 2.1);
+      // 立たせる度合い(0 = 自由、1 = 縁で立つ)。
+      const need = Math.min(TILT_MAX, Math.acos(Math.min(1, (2 * EPS) / (Math.abs(k) * W + 1e-6))) / (Math.PI / 2));
+      // いちばん近い「縁で立つ」角度へ、必要なだけ寄せる。
+      const edge = Math.round((free - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+      phi[i] = free + (edge - free) * need + 0.3 * Math.sin(now * 0.5 + abs * 0.021) * (1 - need);
+    }
+    // ねじりの速さの上限: 行きと帰りで、となりとの差を切り詰める。
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 1; i < n; i++) phi[i] = Math.max(phi[i - 1] - lim, Math.min(phi[i - 1] + lim, phi[i]));
+      for (let i = n - 2; i >= 0; i--) phi[i] = Math.max(phi[i + 1] - lim, Math.min(phi[i + 1] + lim, phi[i]));
+    }
+    for (let i = 0; i < n; i++) path[(M + at(i)) * 4] = phi[i];
+  }
   // つなぎ方 4(描いた先から)の帳面: どの切り替わりの途中か、いつ切り替わったか、そのとき跡をいくつ書いていたか。
   let swN = -1;
   let swAt = 1e9;
@@ -1926,6 +1970,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.useProgram(prog);
     gl!.activeTexture(gl!.TEXTURE0);
     gl!.bindTexture(gl!.TEXTURE_2D, pathTex);
+    if (sharp) bankPaper();
     gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, M, 3, gl!.RGBA, gl!.FLOAT, path);
     gl!.uniform1f(u.time, now);
     // プロフィールの額: 開くとき・閉じるときの動き
