@@ -51,6 +51,7 @@ uniform float uOpenW;      // 押してひらいた作品の番号(なければ 
 uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
 uniform float uTwLim;      // 立体の紙: ねじりの強さの上限(幅 × ねじりの速さ)
 uniform float uMap;        // 立体の紙: 写真の貼り方。0 = 窓(画面にまっすぐ)/ 1 = 帯に沿って貼る
+uniform float uFold;       // 立体の紙: 急な折り返しで、紙を折る(試し。?fold=1)
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -118,6 +119,13 @@ vec2 gUVp;       // 帯の中心での、写真の位置
 vec2 gUVb;       // 帯の四隅での、写真の位置
 vec2 gUVs;       // 同じく、写真を帯に沿って貼る場合の位置
 float gPhiQ;     // 立体の紙の傾き(この頂点の位置での値。跡と跡の間は なめらかにつなぐ)
+float gPhiN;     // 同じく、となりの跡での値
+int gJn;         // となりの跡
+float gOk;       // となりの跡と つながっているか
+float gFold;     // この面が、折り目の近くにあるか(立体の紙の試し)
+float gYq;       // 折り目の効き(この頂点の位置での値)
+float gFlen;     // その折り目の長さの半分
+vec4 gF4;        // その折り目: 角の位置、折り目に直角な向き(角度)、角からの道のり
 
 // ---- 表現の出力
 struct O {
@@ -192,16 +200,72 @@ float paperZ(float u, float th){
   if (uSharp < 0.5) return uW * (0.6 + 0.45 * sin(zph));
   return uW * (0.78 + 0.45 * sin(zph) + 0.28 * sin(zph * 0.37 + 1.7)) + 0.46 * uW * abs(sin(th));
 }
+// 折り目(試し): 急な折り返しでは、紙を折る。
+// 紙は、自分の面の中では曲がれない。帯の向きを その場で変えるには、斜めに折って、裏を上にして進むしかない。
+// 作り方: 折り目の線を通る、床に垂直な鏡を立てる。鏡の向こうへ はみ出した面は、鏡に映した位置へ移す。
+// 鏡に映した形は、もとの形と寸法が同じなので、紙は伸びも縮みもしない(ねじれていても、そのまま成り立つ)。
+// 面は1枚ごとに「映す・映さない」を決め、折り目の線で切りそろえる(線をまたぐ面は、となりと重ねて すき間を埋める)。
+vec3 foldPt(vec3 X, vec2 cp, float g, float on, bool mirror, bool top, out float slope){
+  float q = dot(X.xy - gF4.xy, cp);
+  float q2 = max(mirror ? -q : q, 0.0);
+  X.xy += (q2 - q) * cp * g * on;
+  // 折って重なった側(上になる側)は、折り目から少し浮く。折り目は、鋭い筋ではなく、小さな丸みになる。
+  slope = 0.0;
+  if (top) {
+    float t = q2 / (0.22 * uW);
+    float off = 1.0 - smoothstep(0.9 * uW, 1.8 * uW, q2);
+    X.z += 0.18 * uW * smoothstep(0.0, 1.0, t) * off * g;
+    slope = 0.18 * g * off * 6.0 * t * (1.0 - min(t, 1.0)) / 0.22;
+  }
+  return X;
+}
 O sSolid(){
   O o = base();
-  float th = paperTw(gUc, gPhiQ);
+  vec2 cP = gPq; vec2 cN = gNq; vec2 cT = gTq2;
+  vec2 mP = gP; vec2 mT = gT;
+  float thq = gPhiQ;
+  bool own = false;
+  if (gFold > 0.5) {
+    // 紙の芯: 折り目のまわりでは、折る前後の腕を まっすぐにしたもの(3行目)。
+    vec4 c0 = texelFetch(uPath, ivec2(gJ, 3), 0);
+    mP = c0.xy; mT = c0.zw;
+    own = gF4.w > 0.0;
+    vec4 Fn = texelFetch(uPath, ivec2(gJn, 4), 0);
+    bool across = Fn.w < 1e5 && distance(Fn.xy, gF4.xy) < 0.01 && (Fn.w > 0.0) != own;
+    if (gOk > 0.5 && !across) {
+      vec4 cn = texelFetch(uPath, ivec2(gJn, 3), 0);
+      cP = mix(c0.xy, cn.xy, abs(gTq)); cT = normalize(mix(c0.zw, cn.zw, abs(gTq)) + vec2(1e-5, 0.0));
+    } else {
+      // となりが折り目の向こう側: 混ぜずに、自分の腕を まっすぐ延ばす(折り目の先は、あとで鏡に映る)。
+      cP = c0.xy + c0.zw * gTq * uDp; cT = c0.zw;
+      int jo = gTq < 0.0 ? (gJ + 1 == Mi ? 0 : gJ + 1) : (gJ == 0 ? Mi - 1 : gJ - 1);
+      vec4 o1 = texelFetch(uPath, ivec2(jo, 1), 0);
+      float d = o1.w > 0.5 ? (gTq < 0.0 ? o1.x - gR1.x : gR1.x - o1.x) : 0.0;
+      thq = gR1.x + clamp(d, -0.3, 0.3) * gTq;
+    }
+    cN = vec2(-cT.y, cT.x);
+  }
+  float th = paperTw(gUc, thq);
   float cs = cos(th); float sn = sin(th);
   float zph = gUc * uZK - uTime * 0.6;
   float zc = paperZ(gUc, th);
-  o.corner = vec3(gPq + gNq * gVc * uW * cs, zc + gVc * uW * sn);
+  o.corner = vec3(cP + cN * gVc * uW * cs, zc + gVc * uW * sn);
   float thc = paperTw(float(gJ) + gFr, gR1.x);
-  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr, thc) + gV * uW * sin(thc));
-  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * 0.45 + uSharp * 0.28 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
+  vec2 mN = vec2(-mT.y, mT.x);
+  o.centre = vec3(mP + mT * (gFr - 0.5) * uDp + mN * gV * uW * cos(thc), paperZ(float(gJ) + gFr, thc) + gV * uW * sin(thc));
+  vec3 nrm = normalize(vec3(-cN * sn, cs) - vec3(cT, 0.0) * ((cos(zph) * 0.45 + uSharp * 0.28 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
+  if (gFold > 0.5) {
+    vec2 cp = vec2(cos(gF4.z), sin(gF4.z));
+    // 折り目は、帯を横切る長さしかない。線の延長の向こうにある面は、折り目とは関係がない(帯が、別の所で線をまたいだだけ)。
+    float on = step(abs(dot(o.centre.xy - gF4.xy, vec2(-cp.y, cp.x))), gFlen * 1.15);
+    bool mirror = on > 0.5 && dot(o.centre.xy - gF4.xy, cp) < 0.0;
+    bool top = own != mirror;
+    float slope; float s2;
+    o.corner = foldPt(o.corner, cp, gYq, on, mirror, top, slope);
+    o.centre = foldPt(o.centre, cp, gR1.y, on, mirror, top, s2);
+    if (mirror && gR1.y > 0.5) { nrm.xy -= 2.0 * dot(nrm.xy, cp) * cp; nrm = -nrm; }
+    nrm = normalize(nrm - vec3(cp * slope * sign(nrm.z + 1e-4), 0.0));
+  }
   o.face = nrm.z;
   vec3 nn = o.face < 0.0 ? -nrm : nrm;
   vec3 Ld = uLight - o.corner;
@@ -825,14 +889,31 @@ void main(){
   float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0)); // 4 は 0(散らさない)
 
   // 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
-  gTq = (gFr - 0.5) + aQ.x * 0.25;
-  gVc = gV + aQ.y * (0.5 / float(NVi));
+  // 折り目(試し): 折り目の線をまたぐあたりの面は、2倍に広げて となりと重ねる(線で切りそろえたときの すき間を埋める)。
+  float E = 1.0;
+  gFold = 0.0; gF4 = vec4(0.0, 0.0, 0.0, 1e6);
+  if (uFold > 0.5 && uSharp > 0.5 && gR1.w > 0.5 && gR1.y > 0.0 && (int(uFrom + 0.5) == 1 || int(uTo + 0.5) == 1)) {
+    gF4 = texelFetch(uPath, ivec2(gJ, 4), 0);
+    if (gF4.w < 1e5) {
+      gFold = 1.0;
+      vec4 c0 = texelFetch(uPath, ivec2(gJ, 3), 0);
+      // 折り目の向き(角度)と長さは、1つの数に詰めてある。
+      float lq = floor(gF4.z / 100.0 + 0.5);
+      gF4.z -= 100.0 * lq; gFlen = lq / 50.0 * uW;
+      vec2 ctr = c0.xy + c0.zw * (gFr - 0.5) * uDp + vec2(-c0.w, c0.z) * gV * uW * cos(gR1.x);
+      if (abs(dot(ctr - gF4.xy, vec2(cos(gF4.z), sin(gF4.z)))) < 0.1 * uW) E = 2.0;
+    }
+  }
+  gTq = (gFr - 0.5) + aQ.x * 0.25 * E;
+  gVc = gV + aQ.y * (0.5 / float(NVi)) * E;
   int jn = gTq < 0.0 ? (gJ == 0 ? Mi - 1 : gJ - 1) : (gJ + 1 == Mi ? 0 : gJ + 1);
   vec4 q0 = texelFetch(uPath, ivec2(jn, 0), 0);
   float seam = gTq < 0.0 ? step(Mf - 1.5, gAge) : step(gAge, 0.5);
   vec4 q1 = texelFetch(uPath, ivec2(jn, 1), 0);
   float ok = gR1.w * q1.w * step(distance(q0.xy, gP), uDp * 1.6) * (1.0 - seam);
   gPhiQ = ok > 0.5 ? mix(gR1.x, q1.x, abs(gTq)) : gR1.x;
+  gPhiN = q1.x; gJn = jn; gOk = ok;
+  gYq = ok > 0.5 ? mix(gR1.y, q1.y, abs(gTq)) : gR1.y;
   if (ok > 0.5) {
     if (gTq < 0.0) { gPq = mix(q0.xy, gP, gTq + 1.0); gTq2 = mix(q0.zw, gT, gTq + 1.0); }
     else { gPq = mix(gP, q0.xy, gTq); gTq2 = mix(gT, q0.zw, gTq); }
@@ -1134,7 +1215,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1151,11 +1232,11 @@ export function mountMorph(root: HTMLElement) {
   gl.clearColor(0, 0, 0, 1);
 
   // なぞった跡(輪): 3行。 0: x, y, 向き / 1: (空き), 生まれた時刻, 有効 / 2: 写真の中心, 写真の幅, 作品の番号
-  const path = new Float32Array(M * 4 * 3);
+  const path = new Float32Array(M * 4 * 5); // 3行目・4行目は、立体の紙の折り目(試し)
   const pathTex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, pathTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, M, 3, 0, gl.RGBA, gl.FLOAT, path);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, M, 5, 0, gl.RGBA, gl.FLOAT, path);
   for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
   for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
 
@@ -1521,6 +1602,9 @@ export function mountMorph(root: HTMLElement) {
   const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 1.15));
   // 既定は「帯に沿って貼る」(本人: よくて自然)。?map=window で、以前の「窓」。
   const mapStrip = new URLSearchParams(location.search).get('map') !== 'window';
+  // 立体の紙: 急な折り返しで紙を折る(試し)。?fold=1 のときだけ。
+  const foldOn = new URLSearchParams(location.search).get('fold') === '1';
+  const flatDbg = new URLSearchParams(location.search).get('flat') === '1'; // 確かめ用: ねじれなし
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
@@ -1609,8 +1693,136 @@ export function mountMorph(root: HTMLElement) {
     for (let i = 0; i < n; i++) {
       const u = K - n + i; // 描きはじめからの通し番号(輪を回っても途切れない)
       phi[i] = u * lim * 0.45 + now * 0.3 + 1.3 * Math.sin(u * lim * 0.25 + now * 0.21 + 0.7) + 0.5 * Math.sin(u * lim * 0.4 - now * 0.13 + 2.1);
+      // 折り目の試し: 紙全体を同じ向きに回し続けない(折り目は平らに留まるので、回し続けると ねじれが巻き上がる)。行って戻る揺れにする。
+      if (foldOn) phi[i] += 0.7 * Math.sin(now * 0.33) - now * 0.3;
+      if (flatDbg) phi[i] = 0;
     }
+    if (foldOn) foldPaper(n, at);
     for (let i = 0; i < n; i++) path[(M + at(i)) * 4] = phi[i];
+  }
+  /**
+   * 折り目(試し。?fold=1): 急な折り返しを見つけて、そこで紙を折る。
+   *
+   * ・角: 跡の3つ前から3つ先までで、向きが 51° 以上変わる所(曲がりの半径が、幅の半分より小さい。ここでは、帯の内側が裏返って重なる)。
+   * ・腕: 角の前後を、角から少し離れた所の向きで、まっすぐな2本の腕にする(離れるにつれて、描いた線に戻す)。
+   * ・折り目: 2本の腕の向きを2等分する線。直角なら 45° の斜め、真後ろへの折り返しなら 帯に直角。
+   * ・折り目から先は、ねじれ角の数え方が鏡写しになる(θ → π − θ)。平らな所なら、裏が上になる。
+   */
+  const smooth = (x: number) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
+  const fpx = new Float32Array(M), fpy = new Float32Array(M), ftau = new Float32Array(M);
+  const frun = new Int32Array(M), fown = new Int32Array(M);
+  const born = new Map<number, number>();
+  function foldPaper(n: number, at: (i: number) => number) {
+    let r = 0;
+    for (let i = 0; i < n; i++) {
+      const j = at(i);
+      fpx[i] = path[j * 4]; fpy[i] = path[j * 4 + 1];
+      const alive = path[(M + j) * 4 + 3] > 0.5;
+      if (i > 0 && (!alive || Math.hypot(fpx[i] - fpx[i - 1], fpy[i] - fpy[i - 1]) > dp * 1.6)) r++;
+      frun[i] = alive ? r : -1 - i;
+      if (!alive) r++;
+      fown[i] = -1;
+      // 既定: 芯は描いた線のまま、折り目なし。
+      path[(3 * M + j) * 4] = fpx[i]; path[(3 * M + j) * 4 + 1] = fpy[i];
+      path[(3 * M + j) * 4 + 2] = path[j * 4 + 2]; path[(3 * M + j) * 4 + 3] = path[j * 4 + 3];
+      path[(4 * M + j) * 4 + 3] = 1e6;
+      path[(M + j) * 4 + 1] = 0;
+    }
+    // 角を探す。
+    const cand: number[] = [];
+    for (let i = 3; i < n - 4; i++) {
+      ftau[i] = 0;
+      if (frun[i - 3] < 0 || frun[i - 3] !== frun[i + 4]) continue;
+      const ax = fpx[i] - fpx[i - 3], ay = fpy[i] - fpy[i - 3], bx = fpx[i + 3] - fpx[i], by = fpy[i + 3] - fpy[i];
+      ftau[i] = Math.atan2(Math.abs(ax * by - ay * bx), ax * bx + ay * by);
+      if (ftau[i] >= 0.9) cand.push(i);
+    }
+    cand.sort((a, b) => ftau[b] - ftau[a]);
+    const SEP = Math.max(4, Math.round((0.6 * W) / dp));
+    const cs: number[] = [];
+    for (const c of cand) if (cs.every((a) => Math.abs(a - c) >= SEP)) cs.push(c);
+    cs.sort((a, b) => a - b);
+    const H = Math.max(3, Math.round((0.6 * W) / dp));
+    const G = 2;
+    const base = K - n;
+    for (const k of born.keys()) if (k < base) born.delete(k);
+    type Fold = { i: number; g: number; lo: number; hi: number; r1: number; k: number };
+    const folds: Fold[] = [];
+    for (let c = 0; c < cs.length; c++) {
+      const ic = cs[c];
+      // 腕を取れる範囲: 同じ筆の中で、となりの角との中ほどまで。
+      let lo = ic, hi = ic;
+      while (lo > 0 && frun[lo - 1] === frun[ic]) lo--;
+      while (hi < n - 1 && frun[hi + 1] === frun[ic]) hi++;
+      if (c > 0 && cs[c - 1] >= lo) lo = Math.ceil((cs[c - 1] + ic) / 2);
+      if (c + 1 < cs.length && cs[c + 1] <= hi) hi = Math.floor((cs[c + 1] + ic) / 2);
+      const a0 = Math.max(lo, ic - G - H), a1 = ic - G, b0 = ic + G, b1 = Math.min(hi, ic + G + H);
+      if (a1 - a0 < 2 || b1 - b0 < 2) continue;
+      let d1x = fpx[a1] - fpx[a0], d1y = fpy[a1] - fpy[a0], d2x = fpx[b1] - fpx[b0], d2y = fpy[b1] - fpy[b0];
+      const l1 = Math.hypot(d1x, d1y) || 1, l2 = Math.hypot(d2x, d2y) || 1;
+      d1x /= l1; d1y /= l1; d2x /= l2; d2y /= l2;
+      const al = Math.acos(Math.max(-1, Math.min(1, d1x * d2x + d1y * d2y)));
+      if (al < 0.8) continue;
+      let cx = d1x + d2x, cy = d1y + d2y;
+      const cl = Math.hypot(cx, cy);
+      if (cl < 0.08) { cx = -d1y; cy = d1x; } else { cx /= cl; cy /= cl; }
+      let qx = -cy, qy = cx;
+      if (qx * (d2x - d1x) + qy * (d2y - d1y) < 0) { qx = -qx; qy = -qy; }
+      const psi = Math.atan2(qy, qx);
+      const key = base + ic;
+      if (!born.has(key)) born.set(key, now);
+      const g = smooth((now - born.get(key)!) / 0.3);
+      const R1 = Math.max(0.45 * W, Math.min(1.3 * W, (0.5 * W) / Math.tan(al / 2) + 0.25 * W));
+      const R2 = R1 + 0.7 * W;
+      const px0 = (fpx[ic] + fpx[ic + 1]) / 2, py0 = (fpy[ic] + fpy[ic + 1]) / 2; // 角は、跡と跡の中ほどに置く
+      for (let i = lo; i <= hi; i++) {
+        const sI = (i - ic - 0.5) * dp;
+        const room = (i <= ic ? ic - lo : hi - ic) * dp; // この側で、腕に使える長さ
+        const r2 = Math.min(R2, room), r1 = Math.min(R1, r2 * 0.6);
+        if (Math.abs(sI) > r2) continue;
+        const j = at(i);
+        const wt = (1 - smooth((Math.abs(sI) - r1) / Math.max(1e-3, r2 - r1))) * g;
+        const dx = i <= ic ? d1x : d2x, dy = i <= ic ? d1y : d2y;
+        const o3 = (3 * M + j) * 4;
+        path[o3] = fpx[i] + (px0 + sI * dx - fpx[i]) * wt;
+        path[o3 + 1] = fpy[i] + (py0 + sI * dy - fpy[i]) * wt;
+        let tx2 = path[j * 4 + 2] + (dx - path[j * 4 + 2]) * wt, ty2 = path[j * 4 + 3] + (dy - path[j * 4 + 3]) * wt;
+        const tl = Math.hypot(tx2, ty2) || 1;
+        path[o3 + 2] = tx2 / tl; path[o3 + 3] = ty2 / tl;
+        const o4 = (4 * M + j) * 4;
+        path[o4] = px0; path[o4 + 1] = py0; path[o4 + 2] = psi + 100 * Math.round((0.5 / Math.sin(al / 2)) * 50); path[o4 + 3] = sI;
+        path[(M + j) * 4 + 1] = wt; // 折り目の効き: 角のまわりで 1、腕の先へ向かって 0
+      }
+      const uc = base + ic, limc = (twLim * dp) / W;
+      const spatial = uc * limc * 0.45 + 1.3 * Math.sin(uc * limc * 0.25 + 0.7) + 0.5 * Math.sin(uc * limc * 0.4 + 2.1);
+      folds.push({ i: ic, g, lo, hi, r1: R1, k: Math.round(spatial / Math.PI) });
+    }
+    // 折り目のまわりは、平らに寝かせる(折り目は、平らな紙でこそ はっきり見える。ねじれは、折り目から離れた所に残す)。
+    // 寝かせる向き(表が上か、裏が上か)は、場所だけで決める。時間で入れ替わらない。
+    // 折り目から離れるほど、ねじれてよい角度が広がる(広がり方は、ねじりの速さの上限)。折り目のすぐ隣で、急にねじれない。
+    {
+      const lim = (twLim * dp) / W;
+      // 近い折り目どうしは、同じ向きに寝かせる(間で半回転する余地がない)。
+      for (let c = 1; c < folds.length; c++) {
+        const a = folds[c - 1], b = folds[c];
+        if (frun[a.i] === frun[b.i] && (b.i - a.i) * dp < a.r1 + b.r1 + (Math.PI * W) / twLim) b.k = a.k;
+      }
+      for (const f of folds) {
+        const tgt = f.k * Math.PI;
+        const flat = f.r1 / dp;
+        for (let i = 0; i < n; i++) {
+          if (frun[i] !== frun[f.i]) continue;
+          const dev = lim * Math.max(0, Math.abs(i - f.i - 0.5) - flat) + (1 - f.g) * 12;
+          if (dev > 14) continue;
+          phi[i] = Math.max(tgt - dev, Math.min(tgt + dev, phi[i]));
+        }
+      }
+    }
+    // 折り目から先は、ねじれ角を鏡写しにする(その筆の終わりまで)。
+    for (const f of folds) {
+      const m = Math.round((2 * phi[f.i] - Math.PI) / (2 * Math.PI));
+      for (let i = f.i + 1; i < n && frun[i] === frun[f.i]; i++) phi[i] += f.g * (Math.PI - 2 * phi[i] + 2 * Math.PI * m);
+    }
   }
   // つなぎ方 4(描いた先から)の帳面: どの切り替わりの途中か、いつ切り替わったか、そのとき跡をいくつ書いていたか。
   let swN = -1;
@@ -1957,7 +2169,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.activeTexture(gl!.TEXTURE0);
     gl!.bindTexture(gl!.TEXTURE_2D, pathTex);
     if (sharp) bankPaper();
-    gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, M, 3, gl!.RGBA, gl!.FLOAT, path);
+    gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, M, foldOn ? 5 : 3, gl!.RGBA, gl!.FLOAT, path);
     gl!.uniform1f(u.time, now);
     // プロフィールの額: 開くとき・閉じるときの動き
     ovX += ((panelOpen ? 1 : 0) - ovX) * (1 - Math.exp(-dt / 0.28));
@@ -1980,6 +2192,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.sharp, sharp ? 1 : 0);
     gl!.uniform1f(u.twLim, twLim);
     gl!.uniform1f(u.map, mapStrip ? 1 : 0);
+    gl!.uniform1f(u.fold, foldOn && sharp ? 1 : 0);
     const ovOn = ovX > 0.001 || opOn;
     if (opOn) {
       ovFrom = openFrom;
