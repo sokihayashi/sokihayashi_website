@@ -90,6 +90,7 @@ export function mountFlow(root: HTMLElement): () => void {
   const base = root.dataset.base ?? '';
   const photos: string[] = JSON.parse(root.dataset.photos ?? '[]');
   const q = new URLSearchParams(location.search);
+  const planeOn = q.get('plane') === '1';
   let dead = false;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -325,7 +326,8 @@ export function mountFlow(root: HTMLElement): () => void {
   fill(0, 'band', null); fill(1, 'band', null);
   const bag: State[] = [];
   function pick(): State {
-    if (!bag.length) bag.push(...STATES.filter((s) => s !== to).sort(() => Math.random() - 0.5));
+    // 本人(2026-11-25):「平面の四角のまま見せる案は全部ダメかな」→ 板の状態(写真の板・高さになる板・網点の板)は巡回から外す。?plane=1 で戻せる。
+    if (!bag.length) bag.push(...STATES.filter((s) => s !== to && (planeOn || s.lay !== 'plane')).sort(() => Math.random() - 0.5));
     // 立体がまだ届いていなければ、立体の要る状態は後回し。
     const i = bag.findIndex((s) => (s.lay !== 'surf' && s.lay !== 'wrap') || subjects.length > 0);
     return bag.splice(Math.max(0, i), 1)[0];
