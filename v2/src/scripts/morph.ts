@@ -96,6 +96,15 @@ float shadowAt(vec3 p){
   s += step(textureLod(uShadow, uv + vec2(-E, 0.0), 0.0).r + 0.014, m.z);
   s += step(textureLod(uShadow, uv + vec2(0.0, E), 0.0).r + 0.014, m.z);
   s += step(textureLod(uShadow, uv + vec2(0.0, -E), 0.0).r + 0.014, m.z);
+  if (uSharp > 0.5) {
+    // 入れ替えた並び: 影のふちを ぼかす(外側にもう一回り、8か所)。紙に落ちる影が、角ばった灰色の四角に見えていた。
+    const float F = 5.0 / 1024.0;
+    for (int k = 0; k < 8; k++) {
+      float a = float(k) * 0.7854 + 0.39;
+      s += step(textureLod(uShadow, uv + vec2(cos(a), sin(a)) * F, 0.0).r + 0.014, m.z);
+    }
+    return s / 12.0;
+  }
   return s * 0.25;
 }
 
@@ -179,7 +188,9 @@ float paperTw(float u, float phi){
 float paperZ(float u, float th){
   float zph = u * uZK - uTime * 0.6;
   if (uSharp < 0.5) return uW * (0.6 + 0.45 * sin(zph));
-  return uW * (0.17 + 0.10 * sin(zph) + 0.06 * sin(zph * 0.37 + 1.7)) + 0.5 * uW * abs(sin(th));
+  // 机に置いた紙のテープ: 所どころが山なりに浮き、谷では机すれすれ。裏返る所は、高く持ち上がって返る。
+  float arch = 0.5 + 0.5 * sin(zph);
+  return uW * (0.06 + 0.5 * arch * arch + 0.12 * (0.5 + 0.5 * sin(zph * 0.37 + 1.7))) + 0.95 * uW * abs(sin(th));
 }
 O sSolid(){
   O o = base();
@@ -190,7 +201,7 @@ O sSolid(){
   o.corner = vec3(gPq + gNq * gVc * uW * cs, zc + gVc * uW * sn);
   float thc = paperTw(float(gJ) + gFr, gR1.x);
   o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr, thc) + gV * uW * sin(thc));
-  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * mix(0.45, 0.10, uSharp) + uSharp * 0.06 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
+  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * mix(0.45, 0.5 * (0.5 + 0.5 * sin(zph)), uSharp) + uSharp * 0.06 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
   o.face = nrm.z;
   vec3 nn = o.face < 0.0 ? -nrm : nrm;
   vec3 Ld = uLight - o.corner;
@@ -1586,12 +1597,17 @@ export function mountMorph(root: HTMLElement) {
    * これが EPS(紙がごまかせる範囲)を超えないだけ、立たせる。まっすぐな所は、ずれが出ないので、自由に転がってよい。
    * そのうえで、傾きが帯に沿って変わる速さ(ねじりの速さ)に上限をかける。きつい ねじれで、幅が1点に絞られるのを防ぐ。
    */
+  const FLIP = 520; // 裏返りの間隔(跡の数)。帯の長さ(640)に、1回あるかどうか
+  const smooth = (x: number) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
   const phi = new Float32Array(M);
   const kap = new Float32Array(M);
   // 0.04 だと、ゆるい曲がりでも ほぼ真横を向いて、上から見ると糸のように細くなり、写真が見えなくなった。
   // 0.10 まで ごまかしを許し、立つ角度も 75° で止める(真横にはしない。面が少し見える)。
   const EPS = 0.1;
-  const TILT_MAX = (75 / 90);
+  // 本人: (細く尖った所と、1点に絞られる所を示して)あまり紙っぽくはない。
+  // 真上から見ているので、立った紙は細い線になり、刃物のように尖った形に見えていた。
+  // 立つのは 28° までにして、帯の幅をほぼ保つ(机に置いた紙のテープを、上から見た姿)。紙らしさは、山なりに浮く形と陰影で出す。
+  const TILT_MAX = 28 / 90;
   function bankPaper() {
     const n = Math.min(K, M);
     if (n < 2) return;
@@ -1612,17 +1628,29 @@ export function mountMorph(root: HTMLElement) {
       const abs = K - n + i; // 描きはじめからの通し番号(輪を回っても途切れない)
       // まっすぐな所での、自由な転がり(場所で決まる。時間では回し続けない)。
       // 表(写真の面)が上を向く向きを中心に揺れ、長い間隔で たまに裏返る。
-      const free = abs * lim * 0.1 + 0.9 * Math.sin(abs * lim * 0.25 + 0.7) + 0.4 * Math.sin(abs * lim * 0.4 + 2.1);
+      // 寝たまま、わずかに左右へ傾くだけ。裏返りは、帯の長さの中に1回あるかどうか(通し番号 FLIP ごと)。
+      const turn = abs / FLIP;
+      const flips = Math.floor(turn) + smooth((turn - Math.floor(turn) - 0.5) * (FLIP * lim) / Math.PI + 0.5);
+      const free = flips * Math.PI + 0.22 * Math.sin(abs * lim * 0.25 + 0.7) + 0.1 * Math.sin(abs * lim * 0.4 + 2.1);
       // 立たせる度合い(0 = 自由、1 = 縁で立つ)。
-      const need = Math.min(TILT_MAX, Math.acos(Math.min(1, (2 * EPS) / (Math.abs(k) * W + 1e-6))) / (Math.PI / 2));
+      const need = Math.min(TILT_MAX, Math.acos(Math.min(1, (2 * EPS) / (Math.abs(k) * W + 1e-6))) / (Math.PI / 2)) * Math.abs(Math.cos(flips * Math.PI));
       // いちばん近い「縁で立つ」角度へ、必要なだけ寄せる。
       const edge = Math.round((free - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
-      phi[i] = free + (edge - free) * need + 0.3 * Math.sin(now * 0.5 + abs * 0.021) * (1 - need);
+      phi[i] = free + (edge - free) * need + 0.08 * Math.sin(now * 0.4 + abs * 0.021);
     }
     // ねじりの速さの上限: 行きと帰りで、となりとの差を切り詰める。
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 1; i < n; i++) phi[i] = Math.max(phi[i - 1] - lim, Math.min(phi[i - 1] + lim, phi[i]));
       for (let i = n - 2; i >= 0; i--) phi[i] = Math.max(phi[i + 1] - lim, Math.min(phi[i + 1] + lim, phi[i]));
+    }
+    // 角を取る: 上限で切り詰めた傾きは、折れ線になる(ふちが直線で尖る)。前後で ならして、ふちを曲線にする。
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < n; i++) {
+        let s = 0, c = 0;
+        for (let d = -5; d <= 5; d++) if (i + d >= 0 && i + d < n) (s += phi[i + d]), c++;
+        kap[i] = s / c;
+      }
+      phi.set(kap.subarray(0, n));
     }
     for (let i = 0; i < n; i++) path[(M + at(i)) * 4] = phi[i];
   }
