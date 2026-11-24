@@ -186,8 +186,17 @@ O sSolid(){
   float rim = pow(1.0 - abs(nn.z), 3.0);
   o.lit = 0.09 + (1.45 * dif * att + 0.1 * rim) * (1.0 - 0.82 * sh);
   // 入れ替えた並びでは、影の側を真っ黒に落とさない(上を向いた面ほど、空の明るさを受ける)。
-  if (uSharp > 0.5) o.lit = 0.17 + 0.09 * (nn.z * 0.5 + 0.5) + (1.38 * dif * att + 0.1 * rim) * (1.0 - 0.78 * sh);
   o.gloss = 0.4 * spc * att * (1.0 - sh);
+  if (uSharp > 0.5) {
+    // 紙として照らす(入れ替えた並び)。
+    // ・光は、面の向きが少し外れても回り込む(紙は表面で光が散るので、陰の境目がやわらかい)。
+    // ・光が裏から当たっている面は、紙を透けてきた光で、ほの明るい。
+    // ・つやは、ほとんど無い(樹脂の板のような、鋭い照り返しを出さない)。
+    float wrap = max((dot(nn, L) + 0.3) / 1.3, 0.0);
+    float back = max(dot(-nn, L), 0.0);
+    o.lit = 0.15 + 0.08 * (nn.z * 0.5 + 0.5) + (1.25 * wrap * att + 0.08 * rim) * (1.0 - 0.75 * sh) + 0.4 * back * att;
+    o.gloss = 0.06 * pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 7.0) * att * (1.0 - sh);
+  }
   o.line = 1.0;
   return o;
 }
@@ -842,7 +851,7 @@ void main(){
   vShape = mix(A.shape, B.shape, w) * sc;
   vMix = vec4(mix(A.round, B.round, w), alpha, mix(A.line, B.line, w), mix(A.face, B.face, w));
   vLit = vec4(mix(A.lit, B.lit, w), mix(A.gloss, B.gloss, w), mix(A.tex, B.tex, w), mix(A.ridge, B.ridge, w));
-  vAlt = vec4(mix(A.col, B.col, w), 1.0);
+  vAlt = vec4(mix(A.col, B.col, w), solidW); // a: 立体の紙である割合
   vTint = mix(A.tint, B.tint, w);
   vPar = mix(A.par, B.par, w);
   vLine = mix(A.lineCol, B.lineCol, w);
@@ -862,6 +871,12 @@ uniform vec3 uLight;
 uniform vec2 uTilt;
 out vec4 o;
 const vec3 PAPER = vec3(0.957, 0.945, 0.918);
+float ph21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float pnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(ph21(i), ph21(i + vec2(1.0, 0.0)), f.x), mix(ph21(i + vec2(0.0, 1.0)), ph21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 void main(){
   // 形: 四角から、丸や棒へ。丸や棒の ふちは、なめらかに。
   vec2 p = vQ * vShape;
@@ -927,12 +942,20 @@ void main(){
     #undef HGT
   }
   vec3 tc = layC.x >= 0.0 ? layC * vTint : texture(uAtlas, (vCell + uv) / vec2(${ACOLS}.0, ${AROWS}.0)).rgb * vTint * shade;
+  // 立体の紙(入れ替えた並び)の質感。pw = 紙である割合。
+  float pw = vAlt.a * uSharp;
+  // 繊維: 帯の向きに少し長い むら と、細かい ざらつき。紙の上の場所で決まる(画面には貼りつかない)。
+  float fib = pnoise(vRib * vec2(0.3, 1.5)) * 0.6 + pnoise(vRib * 2.4) * 0.4;
   // 紙の裏。入れ替えた並びでは、表の写真が透ける(薄い紙の裏から見た刷り。真っ白な穴にしない。写真の色を残す)。
-  if (vMix.w < 0.0) tc = mix(PAPER, mix(PAPER * 0.97, tc, 0.4), uSharp);
+  // 透け方は、繊維の薄い所と厚い所で むら がある。
+  if (vMix.w < 0.0) tc = mix(PAPER, mix(PAPER * 0.97, tc, 0.4 + 0.2 * (fib - 0.5) * pw), uSharp);
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
-  // 帯のふちと、作品の境目の線。
+  col *= 1.0 + pw * 0.08 * (fib - 0.5);
+  // 帯のふちと、作品の境目の線。紙では引かない(刷った紙に、黒い縁取りは無い)。
   float line = max(step(uW * 0.5 - 1.3, abs(vRib.y)), step(vRib.x, 1.3));
-  col = mix(col, vLine, line * step(0.98, vMix.z));
+  col = mix(col, vLine, line * step(0.98, vMix.z) * (1.0 - pw));
+  // 紙の切り口: 厚みのぶん、ふちが細く明るい。
+  col = mix(col, PAPER * 1.05, step(uW * 0.5 - 1.6, abs(vRib.y)) * pw * 0.8);
   // 光(立体のとき)。明るい所は、白く飛ばさずに丸める。
   vec3 lc = col * vLit.x + vLit.y;
   col = mix(lc, (1.0 - exp(-1.25 * lc)) * 1.22, step(0.001, vLit.y + abs(vLit.x - 1.0)) * 0.0 + clamp(abs(vLit.x - 1.0) * 4.0, 0.0, 1.0));
@@ -1934,7 +1957,8 @@ export function mountMorph(root: HTMLElement) {
         gl!.useProgram(floor);
         gl!.uniform2f(fl.view, vw, vh);
         gl!.uniform3f(fl.light, lightX, lightY, W * 2.6);
-        gl!.uniform1f(fl.solid, solid);
+        // 入れ替えた並びでは、床の明るさを抑える(紙になったとたんに、黒い地が急に明るくなるため)。影は、うっすら残る。
+        gl!.uniform1f(fl.solid, sharp ? solid * 0.3 : solid);
         gl!.depthMask(false);
         gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
         gl!.depthMask(true);
