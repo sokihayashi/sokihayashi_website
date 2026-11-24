@@ -50,6 +50,7 @@ uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
 uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
 uniform float uTwLim;      // 立体の紙: ねじりの強さの上限(幅 × ねじりの速さ)
+uniform float uMap;        // 立体の紙: 写真の貼り方。0 = 窓(画面にまっすぐ)/ 1 = 帯に沿って貼る
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -105,6 +106,7 @@ vec4 gR1, gR2;
 vec3 gX0, gC0;   // 帯の四隅と中心
 vec2 gUVp;       // 帯の中心での、写真の位置
 vec2 gUVb;       // 帯の四隅での、写真の位置
+vec2 gUVs;       // 同じく、写真を帯に沿って貼る場合の位置
 
 // ---- 表現の出力
 struct O {
@@ -207,6 +209,7 @@ O sSolid(){
   o.lit = 0.09 + (1.45 * dif * att + 0.1 * rim) * (1.0 - 0.82 * sh);
   // 入れ替えた並びでは、影の側を真っ黒に落とさない(上を向いた面ほど、空の明るさを受ける)。
   o.gloss = 0.4 * spc * att * (1.0 - sh);
+  if (uSharp > 0.5 && uMap > 0.5) o.uv = gUVs;
   if (uSharp > 0.5) {
     // 紙として照らす(入れ替えた並び)。
     // ・光は、面の向きが少し外れても回り込む(紙は表面で光が散るので、陰の境目がやわらかい)。
@@ -826,6 +829,16 @@ void main(){
   float asp = uAsp[int(gR2.w)];
   gUVp = 0.5 + (gC0.xy - gR2.xy) / vec2(gR2.z, gR2.z / asp);
   gUVb = 0.5 + (gX0.xy - gR2.xy) / vec2(gR2.z, gR2.z / asp);
+  // 帯に沿って貼る位置(立体の紙の確認用、?map=strip)。写真の横を帯の長さ方向に、縦を幅方向に合わせ、作品1つぶんの長さに1枚を収める。
+  // (gUVb は「窓」: 写真は画面に対してまっすぐ置いてあり、帯はそれを帯の形に切り抜いている。)
+  {
+    float sm = mod(float(gJ), SEGf);
+    vec2 q = vec2((sm + 0.5 + gTq) / SEGf - 0.5, gVc);
+    int j0 = gJ - int(sm);
+    if (texelFetch(uPath, ivec2(j0 < 0 ? j0 + Mi : j0, 0), 0).z < 0.0) q = -q; // 左向きに描いた作品は、逆さにならないよう半回転
+    float A = SEGf * uDp / uW; // 作品1つぶんの帯の、長さ ÷ 幅
+    gUVs = 0.5 + q * (A > asp ? vec2(1.0, asp / A) : vec2(A / asp, 1.0)); // ゆがめず、はみ出す分は裁つ
+  }
 
   int idA = int(uFrom + 0.5); int idB = int(uTo + 0.5);
   O A = stateOf(idA);
@@ -1101,7 +1114,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1484,8 +1497,10 @@ export function mountMorph(root: HTMLElement) {
   //   本人の評価のあとで外した: 18 線だけの帯(写真の色を落として線にしている)/ 30 割れる(写真が分かれているだけ。割れる瞬間が無い)
   //   決まり: 写真が持っている色は落とさない(色を付け替える表現は、一段弱い)。8 は青緑をやめて、写真の色の点にした。
   const sharp = root.dataset.set === 'sharp';
-  // 立体の紙のねじりの強さ。塩梅を実機で探れるように、URL の ?tw=0.9 のように指定できる(既定 0.75)。
-  const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 0.75));
+  // 立体の紙のねじりの強さ。塩梅を実機で探れるように、URL の ?tw=0.9 のように指定できる(既定 1.15。本人: 強めか、かなり強め)。
+  const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 1.15));
+  // 立体の紙の、写真の貼り方を比べるための切り替え(?map=strip で、帯に沿って貼る)。
+  const mapStrip = new URLSearchParams(location.search).get('map') === 'strip';
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
@@ -1919,6 +1934,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(u.openW, opOn ? openWk : -1);
     gl!.uniform1f(u.sharp, sharp ? 1 : 0);
     gl!.uniform1f(u.twLim, twLim);
+    gl!.uniform1f(u.map, mapStrip ? 1 : 0);
     const ovOn = ovX > 0.001 || opOn;
     if (opOn) {
       ovFrom = openFrom;
