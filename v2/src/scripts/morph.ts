@@ -49,6 +49,9 @@ uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
 uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
+// 立体(試し /lab/morph-3d/ だけ): 帯の面ひとつひとつの、立体の上での行き先(位置・向き)。
+uniform highp sampler2D uObjP; uniform highp sampler2D uObjN; uniform highp sampler2D uShell; // uShell: 立体の外形(角度×高さごとの、いちばん外側の半径)
+uniform float uObjS, uObjCell, uNWk; uniform vec4 uWrap; // uWrap: 立体の下端, 上端, 平均の半径, 巻くときの帯の幅(立体の単位)
 uniform float uTwLim;      // 立体の紙: ねじりの強さの上限(幅 × ねじりの速さ)
 uniform float uMap;        // 立体の紙: 写真の貼り方。0 = 窓(画面にまっすぐ)/ 1 = 帯に沿って貼る
 uniform float uFold;       // 立体の紙: 急な折り返しで、紙を折る(試し。?fold=1)
@@ -808,6 +811,102 @@ O sShards(){
   o.line = 1.0;
   return o;
 }
+// ---- 立体(試し /lab/morph-3d/ だけ)。帯そのもの(太さ・表現・描いた長さで進む仕組み)は変えていない。帯の面が、そのまま立体へ移る。
+vec3 gOp, gOn, gOt, gOb, gOl, gOln;
+float oh(vec3 p){ p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }
+void objFrame(highp sampler2D tp, highp sampler2D tn){
+  vec3 p = texelFetch(tp, ivec2(gIu, gIv), 0).xyz, n = texelFetch(tn, ivec2(gIu, gIv), 0).xyz;
+  gOl = p; gOln = n;
+  // 立体は回さない。ゆっくり揺れるだけ(光のほうが巡る)。
+  float a = 0.4 * sin(uTime * 0.23), c = cos(a), s = sin(a);
+  p = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); n = vec3(c * n.x + s * n.z, n.y, -s * n.x + c * n.z);
+  gOn = normalize(vec3(n.x, -n.y, n.z) + vec3(0.0, 0.0, 1e-5));
+  gOp = vec3(uView * 0.5 + vec2(p.x, -p.y) * uObjS, p.z * uObjS);
+  gOt = normalize(cross(vec3(0.0, 1.0, 0.0), gOn) + vec3(1e-4, 0.0, 0.0)); gOb = cross(gOn, gOt);
+}
+vec3 objLight(){ return normalize(vec3(sin(uTime * 0.9) * 1.3, -0.5 - 0.4 * sin(uTime * 0.53), 0.6 + 0.6 * cos(uTime * 0.9))); }
+O objQuad(){
+  O o = base();
+  float h = uObjCell * uObjS;
+  o.centre = gOp; o.corner = gOp + (gOt * aQ.x + gOb * aQ.y) * h;
+  o.gate = 1.0; o.line = 0.0;
+  return o;
+}
+// 31 虹の立体: 面の向きと光の向きで、溝の虹が出る。
+O sObjIri(){
+  objFrame(uObjP, uObjN); O o = objQuad();
+  vec3 H = normalize(objLight() + vec3(0.0, 0.0, 1.0));
+  float band = pow(max(0.0, 1.0 - abs(dot(gOn, H) - 0.75) * 2.2), 2.0);
+  vec3 ir = (0.5 + 0.5 * cos(6.2832 * (dot(gOt, H) * 3.0 + uTime * 0.08 + vec3(0.0, 0.33, 0.67)))) * (0.4 + 0.9 * band) * (0.45 + 0.75 * pow(1.0 - abs(gOn.z), 1.5)) + pow(max(dot(gOn, H), 0.0), 60.0) * 0.8 + 0.03;
+  o.col = ir; o.tex = 0.0;
+  return o;
+}
+// 32 貼り込んだ立体: 作品の写真を、四角(白フチ)・丸・ちぎり・斜めに抜いて、向きも大きさも ばらばらに、3層重ねて貼る。
+O sObjStick(){
+  objFrame(uObjP, uObjN); O o = objQuad();
+  vec3 p = gOl, n = gOln, an = abs(n);
+  vec3 tl = normalize(cross(vec3(0.0, 1.0, 0.0), n) + vec3(1e-4, 0.0, 0.0)), bl = cross(n, tl);
+  vec3 pc = p + (tl * aQ.x - bl * aQ.y) * uObjCell;
+  vec2 uv, uvc; float ax;
+  if (an.x > an.y && an.x > an.z) { uv = vec2(-p.z * sign(n.x), p.y); uvc = vec2(-pc.z * sign(n.x), pc.y); ax = 0.0; }
+  else if (an.y > an.z) { uv = p.xz; uvc = pc.xz; ax = 1.0; }
+  else { uv = vec2(p.x * sign(n.z), p.y); uvc = vec2(pc.x * sign(n.z), pc.y); ax = 2.0; }
+  float lam = 0.72 + 0.33 * max(dot(gOn, objLight()), 0.0);
+  o.tex = 0.0; o.col = vec3(0.07);
+  bool hit = false;
+  for (int L = 2; L >= 0; L--) {
+    float fl = float(L), sc = 1.05 + fl * 0.7;
+    vec2 off = vec2(fl * 3.7, ax * 5.3 + fl * 1.9), q = uv * sc + off, qc = uvc * sc + off, g = floor(q);
+    for (int j = 1; j >= -1; j--) for (int i = 1; i >= -1; i--) {
+      if (hit) continue;
+      vec2 c = g + vec2(float(i), float(j));
+      vec3 sd = vec3(c, fl * 13.0 + ax * 29.0);
+      float r0 = oh(sd), r1 = oh(sd + 1.3), r2 = oh(sd + 2.9), r3 = oh(sd + 4.1), r5 = oh(sd + 8.3), r6 = oh(sd + 9.9);
+      vec2 ctr = c + 0.5 + (vec2(r0, r1) - 0.5) * 0.7;
+      float a = (r2 - 0.5) * 1.6, cs = cos(a), sn = sin(a);
+      vec2 d = q - ctr; d = vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+      vec2 dc = qc - ctr; dc = vec2(cs * dc.x - sn * dc.y, sn * dc.x + cs * dc.y);
+      float wk = min(floor(r6 * uNWk), uNWk - 1.0), asp = max(uAsp[int(wk)], 0.3);
+      float hw = 0.34 + 0.3 * r3, hh = hw / asp; if (hh > 0.6) { hh = 0.6; hw = hh * asp; }
+      float kind = floor(r5 * 4.0), sdf, edge = 0.035;
+      if (kind < 0.5) sdf = max(abs(d.x) - hw, abs(d.y) - hh);
+      else if (kind < 1.5) sdf = length(d) - min(hw, hh) * 1.15;
+      else if (kind < 2.5) { sdf = max(abs(d.x) - hw, abs(d.y) - hh) + (oh(vec3(floor(d * 14.0), r0 * 50.0)) - 0.5) * 0.09; edge = 0.0; }
+      else { d.x -= d.y * 0.53; dc.x -= dc.y * 0.53; sdf = max(abs(d.x) - hw, abs(d.y) - hh); }
+      if (sdf < 0.0) {
+        hit = true;
+        if (sdf > -edge) o.col = vec3(0.96) * lam;
+        else { o.tex = 1.0; o.work = wk; o.uv = vec2(dc.x / hw, -dc.y / hh) * 0.5 + 0.5; o.tint = vec3(lam); }
+      }
+    }
+  }
+  return o;
+}
+// 33 立体に巻く: 帯は帯のまま(絵も、出方も、太さの比も)、立体の外形に、下から上へ らせんに巻きつく。
+// 巻く長さは、描いた長さのぶんだけ。描くほど巻きが増えて、立体の形が現れる。
+float shellR(float th, float y){
+  float fa = fract(th / 6.2832) * 96.0, fh = clamp((y - uWrap.x) / (uWrap.y - uWrap.x) * 64.0 - 0.5, 0.0, 62.999);
+  int a0 = int(fa) % 96, a1 = (a0 + 1) % 96, h0 = int(fh), h1 = h0 + 1; float ga = fract(fa), gh = fract(fh);
+  return max(0.06, mix(mix(texelFetch(uShell, ivec2(a0, h0), 0).r, texelFetch(uShell, ivec2(a1, h0), 0).r, ga), mix(texelFetch(uShell, ivec2(a0, h1), 0).r, texelFetch(uShell, ivec2(a1, h1), 0).r, ga), gh)) + 0.02;
+}
+vec3 objRot(vec3 p){ float a = 0.4 * sin(uTime * 0.23), c = cos(a), s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
+vec3 wrapAt(float u, float v, out vec3 n){
+  float cnt = min(uK, Mf);
+  float turns = max(0.35, cnt * uDp / uW * uWrap.w / (6.2832 * uWrap.z));
+  float th = -u * turns * 6.2832, y = uWrap.x + uWrap.w * 0.5 + u * (uWrap.y - uWrap.x - uWrap.w) + v * uWrap.w;
+  n = vec3(cos(th), 0.0, sin(th));
+  vec3 p = objRot(vec3(shellR(th, y) * n.x, y, shellR(th, y) * n.z)); n = objRot(n);
+  return vec3(uView * 0.5 + vec2(p.x, -p.y) * uObjS, p.z * uObjS);
+}
+O sObjWrap(){
+  O o = sBand();
+  float cnt = min(uK, Mf);
+  vec3 n, nq;
+  o.centre = wrapAt(clamp((cnt - gAge - 0.5 + (gFr - 0.5)) / cnt, 0.0, 1.0), gV, n);
+  o.corner = wrapAt(clamp((cnt - gAge - 0.5 + gTq) / cnt, 0.0, 1.0), gVc, nq);
+  o.tint *= 0.72 + 0.33 * max(dot(normalize(n), objLight()), 0.0);
+  return o;
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -839,6 +938,9 @@ O stateOf(int id){
   if (id == 27) return sBig();
   if (id == 29) return sGrain();
   if (id == 30) return sShards();
+  if (id == 31) return sObjIri();
+  if (id == 32) return sObjStick();
+  if (id == 33) return sObjWrap();
   return sFrame();
 }
 
@@ -1211,6 +1313,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
   const uKeep = gl.getUniformLocation(fade, 'uKeep');
   gl.useProgram(prog);
+  let dead = false;
   const U = (n: string) => gl.getUniformLocation(prog, n);
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
@@ -1222,6 +1325,58 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(U('uShadow'), 3);
   gl.uniform1i(U('uDAtlas'), 8);
   gl.uniform1i(U('uBAtlas'), 9);
+  // 立体(試し /lab/morph-3d/ だけ)。ほかの版では、1×1 の空のテクスチャを置くだけで、使わない。
+  const three = root.dataset.set === '3d';
+  const uo = { s: U('uObjS'), cell: U('uObjCell'), wrap: U('uWrap'), nwk: U('uNWk') };
+  const OW = three ? NU : 1, OH = three ? NV : 1;
+  const objDim = [[OW, OH], [OW, OH], [96, 64]];
+  const objArr = objDim.map(([a, b]) => new Float32Array(a * b * 4));
+  const objTex = ['uObjP', 'uObjN', 'uShell'].map((name, i) => {
+    const t = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE10 + i); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, objDim[i][0], objDim[i][1], 0, gl.RGBA, gl.FLOAT, objArr[i]);
+    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
+    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+    gl.uniform1i(U(name), 10 + i);
+    return t;
+  });
+  gl.activeTexture(gl.TEXTURE0);
+  type Subj = { p: Float32Array; n: Float32Array; order: Uint32Array; area: number; hw: number; lo: number; hi: number };
+  const subs: Subj[] = [];
+  let objReady = false, objFree = true, objHalfW = 1, objHalfH = 1.25, objCell = 0.01, wrap = [-1.25, 1.25, 0.6, 0.42];
+  const applySubject = (sb: Subj) => {
+    const NPt = sb.p.length / 3, NT = NU * NV, mid = (sb.lo + sb.hi) / 2;
+    // 表面: 帯に沿って、下から上へ(帯の先頭から順に、立体の下から貼りついていく)。
+    for (let iu = 0; iu < NU; iu++) for (let iv = 0; iv < NV; iv++) {
+      const j = sb.order[Math.min(NPt - 1, Math.floor(((iu * NV + iv) * NPt) / NT))], k = (iv * NU + iu) * 4;
+      objArr[0][k] = sb.p[j * 3]; objArr[0][k + 1] = sb.p[j * 3 + 1] - mid; objArr[0][k + 2] = sb.p[j * 3 + 2];
+      objArr[1][k] = sb.n[j * 3]; objArr[1][k + 1] = sb.n[j * 3 + 1]; objArr[1][k + 2] = sb.n[j * 3 + 2];
+    }
+    // 巻く: 立体の外形(高さ×角度ごとの いちばん外側)に、下から上へ らせん。
+    const TH = 96, HH = 64, shell = new Float32Array(TH * HH), lo = sb.lo, hi = sb.hi;
+    for (let i = 0; i < NPt; i++) { const x = sb.p[i * 3], y = sb.p[i * 3 + 1], z = sb.p[i * 3 + 2], a = Math.min(TH - 1, Math.floor(((Math.atan2(z, x) / (Math.PI * 2) + 1) % 1) * TH)), h = Math.min(HH - 1, Math.floor(((y - lo) / (hi - lo + 1e-6)) * HH)), r = Math.hypot(x, z); if (r > shell[h * TH + a]) shell[h * TH + a] = r; }
+    for (let pass = 0; pass < 3; pass++) { const c = shell.slice(); for (let h = 0; h < HH; h++) for (let a = 0; a < TH; a++) { let sum = 0, n = 0, mx = 0; for (let dh = -1; dh <= 1; dh++) for (let da = -1; da <= 1; da++) { const v = c[Math.max(0, Math.min(HH - 1, h + dh)) * TH + ((a + da + TH) % TH)]; if (v > 0) { sum += v; n++; if (v > mx) mx = v; } } shell[h * TH + a] = n ? (c[h * TH + a] > 0 ? (sum / n) * 0.5 + mx * 0.5 : sum / n) : 0; } }
+    let mean = 0, mn = 0; for (let i = 0; i < TH * HH; i++) { objArr[2][i * 4] = shell[i]; if (shell[i] > 0) { mean += shell[i]; mn++; } } mean /= Math.max(1, mn);
+    objTex.forEach((t, i) => { gl.activeTexture(gl.TEXTURE10 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, objDim[i][0], objDim[i][1], gl.RGBA, gl.FLOAT, objArr[i]); });
+    gl.activeTexture(gl.TEXTURE0);
+    objHalfW = sb.hw + 0.1; objHalfH = (hi - lo) / 2 + 0.05;
+    objCell = Math.sqrt(sb.area / NPt) * 0.95; // 面の半分の大きさ(立体の単位)
+    wrap = [lo - mid, hi - mid, mean, 0.42];
+  };
+  if (three) ['antiquecamera', 'boombox', 'fox', 'corset', 'sheenchair', 'glassvaseflowers'].forEach((name) => fetch(`${root.dataset.base ?? ''}/lab/deck/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
+    if (dead) return;
+    const [nv, ni] = new Uint32Array(b, 0, 2), v = new Int16Array(b, 8, nv * 3), ix = new Uint16Array(b, 8 + nv * 6, ni);
+    let off = 8 + nv * 6 + ni * 2; if ((nv * 6 + ni * 2) % 4) off += 2;
+    const NPt = 40000, d = new Int16Array(b, off, NPt * 6), K = 1.25 / 32000;
+    let area = 0;
+    for (let i = 0; i < ni; i += 3) { const a = ix[i] * 3, bb = ix[i + 1] * 3, c = ix[i + 2] * 3, ux = (v[bb] - v[a]) * K, uy = (v[bb + 1] - v[a + 1]) * K, uz = (v[bb + 2] - v[a + 2]) * K, wx = (v[c] - v[a]) * K, wy = (v[c + 1] - v[a + 1]) * K, wz = (v[c + 2] - v[a + 2]) * K; area += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) * 0.5; }
+    const sb: Subj = { p: new Float32Array(NPt * 3), n: new Float32Array(NPt * 3), order: new Uint32Array(NPt), area, hw: 0, lo: 1e9, hi: -1e9 };
+    const key = new Float32Array(NPt);
+    for (let i = 0; i < NPt; i++) { for (let k = 0; k < 3; k++) { sb.p[i * 3 + k] = d[i * 6 + k] * K; sb.n[i * 3 + k] = d[i * 6 + 3 + k] / 32000; } const y = sb.p[i * 3 + 1]; sb.lo = Math.min(sb.lo, y); sb.hi = Math.max(sb.hi, y); sb.hw = Math.max(sb.hw, Math.abs(sb.p[i * 3]), Math.abs(sb.p[i * 3 + 2])); sb.order[i] = i; key[i] = y + Math.atan2(sb.p[i * 3 + 2], sb.p[i * 3]) * 0.03; }
+    sb.order.sort((a, bb) => key[a] - key[bb]);
+    subs.push(sb);
+    if (!objReady) { applySubject(sb); objReady = true; }
+  }));
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -1320,7 +1475,6 @@ export function mountMorph(root: HTMLElement) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ACOLS * CELL, AROWS * CELL, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(ACOLS * CELL * AROWS * CELL * 4));
   for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.LINEAR);
   for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
-  let dead = false;
   const cellCv = document.createElement('canvas');
   cellCv.width = cellCv.height = CELL;
   const cellCtx = cellCv.getContext('2d')!;
@@ -1586,6 +1740,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
+    31: 'iri', 32: 'stick', 33: 'wrap',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -1597,7 +1752,7 @@ export function mountMorph(root: HTMLElement) {
   //   外す: 12 画素の落下 / 13 塵 / 15 棒の街 / 16 房 / 23 ばね / 24 積もる / 25 波紋 / 27 一枚を大きく(全面に写真を敷かない)
   //   本人の評価のあとで外した: 18 線だけの帯(写真の色を落として線にしている)/ 30 割れる(写真が分かれているだけ。割れる瞬間が無い)
   //   決まり: 写真が持っている色は落とさない(色を付け替える表現は、一段弱い)。8 は青緑をやめて、写真の色の点にした。
-  const sharp = root.dataset.set === 'sharp';
+  const sharp = root.dataset.set === 'sharp' || three; // 立体の版も、帯そのものは「入れ替えた並び」と同じ
   // 立体の紙のねじりの強さ。塩梅を実機で探れるように、URL の ?tw=0.9 のように指定できる(既定 1.15。本人: 強めか、かなり強め)。
   const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 1.15));
   // 既定は「帯に沿って貼る」(本人: よくて自然)。?map=window で、以前の「窓」。
@@ -1627,6 +1782,12 @@ export function mountMorph(root: HTMLElement) {
         P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
         C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
       };
+  if (three) {
+    // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
+    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.chorus.pool.push(31, 32, 33); SECS.drop.pool.push(31, 32); SECS.C.pool.push(32, 33);
+    const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
+    if (only >= 0) for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0];
+  }
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
   // 入れ替えた並びでは、プロフィールを曲の中に置かない(見ることと読むことを混ぜない。プロフィールは About のページへ)。
   const FORM = sharp
@@ -1643,7 +1804,8 @@ export function mountMorph(root: HTMLElement) {
   const grow = () => {
     const name = FORM[formI];
     formI = formI + 1 < FORM.length ? formI + 1 : LOOP;
-    const S = SECS[name];
+    const S0 = SECS[name];
+    const S = !three || objReady ? S0 : { ...S0, pool: S0.pool.filter((c) => c < 31) }; // 立体のデータが届くまでは、立体の表現を選ばない
     const cnt = S.n[0] + Math.floor(Math.random() * (S.n[1] - S.n[0] + 1));
     for (let i = 0; i < cnt; i++) {
       const a = seq.length ? seq[seq.length - 1] : -1;
@@ -1854,6 +2016,8 @@ export function mountMorph(root: HTMLElement) {
     }
     sFrom = seqAt(A);
     sTo = seqAt(A + 1);
+    // 立体は、立体の表現に入るたびに替える(立体の表現が画面に無い間に、次の立体を用意する)。
+    if (three && objReady) { if (sFrom < 31 && sTo < 31) objFree = true; else if (objFree) { objFree = false; applySubject(subs[Math.floor(Math.random() * subs.length)]); } }
     const wOf = (id: number) => (sFrom === id ? 1 - x : 0) + (sTo === id ? x : 0);
     trail = Math.max(sstep(0.15, 0.75, wOf(2)), sstep(0.3, 0.9, wOf(8)) * 0.8);
     solid = sstep(0.25, 1, wOf(1));
@@ -2190,6 +2354,7 @@ export function mountMorph(root: HTMLElement) {
     }
     gl!.uniform1f(u.openW, opOn ? openWk : -1);
     gl!.uniform1f(u.sharp, sharp ? 1 : 0);
+    gl!.uniform1f(uo.s, Math.min((vw * 0.4) / objHalfW, (vh * 0.3) / objHalfH)); gl!.uniform1f(uo.cell, objCell); gl!.uniform4f(uo.wrap, wrap[0], wrap[1], wrap[2], wrap[3]); gl!.uniform1f(uo.nwk, nW);
     gl!.uniform1f(u.twLim, twLim);
     gl!.uniform1f(u.map, mapStrip ? 1 : 0);
     gl!.uniform1f(u.fold, foldOn && sharp ? 1 : 0);
