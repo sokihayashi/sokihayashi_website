@@ -64,6 +64,7 @@ out vec3 vTint; // 写真に掛ける色
 out vec3 vLine; // 線の色
 out float vPar;  // 立体写真の強さ
 out vec2 vScr;   // 画面での位置(px)
+out float vTrans; // 紙の裏から光が当たっている度合い
 const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
@@ -110,6 +111,7 @@ vec2 gUVs;       // 同じく、写真を帯に沿って貼る場合の位置
 
 // ---- 表現の出力
 struct O {
+  float trans;  // 紙の裏から光が当たっている度合い(透けて見える刷りの濃さに使う)
   vec3 corner;  // 四隅のうち、この頂点
   vec3 centre;  // 面の中心
   vec3 col;     // 写真を使わないときの色
@@ -131,6 +133,7 @@ struct O {
 };
 O base(){
   O o;
+  o.trans = 0.0;
   o.corner = gX0; o.centre = gC0; o.col = vec3(0.0); o.tex = 1.0; o.tint = vec3(1.0);
   o.shape = vec2(1.0); o.round = 0.0; o.alpha = 1.0; o.lit = 1.0; o.gloss = 0.0; o.face = 1.0;
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
@@ -223,7 +226,8 @@ O sSolid(){
     // ・影は、黒く塗りつぶさない(紙は まわりの光を拾う)。
     float room = 0.52 + 0.12 * (nn.z * 0.5 + 0.5);
     float near = 0.4 + 0.6 * att;
-    o.lit = room + (0.6 * wrap * near + 0.05 * rim) * (1.0 - 0.6 * sh) - 0.12 * sh + 0.22 * back * near;
+    o.lit = room + (0.6 * wrap * near + 0.05 * rim) * (1.0 - 0.6 * sh) - 0.12 * sh + 0.3 * back * near;
+    o.trans = smoothstep(0.05, 0.6, back) * near;
     o.gloss = 0.06 * pow(max(dot(nn, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 7.0) * att * (1.0 - sh);
   }
   o.line = 1.0;
@@ -870,7 +874,7 @@ void main(){
     // 影の地図: 光から見た近さだけを書く。立体の紙だけが影を落とす。
     vec3 m = toShadow(wp);
     vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
-    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0);
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0); vTrans = 0.0;
     gl_Position = solidW < 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
     return;
   }
@@ -891,6 +895,7 @@ void main(){
   vMix = vec4(mix(A.round, B.round, w), alpha, mix(A.line, B.line, w), mix(A.face, B.face, w));
   vLit = vec4(mix(A.lit, B.lit, w), mix(A.gloss, B.gloss, w), mix(A.tex, B.tex, w), mix(A.ridge, B.ridge, w));
   vAlt = vec4(mix(A.col, B.col, w), solidW); // a: 立体の紙である割合
+  vTrans = mix(A.trans, B.trans, w);
   vTint = mix(A.tint, B.tint, w);
   vPar = mix(A.par, B.par, w);
   vLine = mix(A.lineCol, B.lineCol, w);
@@ -903,7 +908,7 @@ uniform sampler2D uAtlas;
 uniform float uW;
 uniform float uSharp;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
-in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr;
+in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr; in float vTrans;
 uniform sampler2D uDAtlas;
 uniform sampler2D uBAtlas; // 被写体を抜いて補った背景
 uniform vec3 uLight;
@@ -987,7 +992,10 @@ void main(){
   float fib = pnoise(vRib * vec2(0.3, 1.5)) * 0.6 + pnoise(vRib * 2.4) * 0.4;
   // 紙の裏。入れ替えた並びでは、表の写真が透ける(薄い紙の裏から見た刷り。真っ白な穴にしない。写真の色を残す)。
   // 透け方は、繊維の薄い所と厚い所で むら がある。
-  if (vMix.w < 0.0) tc = mix(PAPER, mix(PAPER * 0.97, tc, 0.4 + 0.2 * (fib - 0.5) * pw), uSharp);
+  // 紙では、透けは光の現象として出す: 手前から照らされた裏は、ほぼ白い紙(刷りは うっすら)。
+  // 裏から光が当たっている所だけ、刷りが光に透けて、はっきり浮かぶ(陰影と、透けた絵が、同じ濃さで混ざって見分けにくかった)。
+  float thru = mix(0.4, 0.1 + 0.68 * vTrans, pw) + 0.16 * (fib - 0.5) * pw;
+  if (vMix.w < 0.0) tc = mix(PAPER, mix(PAPER * 0.97, tc, thru), uSharp);
   vec3 col = mix(vAlt.rgb, tc, vLit.z);
   col *= 1.0 + pw * 0.08 * (fib - 0.5);
   // 帯のふちと、作品の境目の線。紙では引かない(刷った紙に、黒い縁取りは無い)。
