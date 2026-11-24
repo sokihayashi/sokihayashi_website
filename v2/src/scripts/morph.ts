@@ -1428,7 +1428,7 @@ export function mountMorph(root: HTMLElement) {
   const FAM: Record<number, string> = {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
-    8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter',
+    8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -1445,12 +1445,14 @@ export function mountMorph(root: HTMLElement) {
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
         // つなぎ方 4: いまある帯は変えず、描いた先から次の表現が出てくる(本人の案。ドロップの一撃だけは、帯ごと切り替える)。
-        A: { n: [1, 2], len: 0.95, pool: [0, 1, 14], sty: [4] },
-        B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [4] },
-        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 29], sty: [4] },
-        drop: { n: [5, 8], len: 0.2, pool: [29, 8, 20, 19, 17, 14], sty: [2] },
+        // 「描いた先から」(4)は、いったん外した: 帯の上に、変わりかけの状態が残り続け、切れ目や半端な絵が増えた(本人: 悪化)。仕組みは残してある。
+        // 21 筒(3Dの管)を戻した。元の並びにも入っておらず、落ちていた。
+        A: { n: [1, 2], len: 0.95, pool: [0, 1, 14, 21], sty: [0, 1, 3] },
+        B: { n: [2, 3], len: 0.5, pool: [8, 29, 20, 17], sty: [1, 3, 2] },
+        chorus: { n: [1, 2], len: 1.2, pool: [1, 17, 29, 21], sty: [3, 0] },
+        drop: { n: [5, 8], len: 0.2, pool: [29, 8, 20, 19, 17, 14, 21], sty: [2] },
         P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
-        C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [4] },
+        C: { n: [1, 1], len: 1.6, pool: [19, 20, 29], sty: [1] },
       }
     : {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
@@ -1618,14 +1620,16 @@ export function mountMorph(root: HTMLElement) {
     if (panelOpen) return;
     html.dataset.sec = name;
     if (name === 'drop') {
-      if (cut) {
+      // 入れ替えた版では、ドロップの飾り(画面の明滅・色替え・拡大、大きな文字、メニューの散り)を出さない。
+      // 本人: MV は「表現が切り替わるテンポと、表現の振れ幅」の話。画面の中の位置関係を崩すことではない。/lab/morph/ には残してある。
+      if (cut && !sharp) {
         const fx = pick(['is-flash', 'is-hue', 'is-punch', 'is-flash', 'is-mono']);
         root.classList.add(fx);
         setTimeout(() => root.classList.remove(fx), fx === 'is-punch' ? 160 : 90);
         big.style.opacity = Math.random() < 0.35 ? '1' : '0';
         big.style.transform = `translate(${rnd(-30, 10)}vw, ${rnd(-20, 30)}vh) scale(${rnd(0.7, 1.6)}) rotate(${pick([0, 0, 90, -90])}deg)`;
         // 入れ替えた版では、上のメニューの文字とロゴを動かさない(本人: 位置が変わるのは微妙)。/lab/morph/ には残してある。
-        if (!sharp) for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
+        for (const el of navA) el.style.transform = `translate(${rnd(-40, 40)}px, ${rnd(-10, 60)}px) rotate(${rnd(-25, 25)}deg)`;
       }
     } else {
       big.style.opacity = '';
