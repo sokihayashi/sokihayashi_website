@@ -163,16 +163,28 @@ O sBand(){
   return o;
 }
 // 1 立体(アナログ): 床から浮いて、ねじれて波うつ紙。指の光を受けて、影を落とす。
+// 紙のねじれ角。入れ替えた並びでは、ねじれを一定にしない(本人: ねじれが一定すぎる)。
+// ほとんど ねじれずに平らに寝る所と、きつく返る所が、帯に沿って不規則に並ぶ。ねじれる速さも、場所ごとに息をする。
+float paperTw(float u){
+  if (uSharp < 0.5) return u * uTwK + uTime * 0.4;
+  float f = u + (0.62 * sin(u * 0.031 + 0.7)) / 0.031 + (0.33 * sin(u * 0.0127 + 2.1)) / 0.0127;
+  return f * uTwK + uTime * 0.4 + 0.55 * sin(uTime * 0.45 + u * 0.021) + 0.3 * sin(uTime * 0.23 - u * 0.009);
+}
+// 紙の高さ。入れ替えた並びでは、波を1つの周期にしない。
+float paperZ(float u){
+  float zph = u * uZK - uTime * 0.6;
+  return uW * (0.6 + 0.45 * sin(zph) + uSharp * 0.28 * sin(zph * 0.37 + 1.7));
+}
 O sSolid(){
   O o = base();
-  float th = gUc * uTwK + uTime * 0.4;
+  float th = paperTw(gUc);
   float cs = cos(th); float sn = sin(th);
   float zph = gUc * uZK - uTime * 0.6;
-  float zc = uW * (0.6 + 0.45 * sin(zph));
+  float zc = paperZ(gUc);
   o.corner = vec3(gPq + gNq * gVc * uW * cs, zc + gVc * uW * sn);
-  float thc = (float(gJ) + gFr) * uTwK + uTime * 0.4;
-  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), uW * (0.6 + 0.45 * sin((float(gJ) + gFr) * uZK - uTime * 0.6)) + gV * uW * sin(thc));
-  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * (cos(zph) * uW * 0.45 * uZK / uDp) * cs);
+  float thc = paperTw(float(gJ) + gFr);
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr) + gV * uW * sin(thc));
+  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * 0.45 + uSharp * 0.28 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
   o.face = nrm.z;
   vec3 nn = o.face < 0.0 ? -nrm : nrm;
   vec3 Ld = uLight - o.corner;
