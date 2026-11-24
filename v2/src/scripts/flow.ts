@@ -90,7 +90,9 @@ vec4 stickers(sampler2D atlas, float np, vec3 p, vec3 n, float dens){
 `;
 
 type Subject = { name: string; geo: THREE.BufferGeometry | null; p: Float32Array; n: Float32Array; area: number; hx: number; hz: number };
-type Lay = 'band' | 'ribbon' | 'plane' | 'wrap' | 'surf' | 'blob';
+type Lay = 'band' | 'ribbon' | 'pipe' | 'plane' | 'wrap' | 'surf' | 'blob';
+const isBand = (l: Lay) => l === 'band' || l === 'ribbon' || l === 'pipe';
+const PR = 0.085; // パイプの太さ(半径)
 const PK = ['size', 'round', 'flip', 'fur', 'relief', 'scat', 'half', 'photo', 'iri', 'rim', 'lit', 'pat', 'solid', 'blob', 'trail', 'mosh', 'dith', 'stick'] as const;
 type PKey = (typeof PK)[number];
 type State = { id: string; lay: Lay; p: Partial<Record<PKey, number>>; cam: [number, number, number] };
@@ -101,6 +103,10 @@ const STATES: State[] = [
   { id: 'スパンコールの帯', lay: 'band', p: { photo: 1, size: 0.95, round: 1, flip: 1, lit: 0.4 }, cam: [-0.3, 0.2, 4.6] },
   { id: '虹の帯', lay: 'ribbon', p: { iri: 1 }, cam: [-0.5, 0.2, 5.0] },
   { id: '毛の生えた帯', lay: 'ribbon', p: { photo: 1, fur: 1, lit: 0.3 }, cam: [0.3, -0.3, 4.8] },
+  { id: 'パイプ', lay: 'pipe', p: { photo: 1, lit: 0.8 }, cam: [0.4, 0.2, 5.0] },
+  { id: '虹のパイプ', lay: 'pipe', p: { iri: 1 }, cam: [-0.4, 0.25, 5.0] },
+  { id: '網点の帯', lay: 'band', p: { half: 1, round: 1, size: 1.3 }, cam: [0, 0, 5.0] },
+  { id: '模様の帯', lay: 'ribbon', p: { pat: 1, lit: 1 }, cam: [0.3, -0.2, 5.0] },
   { id: '写真の板', lay: 'plane', p: { photo: 1 }, cam: [0, 0, 5.0] },
   { id: '高さになる板', lay: 'plane', p: { photo: 1, size: 0.9, relief: 1, lit: 0.3 }, cam: [0.7, -0.6, 5.2] },
   { id: '網点の板', lay: 'plane', p: { half: 1, round: 1, size: 1.3 }, cam: [0, 0, 4.4] },
@@ -204,18 +210,21 @@ export function mountFlow(root: HTMLElement): () => void {
   function fill(k: number, lay: Lay, subj: Subject | null) {
     const L = slot[k];
     L.uvc.set(0, 0);
-    if (lay === 'band' || lay === 'ribbon') {
+    if (isBand(lay)) {
       for (let i = 0; i < N; i++) {
         const s = (Math.floor(i / CV) + 0.5) / CU, v = ((i % CV) + 0.5) / CV - 0.5; pathAt(s, tmp);
         const tx = tmp[3], ty = -tmp[2];
         if (lay === 'band') { L.p.set([tmp[0] + tmp[2] * v * BW, tmp[1] + tmp[3] * v * BW, s * 0.2], i * 3); L.n.set([0, 0, 1], i * 3); L.t.set([tx, ty, 0], i * 3); }
-        else {
+        else if (lay === 'pipe') { // 帯を丸めた管(幅の方向が、管のまわりを一周する)
+          const th = (v + 0.5) * Math.PI * 2, c = Math.cos(th), sn = Math.sin(th);
+          L.p.set([tmp[0] + tmp[2] * PR * c, tmp[1] + tmp[3] * PR * c, PR * sn + s * 0.3], i * 3); L.n.set([tmp[2] * c, tmp[3] * c, sn], i * 3); L.t.set([tx, ty, 0], i * 3);
+        } else {
           const z = 0.28 * Math.sin(s * 9 + 1) + 0.14 * Math.sin(s * 23), ph = 1.1 * Math.sin(s * 12 + 0.5) + 0.5 * Math.sin(s * 31), c = Math.cos(ph), sn = Math.sin(ph);
           L.p.set([tmp[0] + tmp[2] * v * BW * c, tmp[1] + tmp[3] * v * BW * c, z + v * BW * sn], i * 3); L.n.set([-tmp[2] * sn, -tmp[3] * sn, c], i * 3); L.t.set([tx, ty, 0], i * 3);
         }
         bandUv(s, v, L.uv, i);
       }
-      L.cell.set(pathLen / CU, BW / CV); L.uvc.set(pathLen / CU / (BW * 1.5) / NP, 1 / CV);
+      L.cell.set(pathLen / CU, (lay === 'pipe' ? Math.PI * 2 * PR : BW) / CV); L.uvc.set(pathLen / CU / (BW * 1.5) / NP, 1 / CV);
     } else if (lay === 'plane') {
       const W = 2.1, H = 1.4, k0 = Math.floor(Math.random() * NP);
       for (let i = 0; i < N; i++) { const x = ((i % 200) + 0.5) / 200, y = (Math.floor(i / 200) + 0.5) / 200; L.p.set([(x - 0.5) * W, (y - 0.5) * H, 0], i * 3); L.n.set([0, 0, 1], i * 3); L.t.set([1, 0, 0], i * 3); L.uv[i * 2] = (k0 + x) / NP; L.uv[i * 2 + 1] = y; }
@@ -368,7 +377,7 @@ export function mountFlow(root: HTMLElement): () => void {
   const bag: State[] = [];
   function pick(): State {
     // 本人(2026-11-25):「平面の四角のまま見せる案は全部ダメかな」→ 板の状態(写真の板・高さになる板・網点の板)は巡回から外す。?plane=1 で戻せる。
-    if (!bag.length) bag.push(...STATES.filter((s) => s !== to && (planeOn || s.lay !== 'plane')).sort(() => Math.random() - 0.5));
+    if (!bag.length) bag.push(...STATES.filter((s) => s.id !== to.id && (planeOn || s.lay !== 'plane')).sort(() => Math.random() - 0.5));
     // 立体がまだ届いていなければ、立体の要る状態は後回し。
     const i = bag.findIndex((s) => (s.lay !== 'surf' && s.lay !== 'wrap') || subjects.length > 0);
     return bag.splice(Math.max(0, i), 1)[0];
@@ -388,6 +397,9 @@ export function mountFlow(root: HTMLElement): () => void {
   const vel = new THREE.Vector3(), tv = new THREE.Vector3(), prevT = new THREE.Vector3(); let hadT = false;
   const ray = new THREE.Raycaster(), plane = new THREE.Plane(), fwd = new THREE.Vector3();
   const P: Record<PKey, number> = { ...DEF };
+  let driftK = 0, lastDrawn = '';
+  // 本人(2026-11-25):「いじるたびに、前と異なる表現の帯になる」→ なぞるたびに、帯の仲間の中から、前回と違う表現を選ぶ。
+  const drawVariant = (): State => { const c = STATES.filter((s) => isBand(s.lay) && s.id !== lastDrawn && s.id !== to.id), s = c[Math.floor(Math.random() * c.length)]; lastDrawn = s.id; return { ...s, cam: [0, 0, 5.2] }; };
   function frame(now: number) {
     if (dead) return;
     const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
@@ -410,7 +422,8 @@ export function mountFlow(root: HTMLElement): () => void {
     for (let i = 0; i < 3; i++) camNow[i] = from.cam[i] + (to.cam[i] - from.cam[i]) * e;
     const active = t - lastMove < 0.25 || down; touchK += ((active ? 1 : 0) - touchK) * Math.min(1, dt * (active ? 10 : 1.6));
     dYaw += vYaw; dPitch += vPitch; vYaw *= 0.92; vPitch *= 0.92; if (!down) { dYaw *= 1 - Math.min(1, dt * 0.6); dPitch *= 1 - Math.min(1, dt * 0.6); }
-    const flat = to.lay === 'band' ? 1 - e : from.lay === 'band' ? e : 1; // 平らな帯のときは、真正面から(描けるように)
+    driftK += ((drawing || to.lay === 'band' ? 0 : 1) - driftK) * Math.min(1, dt * 3); // 描いている間と、平らな帯のときは、真正面から
+    const flat = driftK;
     const yaw = camNow[0] + 0.25 * Math.sin(t * 0.21) * flat, pitch = Math.max(-1.4, Math.min(1.4, camNow[1] + 0.1 * Math.sin(t * 0.17 + 1) * flat)), need = (rd: number) => (rd * 1.12) / (Math.tan((17.5 * Math.PI) / 180) * Math.min(1, vw / vh));
     const wide = (s: State, sb: Subject | null) => s.lay === 'plane' ? need(1.08 * Math.abs(Math.cos(yaw)) + 0.1) : ((s.lay === 'surf' || s.lay === 'wrap') && sb ? need(Math.abs(Math.cos(yaw)) * sb.hx + Math.abs(Math.sin(yaw)) * sb.hz + 0.12) : 0);
     const r = Math.max(camNow[2] * (vw / vh < 0.8 ? 1 + (0.8 - vw / vh) * 0.9 : 1), wide(from, subjFrom) * (1 - e) + wide(to, subjTo) * e);
@@ -418,7 +431,7 @@ export function mountFlow(root: HTMLElement): () => void {
     cam.getWorldDirection(fwd); plane.setFromNormalAndCoplanarPoint(fwd, scene.position); ray.setFromCamera(ptr, cam); ray.ray.intersectPlane(plane, touch);
     (U.uPtr.value as THREE.Vector2).copy(ptr); (U.uTouch.value as THREE.Vector3).copy(touch);
     if (hadT) { tv.copy(touch).sub(prevT).divideScalar(Math.max(dt, 1e-3)).clampLength(0, 8); vel.lerp(tv, Math.min(1, dt * 8)); } prevT.copy(touch); hadT = true; (U.uVel.value as THREE.Vector3).copy(vel); U.uTouchK.value = touchK;
-    if (redraw && drawing && pts.length > 1) { redraw = 0; setPath(pts); fill(toSlot, 'band', null); }
+    if (redraw && drawing && pts.length > 1) { redraw = 0; setPath(pts); fill(toSlot, to.lay, null); }
     renderer.setRenderTarget(rtS); renderer.render(scene, cam);
     fb.uniforms.tS.value = rtS.texture; fb.uniforms.tP.value = rtA.texture; quad.material = fb; renderer.setRenderTarget(rtB); renderer.render(qScene, qCam);
     fin.uniforms.tS.value = rtB.texture; quad.material = fin; renderer.setRenderTarget(null); renderer.render(qScene, qCam);
@@ -438,12 +451,12 @@ export function mountFlow(root: HTMLElement): () => void {
     // → なぞりを視点の回転に使うのをやめた。大きく なぞった線は、どの状態からでも帯になる(4万枚が、いまの形から ほどけて、指の線へ走る)。
     if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 24) {
       moved = true; drawing = true; pts = [downXY, frontXY()];
-      if (to.lay !== 'band') { setPath(pts); goto(STATES[0], undefined, true); }
+      setPath(pts); goto(drawVariant(), undefined, true);
     }
     if (drawing) { const c = frontXY(), l = pts[pts.length - 1]; if (Math.hypot(c[0] - l[0], c[1] - l[1]) > 0.03) { pts.push(c); redraw = 1; } nextAt = Math.max(nextAt, beat + 3); }
     lastX = e.clientX; lastY = e.clientY;
   };
-  const onUp = () => { if (!down) return; down = false; if (drawing) { drawing = false; if (pts.length > 1) { path = pts; setPath(path); fill(toSlot, 'band', null); } nextAt = beat + 3.5; afterDraw = true; } else if (!moved && performance.now() - downAt < 500) goto(pick()); };
+  const onUp = () => { if (!down) return; down = false; if (drawing) { drawing = false; if (pts.length > 1) { path = pts; setPath(path); fill(toSlot, to.lay, null); } nextAt = beat + 3.5; afterDraw = true; } else if (!moved && performance.now() - downAt < 500) goto(pick()); };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'ArrowRight' || e.key === ' ') goto(pick()); };
   root.addEventListener('pointerdown', onDown); window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp); window.addEventListener('keydown', onKey); window.addEventListener('resize', resize);
   resize();
