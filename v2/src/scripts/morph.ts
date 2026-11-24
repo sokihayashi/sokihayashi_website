@@ -49,6 +49,7 @@ uniform float uAsp[30];
 uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
 uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
+uniform float uTwLim;      // 立体の紙: ねじりの強さの上限(幅 × ねじりの速さ)
 uniform sampler2D uDAtlas; // 作品ごとの奥行きを1枚にまとめたもの
 uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
@@ -163,15 +164,17 @@ O sBand(){
   return o;
 }
 // 1 立体(アナログ): 床から浮いて、ねじれて波うつ紙。指の光を受けて、影を落とす。
-// 紙のねじれ角(入れ替えた並び)。紙として破綻しないようにする。
-// 紙は伸びない。帯を芯のまわりにねじると、ふちは芯より長い道のりを通るので、ねじりがきついほど ふちが伸びてしまう。
-// ふちの伸びは、およそ (幅 × ねじりの速さ)^2 / 8。紙が耐えるのは 2% ほどなので、幅 × ねじりの速さ を 0.42 までに抑える
-// (1回転に、幅の15倍ほどの長さが要る。以前は幅の7倍で1回転 = ふちが10%伸びる計算で、紙ではありえなかった)。
-// 一定の速さで回し続けず、傾きが行って戻る波を2つ重ねる。平らに寝る所と、返って裏を見せる所が、ゆっくり移っていく。
+// 紙のねじれ角(入れ替えた並び)。大きくねじるが、紙として破綻しない範囲に収める。
+// 紙は伸びない。帯をねじると、ふちは芯より長い道のりを通る。ねじりがきつすぎると、ふちが伸びて、幅が1点に絞られた形になる。
+// 上限は「幅 × ねじりの速さ」(uTwLim)。0.75 = 幅の約4倍の長さで半回転。細長い紙の帯を手でねじったときに、無理なくできるくらい。
+// (0.42 では静かすぎた。以前の一定のねじれは 0.9、ねじれを不規則にした最初の版は最大 1.75 で、破綻していた。)
+// 同じ向きに回り続ける分と、行って戻る波を重ねる。回るのが止まって平らに寝る所と、上限いっぱいで返る所が、帯に沿って並ぶ。
 float paperTw(float u){
   if (uSharp < 0.5) return u * uTwK + uTime * 0.4;
-  float lim = 0.42 * uDp / uW; // ねじりの速さの上限(跡1つあたりの角度)
-  return 1.6 * sin(u * lim * 0.40 + uTime * 0.21 + 0.7) + 0.45 * sin(u * lim * 0.66 - uTime * 0.13 + 2.1);
+  float lim = uTwLim * uDp / uW; // ねじりの速さの上限(跡1つあたりの角度)
+  return u * lim * 0.45 + uTime * 0.3
+    + 1.3 * sin(u * lim * 0.25 + uTime * 0.21 + 0.7)
+    + 0.5 * sin(u * lim * 0.40 - uTime * 0.13 + 2.1);
 }
 // 紙の高さ。入れ替えた並びでは、波を1つの周期にしない。床(高さ 0)より下には沈まない:
 // 低い所では、平らな紙が床すれすれに寝る。立った所は、そのぶん持ち上がって、下のふちが床に乗る。
@@ -1098,7 +1101,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -1481,6 +1484,8 @@ export function mountMorph(root: HTMLElement) {
   //   本人の評価のあとで外した: 18 線だけの帯(写真の色を落として線にしている)/ 30 割れる(写真が分かれているだけ。割れる瞬間が無い)
   //   決まり: 写真が持っている色は落とさない(色を付け替える表現は、一段弱い)。8 は青緑をやめて、写真の色の点にした。
   const sharp = root.dataset.set === 'sharp';
+  // 立体の紙のねじりの強さ。塩梅を実機で探れるように、URL の ?tw=0.9 のように指定できる(既定 0.75)。
+  const twLim = Math.max(0.2, Math.min(1.6, parseFloat(new URLSearchParams(location.search).get('tw') ?? '') || 0.75));
   const SECS: Record<string, Sec> = sharp
     ? {
         intro: { n: [1, 1], len: 1.4, pool: [0], sty: [0] },
@@ -1913,6 +1918,7 @@ export function mountMorph(root: HTMLElement) {
     }
     gl!.uniform1f(u.openW, opOn ? openWk : -1);
     gl!.uniform1f(u.sharp, sharp ? 1 : 0);
+    gl!.uniform1f(u.twLim, twLim);
     const ovOn = ovX > 0.001 || opOn;
     if (opOn) {
       ovFrom = openFrom;
