@@ -184,13 +184,13 @@ O sBand(){
 float paperTw(float u, float phi){
   return uSharp < 0.5 ? u * uTwK + uTime * 0.4 : phi;
 }
-// 紙の高さ。入れ替えた並びでは、紙は床の近くにある: 寝た所は床すれすれで ゆるく波うち、立った所は、下のふちが床に乗る高さ。
+// 紙の高さ。入れ替えた並びでは、波を1つの周期にしない。床(高さ 0)より下には沈まない:
+// 低い所では、平らな紙が床すれすれに寝る。立った所は、そのぶん持ち上がって、下のふちが床に乗る。
+// (机に這うテープにした版は、本人「悪化した」。ねじれて浮く形に戻した。)
 float paperZ(float u, float th){
   float zph = u * uZK - uTime * 0.6;
   if (uSharp < 0.5) return uW * (0.6 + 0.45 * sin(zph));
-  // 机に置いた紙のテープ: 所どころが山なりに浮き、谷では机すれすれ。裏返る所は、高く持ち上がって返る。
-  float arch = 0.5 + 0.5 * sin(zph);
-  return uW * (0.06 + 0.5 * arch * arch + 0.12 * (0.5 + 0.5 * sin(zph * 0.37 + 1.7))) + 0.95 * uW * abs(sin(th));
+  return uW * (0.78 + 0.45 * sin(zph) + 0.28 * sin(zph * 0.37 + 1.7)) + 0.46 * uW * abs(sin(th));
 }
 O sSolid(){
   O o = base();
@@ -201,7 +201,7 @@ O sSolid(){
   o.corner = vec3(gPq + gNq * gVc * uW * cs, zc + gVc * uW * sn);
   float thc = paperTw(float(gJ) + gFr, gR1.x);
   o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * gV * uW * cos(thc), paperZ(float(gJ) + gFr, thc) + gV * uW * sin(thc));
-  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * mix(0.45, 0.5 * (0.5 + 0.5 * sin(zph)), uSharp) + uSharp * 0.06 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
+  vec3 nrm = normalize(vec3(-gNq * sn, cs) - vec3(gTq2, 0.0) * ((cos(zph) * 0.45 + uSharp * 0.28 * 0.37 * cos(zph * 0.37 + 1.7)) * uW * uZK / uDp) * cs);
   o.face = nrm.z;
   vec3 nn = o.face < 0.0 ? -nrm : nrm;
   vec3 Ld = uLight - o.corner;
@@ -1589,68 +1589,26 @@ export function mountMorph(root: HTMLElement) {
   let sTo = 0;
   let analog = 1;
   /**
-   * 立体の紙の傾きを、跡ごとに決める(入れ替えた並び)。「曲がる所で、紙が立つ」。
+   * 立体の紙のねじれ角を、跡ごとに決める(入れ替えた並び)。
    *
-   * 紙は伸びないので、自分の面の中では曲がれない。床に寝たまま、曲がった線に沿うことはできない
-   * (内側のふちと外側のふちで、長さが合わなくなる)。紙の帯を曲がった線に沿わせるには、縁で立たせるしかない。
-   * 傾きを φ(0 = 寝る、90° = 縁で立つ)とすると、ふちの長さのずれは およそ 曲がり × 幅 × cos φ ÷ 2。
-   * これが EPS(紙がごまかせる範囲)を超えないだけ、立たせる。まっすぐな所は、ずれが出ないので、自由に転がってよい。
-   * そのうえで、傾きが帯に沿って変わる速さ(ねじりの速さ)に上限をかける。きつい ねじれで、幅が1点に絞られるのを防ぐ。
+   * 大きくねじるが、ねじりの速さは「幅 × 速さ ≤ twLim」に収める(既定 1.15)。
+   * 同じ向きに回り続ける分と、行って戻る波を重ねる。回るのが止まって平らに寝る所と、上限いっぱいで返る所が、帯に沿って並ぶ。
+   *
+   * 経緯: この形(8226944)を、本人は「帯に沿って貼るはよくて自然」「ねじれが大きい方が見栄えはいい」と見た。
+   * そのあと「急な折り返しと、1点に絞られる所が破綻に見える」と言われ、形の決まりごと変えた2つの版は、どちらも退けられた:
+   *  ・曲がる所で紙を立たせる(a462de8)→「グチャグチャ」「あまり紙っぽくはない」(真上から見ると、立った紙は刃物のように尖る)
+   *  ・幅を保って机に這わせる(a8f5808)→「悪化した」(ねじれが消えて、平らな帯に戻った。裏の白ばかりが見える)
+   * なので、土台はこの形に固定する。破綻は、形の決まりを替えずに、その場所だけを直す。
    */
-  const FLIP = 520; // 裏返りの間隔(跡の数)。帯の長さ(640)に、1回あるかどうか
-  const smooth = (x: number) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v); };
   const phi = new Float32Array(M);
-  const kap = new Float32Array(M);
-  // 0.04 だと、ゆるい曲がりでも ほぼ真横を向いて、上から見ると糸のように細くなり、写真が見えなくなった。
-  // 0.10 まで ごまかしを許し、立つ角度も 75° で止める(真横にはしない。面が少し見える)。
-  const EPS = 0.1;
-  // 本人: (細く尖った所と、1点に絞られる所を示して)あまり紙っぽくはない。
-  // 真上から見ているので、立った紙は細い線になり、刃物のように尖った形に見えていた。
-  // 立つのは 28° までにして、帯の幅をほぼ保つ(机に置いた紙のテープを、上から見た姿)。紙らしさは、山なりに浮く形と陰影で出す。
-  const TILT_MAX = 28 / 90;
   function bankPaper() {
     const n = Math.min(K, M);
     if (n < 2) return;
     const lim = (twLim * dp) / W; // ねじりの速さの上限(跡1つあたりの角度)
     const at = (i: number) => (((K - n + i) % M) + M) % M; // 古い順の i 番目が、輪のどこにあるか
-    // 曲がり: 3つ前と3つ先の、向きの差から。
     for (let i = 0; i < n; i++) {
-      const a = at(Math.max(0, i - 3)), b = at(Math.min(n - 1, i + 3));
-      const cr = path[a * 4 + 2] * path[b * 4 + 3] - path[a * 4 + 3] * path[b * 4 + 2];
-      const span = Math.max(1, Math.min(n - 1, i + 3) - Math.max(0, i - 3)) * dp;
-      kap[i] = Math.asin(Math.max(-1, Math.min(1, cr))) / span;
-    }
-    for (let i = 0; i < n; i++) {
-      // 曲がりは、前後で ならす(手の震えで、紙が ばたつかないように)。
-      let k = 0, c = 0;
-      for (let d = -4; d <= 4; d++) if (i + d >= 0 && i + d < n) (k += kap[i + d]), c++;
-      k /= c;
-      const abs = K - n + i; // 描きはじめからの通し番号(輪を回っても途切れない)
-      // まっすぐな所での、自由な転がり(場所で決まる。時間では回し続けない)。
-      // 表(写真の面)が上を向く向きを中心に揺れ、長い間隔で たまに裏返る。
-      // 寝たまま、わずかに左右へ傾くだけ。裏返りは、帯の長さの中に1回あるかどうか(通し番号 FLIP ごと)。
-      const turn = abs / FLIP;
-      const flips = Math.floor(turn) + smooth((turn - Math.floor(turn) - 0.5) * (FLIP * lim) / Math.PI + 0.5);
-      const free = flips * Math.PI + 0.22 * Math.sin(abs * lim * 0.25 + 0.7) + 0.1 * Math.sin(abs * lim * 0.4 + 2.1);
-      // 立たせる度合い(0 = 自由、1 = 縁で立つ)。
-      const need = Math.min(TILT_MAX, Math.acos(Math.min(1, (2 * EPS) / (Math.abs(k) * W + 1e-6))) / (Math.PI / 2)) * Math.abs(Math.cos(flips * Math.PI));
-      // いちばん近い「縁で立つ」角度へ、必要なだけ寄せる。
-      const edge = Math.round((free - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
-      phi[i] = free + (edge - free) * need + 0.08 * Math.sin(now * 0.4 + abs * 0.021);
-    }
-    // ねじりの速さの上限: 行きと帰りで、となりとの差を切り詰める。
-    for (let pass = 0; pass < 2; pass++) {
-      for (let i = 1; i < n; i++) phi[i] = Math.max(phi[i - 1] - lim, Math.min(phi[i - 1] + lim, phi[i]));
-      for (let i = n - 2; i >= 0; i--) phi[i] = Math.max(phi[i + 1] - lim, Math.min(phi[i + 1] + lim, phi[i]));
-    }
-    // 角を取る: 上限で切り詰めた傾きは、折れ線になる(ふちが直線で尖る)。前後で ならして、ふちを曲線にする。
-    for (let pass = 0; pass < 2; pass++) {
-      for (let i = 0; i < n; i++) {
-        let s = 0, c = 0;
-        for (let d = -5; d <= 5; d++) if (i + d >= 0 && i + d < n) (s += phi[i + d]), c++;
-        kap[i] = s / c;
-      }
-      phi.set(kap.subarray(0, n));
+      const u = K - n + i; // 描きはじめからの通し番号(輪を回っても途切れない)
+      phi[i] = u * lim * 0.45 + now * 0.3 + 1.3 * Math.sin(u * lim * 0.25 + now * 0.21 + 0.7) + 0.5 * Math.sin(u * lim * 0.4 - now * 0.13 + 2.1);
     }
     for (let i = 0; i < n; i++) path[(M + at(i)) * 4] = phi[i];
   }
