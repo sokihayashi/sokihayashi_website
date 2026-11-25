@@ -123,19 +123,19 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
   photoCv.height = Math.round((1200 * SH) / SW);
   const photoTex = new T.CanvasTexture(photoCv);
   photoTex.anisotropy = 4;
-  const paintPhoto = () => {
-    const g = photoCv.getContext('2d')!;
-    const cw = photoCv.width;
-    const ch = photoCv.height;
+  const paintPhoto = (cv = photoCv, tex: T.Texture = photoTex, seed = 7, rmin = 150, rspan = 120) => {
+    const g = cv.getContext('2d')!;
+    const cw = cv.width;
+    const ch = cv.height;
     g.clearRect(0, 0, cw, ch);
-    const R = rng(7);
+    const R = rng(seed);
     const order = pics.filter((p) => p.img.naturalWidth > 0).sort(() => R() - 0.5);
     if (!order.length) return;
     const seam = 4;
     let y = 0;
     let k = 0;
     while (y < ch) {
-      const rh = Math.round(150 + R() * 120);
+      const rh = Math.round(rmin + R() * rspan);
       let x = -Math.round(R() * 120);
       while (x < cw) {
         const p = order[k++ % order.length];
@@ -145,7 +145,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       }
       y += rh;
     }
-    photoTex.needsUpdate = true;
+    tex.needsUpdate = true;
   };
   const cover = (g: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) => {
     const iw = img.naturalWidth;
@@ -364,9 +364,54 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     }
   `;
   const sheetVert = /* glsl */ `
+    uniform float uTime; uniform float uWave; uniform vec4 uPress[4];
+    uniform float uPeel; uniform vec2 uPeelDir; uniform float uPeelR;
+    uniform sampler2D uMask; uniform vec2 uSize; uniform float uLift;
     varying vec2 vUv; varying vec3 vL; varying vec3 vWN;
-    void main(){ vUv = uv; vL = position; vWN = normalize(mat3(modelMatrix) * normal);
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+    // 面の高さ: いつも少し波打ち、押すとへこみ、離すと波紋が広がって揺れ戻る。
+    float hgt(vec2 p){
+      float h = uWave * (sin(p.x * 3.1 + uTime * 0.9) * sin(p.y * 2.3 - uTime * 0.7) * 0.6 + sin((p.x + p.y) * 5.0 - uTime * 1.6) * 0.25);
+      // 切り口のまわりは、紙がめくれ上がって、風に揺れる
+      vec4 mk = texture2D(uMask, p / uSize + 0.5);
+      h += mk.g * (1.0 - step(0.5, mk.r)) * uLift * (0.75 + 0.25 * sin(uTime * 3.1 + p.x * 9.0 + p.y * 7.0));
+      for (int i = 0; i < 4; i++) {
+        vec4 q = uPress[i];
+        if (q.z <= 0.0) continue;
+        float r = length(p - q.xy);
+        if (q.w < 0.0) {
+          h -= q.z * exp(-r * r / 0.012);
+        } else {
+          float t = uTime - q.w;
+          h -= q.z * exp(-r * r / 0.012) * exp(-t * 5.0) * cos(t * 16.0);
+          float front = smoothstep(0.0, 0.08, t * 0.55 - r);
+          h += q.z * 0.55 * sin(r * 42.0 - t * 11.0) * exp(-t * 1.3) * exp(-r * 1.4) * front;
+        }
+      }
+      return h;
+    }
+    void main(){
+      vUv = uv; vL = position;
+      vec2 p = position.xy;
+      float e = 0.004;
+      float h = hgt(p);
+      vec3 n = normalize(vec3(-(hgt(p + vec2(e, 0.0)) - hgt(p - vec2(e, 0.0))) / (2.0 * e), -(hgt(p + vec2(0.0, e)) - hgt(p - vec2(0.0, e))) / (2.0 * e), 1.0));
+      vec3 q = vec3(p, h);
+      // はがす: 折り目の線より先は、筒に巻きながら手前へ返る
+      float s = dot(p, uPeelDir) - uPeel;
+      if (s > 0.0) {
+        float th = s / uPeelR;
+        vec2 base = p - uPeelDir * s;
+        if (th < 3.14159) {
+          q = vec3(base + uPeelDir * uPeelR * sin(th), h + uPeelR * (1.0 - cos(th)));
+          n = vec3(-uPeelDir * sin(th), cos(th));
+        } else {
+          q = vec3(base - uPeelDir * (s - 3.14159 * uPeelR), h + 2.0 * uPeelR + 0.002);
+          n = vec3(0.0, 0.0, -1.0);
+        }
+      }
+      vWN = normalize(mat3(modelMatrix) * n);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(q, 1.0);
+    }`;
   const sheetFrag = /* glsl */ `
     ${SURF}
     void main(){
@@ -383,9 +428,22 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       vec2 per = (-V.xy / max(V.z, 0.08)) / uSize;
       float fw = max(fwidth(m.r), 1e-3);
       float aH = smoothstep(0.5 - fw, 0.5 + fw, m.r);
-      float lam = 0.62 + 0.38 * max(dot(vWN, uLight), 0.0);
+      vec3 nw = gl_FrontFacing ? vWN : -vWN;
+      float lam = 0.62 + 0.38 * max(dot(nw, uLight), 0.0);
+      // 裏(はがれて返った所): 紙は白、板は黒
+      if (!gl_FrontFacing) {
+        if (aH > 0.5) discard;
+        vec3 bk = uKind == 0 ? vec3(0.9, 0.89, 0.86) : vec3(0.1);
+        gl_FragColor = vec4(bk * lam, uAlpha);
+        return;
+      }
       vec3 top = surf(vUv) * lam;
-      top *= 1.0 - 0.5 * m.g * m.g;                       // 切れ目のまわりは紙がたわんで暗い
+      // 動く光が、紙の波に沿って滑る
+      vec3 lm = normalize(vec3(cos(uTime * 0.35) * 0.6, sin(uTime * 0.27) * 0.6, 0.8));
+      vec3 hh = normalize(lm + vec3(0.0, -0.2, 1.0));
+      float shine = pow(max(dot(nw, hh), 0.0), uKind == 1 ? 18.0 : 70.0) * (uKind == 1 ? 0.06 : 0.28);
+      top += shine * (1.0 - aH);
+      top *= 1.0 - 0.18 * m.g * m.g;                      // 切れ目のまわりの陰
       top += smoothstep(0.2, 0.5, m.r) * (1.0 - aH) * 0.25; // 切り口の縁は光る
       if (uKind == 0) top *= 1.0 - 0.22 * length((vUv - vec2(0.35, 0.7)) * vec2(1.0, 0.6));
       vec4 under = vec4(0.0);
@@ -452,6 +510,10 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     mCam: T.OrthographicCamera;
     mGeo = new T.BufferGeometry();
     cuts: Cut[] = [];
+    fills: V2[][] = [];
+    presses: { x: number; y: number; a: number; tr: number }[] = [];
+    energy = 0;
+    wave0 = 0;
     tension = 0;
     dirty = true;
     gone = false;
@@ -492,13 +554,21 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
           uAxis: { value: new T.Vector2(DIR28.x, DIR28.y) },
           uFront: { value: 0.6 },
           uLight: { value: LIGHT },
+          uWave: { value: kind === 'photo' ? 0.012 : kind === 'board' ? 0.007 : kind === 'floor' ? 0.006 : 0 },
+          uPress: { value: [0, 1, 2, 3].map(() => new T.Vector4()) },
+          uPeel: { value: 99 },
+          uPeelDir: { value: new T.Vector2(1, 0) },
+          uPeelR: { value: 0.11 },
+          uLift: { value: kind === 'photo' ? 0.03 : kind === 'floor' ? 0.012 : kind === 'board' ? 0.012 : 0 },
         },
         vertexShader: sheetVert,
         fragmentShader: kind === 'glass' ? glassFrag : sheetFrag,
         transparent: kind !== 'glass',
-        side: kind === 'floor' ? T.DoubleSide : T.FrontSide,
+        side: kind === 'glass' ? T.FrontSide : T.DoubleSide,
       });
-      this.mesh = new T.Mesh(new T.PlaneGeometry(w, h), this.mat);
+      const seg = kind === 'glass' ? 1 : 110;
+      this.mesh = new T.Mesh(new T.PlaneGeometry(w, h, seg, Math.round((seg * h) / w)), this.mat);
+      this.mesh.frustumCulled = false;
       this.mesh.renderOrder = order;
       this.group.add(this.mesh);
       this.group.position.z = z;
@@ -530,6 +600,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     paint() {
       let nv = 0;
       for (const c of this.cuts) nv += c.xs.length * 2;
+      for (const f of this.fills) nv += f.length + 2;
       if (nv > this.cap || !this.cap) {
         this.cap = Math.max(nv, this.cap * 2, 2048);
         this.pos = new Float32Array(this.cap * 3);
@@ -580,6 +651,25 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
           this.idx[k++] = a + 2;
         }
       }
+      // くり抜いた所(面ごと穴)
+      for (const f of this.fills) {
+        if (f.length < 3) continue;
+        const v0 = v;
+        for (const p of f) {
+          this.pos[v * 3] = p.x;
+          this.pos[v * 3 + 1] = p.y;
+          this.pos[v * 3 + 2] = 0;
+          this.ad[v] = 0;
+          this.ahw[v] = 1;
+          v++;
+        }
+        const tris = T.ShapeUtils.triangulateShape(f.map((p) => new T.Vector2(p.x, p.y)), []);
+        for (const t of tris) {
+          this.idx[k++] = v0 + t[0];
+          this.idx[k++] = v0 + t[1];
+          this.idx[k++] = v0 + t[2];
+        }
+      }
       (this.mGeo.attributes.position as T.BufferAttribute).needsUpdate = true;
       (this.mGeo.attributes.aD as T.BufferAttribute).needsUpdate = true;
       (this.mGeo.attributes.aHW as T.BufferAttribute).needsUpdate = true;
@@ -605,6 +695,16 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       cl.copy(camera.position);
       this.mesh.worldToLocal(cl);
       this.mat.uniforms.uTime.value = now;
+      if (!this.wave0) this.wave0 = this.mat.uniforms.uWave.value || 1e-6;
+      this.energy *= 0.965;
+      this.mat.uniforms.uWave.value = this.wave0 * (1 + Math.min(this.energy, 5));
+      const pu = this.mat.uniforms.uPress.value as T.Vector4[];
+      this.presses = this.presses.filter((q) => q.tr < 0 || now - q.tr < 3.5);
+      for (let i = 0; i < 4; i++) {
+        const q = this.presses[this.presses.length - 1 - i];
+        if (q) pu[i].set(q.x, q.y, q.a, q.tr);
+        else pu[i].set(0, 0, 0, 0);
+      }
       if (this.dirty || this.animating()) {
         this.paint();
         this.dirty = false;
@@ -673,6 +773,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
             float lensv = pow(max(sin(3.14159 * u), 0.0), 0.5);
             float W = max(uW * lensv * min(1.0, uLen / 0.45), 1e-4);
             float c = smoothstep(0.08, 0.7, uTime - aB);
+            c *= 1.0 - 0.07 * (0.5 + 0.5 * sin(uTime * 1.5 + aS * 7.0));
             float k = c * 6.2831853 / W * 0.985;
             float a = aU * W;
             vec2 N = vec2(-aT.y, aT.x);
@@ -855,6 +956,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     t: number;
     z0: number;
     mats: T.ShaderMaterial[];
+    g: number;
   };
   const pieceVert = /* glsl */ `
     uniform vec2 uCenter; uniform vec2 uSize;
@@ -901,6 +1003,44 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
   let pieces: Piece[] = [];
 
   // 切れ目(ひびを含む)で、面をいくつかの破片に分ける。
+  // 輪郭(面の座標)から、厚みのある破片を1つ作る
+  const makePiece = (sh: Sheet, pts: V2[], cx: number, cy: number, vel: T.Vector3, axis: T.Vector3, spin: number, delay: number, g = 2.8): Piece => {
+    const shape = new T.Shape(pts.map((p) => new T.Vector2(p.x - cx, p.y - cy)));
+    const geo = new T.ExtrudeGeometry(shape, { depth: sh.thick, bevelEnabled: false, curveSegments: 1 });
+    geo.translate(0, 0, -sh.thick / 2);
+    const kind = sh.kind === 'board' ? 1 : sh.kind === 'glass' ? 2 : 0;
+    const mat = new T.ShaderMaterial({
+      uniforms: {
+        uCenter: { value: new T.Vector2(cx, cy) },
+        uSize: { value: new T.Vector2(sh.w, sh.h) },
+        uMap: { value: sh.mat.uniforms.uMap.value },
+        uStrata: { value: strataTex },
+        uScene: { value: rtScene.texture },
+        uRes: { value: res },
+        uKind: { value: kind },
+        uRep: { value: sh.mat.uniforms.uRep.value },
+        uThick: { value: sh.thick },
+        uGlow: { value: sh.mat.uniforms.uGlow.value },
+        uAlpha: { value: 1 },
+        uLight: { value: LIGHT },
+      },
+      vertexShader: pieceVert,
+      fragmentShader: pieceFrag,
+      transparent: true,
+    });
+    const mesh = new T.Mesh(geo, mat);
+    mesh.position.set(cx, cy, sh.z - sh.thick / 2);
+    mesh.renderOrder = 6;
+    if (sh.kind === 'floor') mesh.layers.set(1);
+    scene.add(mesh);
+    return { mesh, mats: [mat], vel, axis, spin, delay, t: 0, z0: sh.z, g };
+  };
+  const inPoly = (x: number, y: number, P: V2[]) => {
+    let c = false;
+    for (let i = 0, j = P.length - 1; i < P.length; j = i++)
+      if (P[i].y > y !== P[j].y > y && x < ((P[j].x - P[i].x) * (y - P[i].y)) / (P[j].y - P[i].y) + P[i].x) c = !c;
+    return c;
+  };
   const shatter = (sh: Sheet, from: V2, opt: { speed: number; spin: number; g: number }) => {
     const GW = 112;
     const cell = sh.w / GW;
@@ -927,6 +1067,9 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
         for (let s = 0; s <= st; s++) stamp(c.xs[i] + (dx * s) / st, c.ys[i] + (dy * s) / st, Math.max(h0, cell * 0.55));
       }
     }
+    for (const f of sh.fills)
+      for (let j = 0; j < GH; j++)
+        for (let i = 0; i < GW; i++) if (inPoly((i + 0.5) * cell - sh.w / 2, (j + 0.5) * cell - sh.h / 2, f)) grid[j * GW + i] = -1;
     // 4近傍でつながった所を、ひとつの破片とみなす
     let lab = 0;
     const stack: number[] = [];
@@ -1005,57 +1148,32 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       pts = pts.filter((_, i) => i % step === 0);
       const cx = (info[L].sx / info[L].n) * cell - sh.w / 2;
       const cy = (info[L].sy / info[L].n) * cell - sh.h / 2;
-      const shape = new T.Shape(pts.map((p) => new T.Vector2(p.x - cx, p.y - cy)));
-      const geo = new T.ExtrudeGeometry(shape, { depth: sh.thick, bevelEnabled: false, curveSegments: 1 });
-      geo.translate(0, 0, -sh.thick / 2);
-      const kind = sh.kind === 'photo' ? 0 : sh.kind === 'board' ? 1 : 2;
-      const mat = new T.ShaderMaterial({
-        uniforms: {
-          uCenter: { value: new T.Vector2(cx, cy) },
-          uSize: { value: new T.Vector2(sh.w, sh.h) },
-          uMap: { value: sh.mat.uniforms.uMap.value },
-          uStrata: { value: strataTex },
-          uScene: { value: rtScene.texture },
-          uRes: { value: res },
-          uKind: { value: kind },
-          uRep: { value: sh.mat.uniforms.uRep.value },
-          uThick: { value: sh.thick },
-          uGlow: { value: sh.mat.uniforms.uGlow.value },
-          uAlpha: { value: 1 },
-          uLight: { value: LIGHT },
-        },
-        vertexShader: pieceVert,
-        fragmentShader: pieceFrag,
-        transparent: true,
-      });
-      const mesh = new T.Mesh(geo, mat);
-      mesh.position.set(cx, cy, sh.z - sh.thick / 2);
-      mesh.renderOrder = 6;
-      scene.add(mesh);
       const ox = cx - from.x;
       const oy = cy - from.y;
       const ol = Math.hypot(ox, oy) || 1;
       const out2 = { x: cx / (Math.hypot(cx, cy) + 0.3), y: cy / (Math.hypot(cx, cy) + 0.3) };
-      out.push({
-        mesh,
-        mats: [mat],
-        vel: new T.Vector3(
-          (DIR28.x * (0.7 + R() * 0.5) + out2.x * 0.6) * opt.speed,
-          (DIR28.y * (0.7 + R() * 0.5) + out2.y * 0.6) * opt.speed,
-          -0.2 - R() * 0.3
-        ),
-        axis: new T.Vector3(-oy / ol, ox / ol, (R() - 0.5) * 0.4).normalize(),
-        spin: (0.9 + R() * 1.4) * opt.spin * (R() < 0.5 ? -1 : 1),
-        delay: Math.min(0.5, ol * 0.25) * (0.6 + R() * 0.4),
-        t: 0,
-        z0: sh.z,
-      });
+      out.push(
+        makePiece(
+          sh,
+          pts,
+          cx,
+          cy,
+          new T.Vector3(
+            (DIR28.x * (0.7 + R() * 0.5) + out2.x * 0.6) * opt.speed,
+            (DIR28.y * (0.7 + R() * 0.5) + out2.y * 0.6) * opt.speed,
+            -0.2 - R() * 0.3
+          ),
+          new T.Vector3(-oy / ol, ox / ol, (R() - 0.5) * 0.4).normalize(),
+          (0.9 + R() * 1.4) * opt.spin * (R() < 0.5 ? -1 : 1),
+          Math.min(0.5, ol * 0.25) * (0.6 + R() * 0.4)
+        )
+      );
     }
     return out;
   };
 
   // ---------------------------------------------------------------- 機材の稜線(V3)と床
-  const floorZ = -2 * D - DV;
+  let floorZ = -2 * D - DV;
   const floor = new Sheet('floor', floorZ, VW, VH, 0.02, backTex, 1);
   floor.mesh.layers.set(1);
   floor.mat.uniforms.uGlow.value = 0.35;
@@ -1172,27 +1290,56 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     else setTimeout(() => loadObj(i), 1500 + i * 120);
   });
 
-  // ---------------------------------------------------------------- 層
-  const sheets: Sheet[] = [
-    new Sheet('photo', 0, SW, SH, 0.014, photoTex, 5),
-    new Sheet('board', -D, SW, SH, 0.07, boardTex, 3),
-    new Sheet('glass', -2 * D, SW, SH, 0.045, blank, 1),
-  ];
-  sheets[0].mat.uniforms.uGlow.value = 0.4;
-  sheets.forEach((s) => s.clear());
+  // ---------------------------------------------------------------- 層(一周ごとに、並び・写真の割り付け・落ち方を変える)
+  let cycle = 0;
+  let sheets: Sheet[] = [];
+  const photoTexFor = (cy: number): T.Texture => {
+    if (cy === 0) return photoTex;
+    const cv = document.createElement('canvas');
+    cv.width = photoCv.width;
+    cv.height = photoCv.height;
+    const tex = new T.CanvasTexture(cv);
+    tex.anisotropy = 4;
+    paintPhoto(cv, tex, 7 + cy * 13, cy % 2 ? 260 : 110, cy % 2 ? 200 : 90);
+    return tex;
+  };
+  const V3T = new T.Vector3(0, 0, floorZ + 0.32);
+  const buildCycle = (z0: number) => {
+    sheets.forEach((sh) => sh.dispose());
+    const order: ('photo' | 'board')[] = cycle % 2 === 0 ? ['photo', 'board'] : ['board', 'photo'];
+    sheets = [
+      ...order.map((k, i) => new Sheet(k, z0 - i * D, SW, SH, k === 'photo' ? 0.014 : 0.07, k === 'photo' ? photoTexFor(cycle) : boardTex, i === 0 ? 5 : 3)),
+      new Sheet('glass', z0 - 2 * D, SW, SH, 0.045, blank, 1),
+    ];
+    sheets.forEach((sh) => sh.clear());
+    floorZ = z0 - 2 * D - DV;
+    floor.group.position.z = floorZ;
+    floor.group.quaternion.identity();
+    floor.cuts = [];
+    floor.fills = [];
+    floor.presses = [];
+    floor.tension = 0;
+    floor.dirty = true;
+    floor.mesh.visible = true;
+    V3T.z = floorZ + 0.32;
+    lineMat.uniforms.uFlat.value = 0;
+    lineMat.uniforms.uAlpha.value = 0.6;
+  };
+  buildCycle(0);
   floor.clear();
 
-  // stage: 0 写真の紙 / 1 板 / 2 ガラス / 3 線の空間 / 4 裏返り / 5 おわり
+  // stage: 0〜2 面 / 3 線の空間 / 4 裏返り / 5 おわり
   let stage = 0;
   let phase: 'cut' | 'crack' | 'fall' = 'cut';
+  let mode: 'shatter' | 'peel' | 'sink' | 'floor' = 'shatter';
   let phaseT = 0;
-  const LIMIT = [2.4, 2.2, 2.0, 3.0];
-  const SEC = ['A', 'B', 'A', 'C', 'C'];
-  const setSec = (s: string) => (document.documentElement.dataset.sec = s);
+  const LIMIT = [2.2, 2.0, 1.9, 2.6];
+  const setSec = (x: string) => (document.documentElement.dataset.sec = x);
   setSec('A');
   let flash = 0;
-  let camFrom = new T.Vector3();
-  let lookFrom = new T.Vector3();
+  const camFrom = new T.Vector3();
+  const lookFrom = new T.Vector3();
+  const sinkP: V2 = { x: 0, y: 0 };
   let edgeN = 0;
   const addEdge = (col: string) => {
     const i = document.createElement('i');
@@ -1201,19 +1348,21 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     edgeEl.appendChild(i);
     edgeN++;
   };
-
   const activeSheet = (): Sheet | null => (stage <= 2 ? sheets[stage] : stage === 3 ? floor : null);
 
   // ---------------------------------------------------------------- 視点
   const sway = new T.Vector2();
   const swayT = new T.Vector2();
+  const kick = (x: number, y: number) => {
+    swayT.x = clamp(swayT.x + x, -0.16, 0.16);
+    swayT.y = clamp(swayT.y + y, -0.13, 0.13);
+  };
   let orbit = 0;
   let orbitV = 0;
-  const camPose = (z: number, pos: T.Vector3, look: T.Vector3) => {
-    look.set(sway.x * 0.3, sway.y * 0.3, z);
-    pos.set(sway.x, -Math.sin(TILT) * HC + sway.y, z + Math.cos(TILT) * HC);
+  const camPose = (z: number, pos: T.Vector3, look: T.Vector3, ox = 0, oy = 0) => {
+    look.set(ox + sway.x * 0.3, oy + sway.y * 0.3, z);
+    pos.set(ox + sway.x, oy - Math.sin(TILT) * HC + sway.y, z + Math.cos(TILT) * HC);
   };
-  const V3T = new T.Vector3(0, 0, floorZ + 0.32);
   const v3Pose = (phi: number, dist: number, pos: T.Vector3, look: T.Vector3) => {
     const th = -Math.PI / 2 + orbit + Math.sin(now * 0.17) * 0.35;
     look.copy(V3T);
@@ -1224,27 +1373,39 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
   const upA = new T.Vector3(0, 1, 0);
   const upB = new T.Vector3(0, 0, 1);
   const placeCamera = () => {
-    sway.lerp(swayT, 0.06);
-    swayT.multiplyScalar(0.97);
+    sway.lerp(swayT, 0.07);
+    swayT.multiplyScalar(0.965);
     swayT.x += Math.sin(now * 0.31) * 0.0009;
     swayT.y += Math.cos(now * 0.23) * 0.0007;
+    camera.up.copy(upA);
     if (stage <= 2) {
-      if (phase === 'fall') {
-        const k = eio(clamp((phaseT - 0.25) / 1.0));
-        const zTo = stage < 2 ? sheets[stage + 1].z : 0;
-        camPose(mix(sheets[stage].z, zTo, k), tmpP, tmpL);
-        if (stage === 2) {
-          // ガラスが割れて、空間へ落ちる(2D → 3D)
-          const k2 = eio(clamp((phaseT - 0.1) / 1.8));
-          const dist0 = sheets[2].z + HC - V3T.z;
-          v3Pose(mix(TILT, 0.95, k2), mix(dist0, 2.9, k2), tmpP, tmpL);
-          tmpL.lerpVectors(lookFrom, V3T, clamp(k2 * 1.6));
-          camera.up.copy(upA).lerp(upB, sstep(0.2, 0.9, k2)).normalize();
-        }
+      const sh = sheets[stage];
+      const zTo = stage < 2 ? sheets[stage + 1].z : sh.z;
+      if (phase !== 'fall') camPose(sh.z, tmpP, tmpL);
+      else if (sh.kind === 'glass') {
+        // ガラスが割れて、空間へ落ちる(2D → 3D)
+        const k2 = eio(clamp((phaseT - 0.1) / 1.8));
+        const dist0 = sh.z + HC - V3T.z;
+        v3Pose(mix(TILT, 0.95, k2), mix(dist0, 2.9, k2), tmpP, tmpL);
+        tmpL.lerpVectors(lookFrom, V3T, clamp(k2 * 1.6));
+        camera.up.copy(upA).lerp(upB, sstep(0.2, 0.9, k2)).normalize();
+      } else if (mode === 'sink') {
+        // 切れ目が広がり、その穴へ吸い込まれる
+        const k = eio(clamp((phaseT - 0.35) / 1.2));
+        const back = sstep(0.55, 1, k);
+        camPose(mix(sh.z, zTo, k), tmpP, tmpL, sinkP.x * (1 - back), sinkP.y * (1 - back));
+        if (camera.position.z < sh.z + 0.06) sh.group.visible = false;
       } else {
-        camPose(sheets[stage].z, tmpP, tmpL);
-        camera.up.copy(upA);
+        const k = eio(clamp((phaseT - (mode === 'peel' ? 0.6 : 0.25)) / 1.0));
+        camPose(mix(sh.z, zTo, k), tmpP, tmpL);
       }
+    } else if (stage === 3 && phase === 'fall') {
+      // 床が割れて、次の周の最初の面へ
+      const k = eio(clamp((phaseT - 0.2) / 1.6));
+      camPose(sheets[0].z, tmpP, tmpL);
+      tmpP.lerpVectors(camFrom, tmpP, k);
+      tmpL.lerpVectors(lookFrom, tmpL, k);
+      camera.up.copy(upB).lerp(upA, sstep(0.1, 0.8, k)).normalize();
     } else if (stage === 3) {
       orbit += orbitV;
       orbitV *= 0.92;
@@ -1262,7 +1423,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     camera.lookAt(tmpL);
   };
 
-  // ---------------------------------------------------------------- 入力
+  // ---------------------------------------------------------------- 切る
   const ray = new T.Raycaster();
   const ndc = new T.Vector2();
   const hitPlane = (cx: number, cy: number, z: number): V2 | null => {
@@ -1273,10 +1434,6 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     if (!ray.ray.intersectPlane(pl, p)) return null;
     return { x: p.x, y: p.y };
   };
-  let cur: Cut | null = null;
-  let lastInput = -10;
-  let autoStroke: { pts: V2[]; t0: number; dur: number; done: number } | null = null;
-  let autoN = 0;
   const R0 = rng(5);
   const startCut = () => {
     const sh = activeSheet();
@@ -1295,12 +1452,12 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     if (n) {
       const d = Math.hypot(p.x - c.xs[n - 1], p.y - c.ys[n - 1]);
       if (d < 0.008) return;
-      // 速く動かしても、点の間を埋める
       if (d > 0.03) {
         const st = Math.ceil(d / 0.02);
         const x0 = c.xs[n - 1];
         const y0 = c.ys[n - 1];
         for (let i = 1; i < st; i++) extend(c, { x: x0 + ((p.x - x0) * i) / st, y: y0 + ((p.y - y0) * i) / st });
+        if (phase !== 'cut') return;
       }
     }
     const m = c.xs.length;
@@ -1317,103 +1474,387 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     c.rod?.push(p.x, p.y, c.len, now, tx, ty);
     sh.tension += d;
     sh.dirty = true;
-    if (stage === 3) {
-      morph += d * 0.9;
-    }
-    if (sh.tension >= LIMIT[stage] && phase === 'cut') {
-      cur = null;
-      autoStroke = null;
-      if (stage <= 2) startCrack(p);
-      else startFlip();
+    if (stage === 3) morph += d * 0.9;
+    checkTension(sh, p);
+  };
+  const checkTension = (sh: Sheet, p: V2) => {
+    if (sh.tension < LIMIT[stage] || phase !== 'cut') return;
+    if (gest) gest = null;
+    act = null;
+    beginTransition(sh, p);
+  };
+
+  // 円(くり抜き・打ち抜き)の輪郭
+  const ring = (x: number, y: number, r: number, n = 22, jag = 0, R = Math.random): V2[] =>
+    Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2;
+      const rr = r * (1 + (R() - 0.5) * jag);
+      return { x: x + Math.cos(a) * rr, y: y + Math.sin(a) * rr };
+    });
+  const outline = (sh: Sheet, pts: V2[], w = 0.004) => {
+    const c = newCut(w);
+    const P = [...pts, pts[0]];
+    let len = 0;
+    P.forEach((p, i) => {
+      if (i) len += Math.hypot(p.x - P[i - 1].x, p.y - P[i - 1].y);
+      c.xs.push(p.x);
+      c.ys.push(p.y);
+      c.ss.push(len);
+      c.bs.push(now);
+    });
+    c.len = len;
+    sh.cuts.push(c);
+  };
+  const radial = (sh: Sheet, x: number, y: number, r0: number, n: number, lmin: number, lspan: number, R: () => number) => {
+    for (let i = 0; i < n; i++) {
+      const a = ((i + R() * 0.7) / n) * Math.PI * 2;
+      const k = newCut(sh.kind === 'glass' ? 0.0025 : 0.003, true);
+      let dx = Math.cos(a);
+      let dy = Math.sin(a);
+      let px = x + dx * r0;
+      let py = y + dy * r0;
+      const L = lmin + R() * lspan;
+      let sAcc = 0;
+      while (sAcc < L) {
+        k.xs.push(px);
+        k.ys.push(py);
+        k.ss.push(sAcc);
+        k.bs.push(now);
+        const b = (R() - 0.5) * (sh.kind === 'glass' ? 0.1 : 0.6);
+        const ndx = dx * Math.cos(b) - dy * Math.sin(b);
+        const ndy = dx * Math.sin(b) + dy * Math.cos(b);
+        dx = ndx;
+        dy = ndy;
+        px += dx * 0.012;
+        py += dy * 0.012;
+        sAcc += 0.012;
+      }
+      k.len = sAcc;
+      k.t0 = now;
+      k.dur = 0.08 + L * 0.9;
+      sh.cuts.push(k);
     }
   };
+  // タップ: 穴があき、ちぎれた丸がはじけて、穴へ落ちる。長押しのあとは大きく押し抜く。
+  const punch = (sh: Sheet, p: V2, size: number) => {
+    const R = rng(Math.floor(now * 997) + 1);
+    const r = (sh.kind === 'glass' ? 0.018 : sh.kind === 'board' ? 0.04 : 0.032) * size;
+    const hole = ring(p.x, p.y, r, 22, sh.kind === 'glass' ? 0.5 : 0.25, R);
+    sh.fills.push(hole);
+    outline(sh, hole);
+    radial(sh, p.x, p.y, r, sh.kind === 'glass' ? 8 : 5, sh.kind === 'glass' ? 0.08 * size : 0.02 * size, sh.kind === 'glass' ? 0.25 * size : 0.06 * size, R);
+    const nChip = sh.kind === 'glass' ? 4 : 1;
+    for (let i = 0; i < nChip; i++) {
+      const cp = nChip === 1 ? hole : ring(p.x + (R() - 0.5) * r, p.y + (R() - 0.5) * r, r * 0.45, 5, 0.6, R);
+      const c = nChip === 1 ? p : { x: cp.reduce((a, q) => a + q.x, 0) / cp.length, y: cp.reduce((a, q) => a + q.y, 0) / cp.length };
+      pieces.push(
+        makePiece(
+          sh,
+          cp,
+          c.x,
+          c.y,
+          new T.Vector3((R() - 0.5) * 0.5, (R() - 0.5) * 0.5, 0.9 + 0.5 * size + R() * 0.3),
+          new T.Vector3(R() - 0.5, R() - 0.5, 0).normalize(),
+          (5 + R() * 5) * (R() < 0.5 ? -1 : 1),
+          0,
+          4.2
+        )
+      );
+    }
+    sh.tension += 0.28 * size;
+    sh.energy = Math.min(6, sh.energy + 1.2 * size);
+    sh.dirty = true;
+    kick((R() - 0.5) * 0.04 * size, (R() - 0.5) * 0.04 * size);
+    checkTension(sh, p);
+  };
+  // 囲む: 囲んだ形がくり抜かれ、跳ねて、穴から落ちる。
+  const cutout = (sh: Sheet, c: Cut) => {
+    const pts: V2[] = [];
+    for (let i = 0; i < c.xs.length; i += 2) pts.push({ x: c.xs[i], y: c.ys[i] });
+    if (pts.length < 6) return;
+    const cx = pts.reduce((a, q) => a + q.x, 0) / pts.length;
+    const cy = pts.reduce((a, q) => a + q.y, 0) / pts.length;
+    sh.fills.push(pts);
+    const R = rng(Math.floor(now * 991));
+    pieces.push(makePiece(sh, pts, cx, cy, new T.Vector3(0, 0, 1.25), new T.Vector3(R() - 0.5, R() - 0.5, 0).normalize(), 3.2, 0.06, 3.4));
+    sh.tension += c.len * 0.5;
+    sh.energy = Math.min(6, sh.energy + 2);
+    sh.dirty = true;
+    kick(0, -0.05);
+  };
+  // はじく: 切れ目の帯がちぎれて、指の向きへ飛ぶ。
+  const tear = (sh: Sheet, c: Cut, speed: number) => {
+    const n = c.xs.length;
+    if (n < 4) return;
+    c.heal = 1.7;
+    sh.dirty = true;
+    const L: V2[] = [];
+    const Rt: V2[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - 1);
+      const b = Math.min(n - 1, i + 1);
+      let tx = c.xs[b] - c.xs[a];
+      let ty = c.ys[b] - c.ys[a];
+      const tl = Math.hypot(tx, ty) || 1;
+      tx /= tl;
+      ty /= tl;
+      const hw = c.w * lens(c.ss[i] / c.len) * Math.min(1, c.len / 0.45) * 1.6;
+      L.push({ x: c.xs[i] - ty * hw, y: c.ys[i] + tx * hw });
+      Rt.push({ x: c.xs[i] + ty * hw, y: c.ys[i] - tx * hw });
+    }
+    const poly = [...L, ...Rt.reverse()];
+    const cx = c.xs.reduce((a, q) => a + q, 0) / n;
+    const cy = c.ys.reduce((a, q) => a + q, 0) / n;
+    const dx = (c.xs[n - 1] - c.xs[0]) / (c.len || 1);
+    const dy = (c.ys[n - 1] - c.ys[0]) / (c.len || 1);
+    const v = Math.min(1.6, speed * 0.18);
+    pieces.push(makePiece(sh, poly, cx, cy, new T.Vector3(dx * v, dy * v, 1.5), new T.Vector3(dx, dy, 0).normalize(), 9, 0, 3));
+    sh.energy = Math.min(6, sh.energy + 2.5);
+    sh.tension += c.len * 0.4;
+    kick(dx * 0.06, dy * 0.05);
+  };
+
+  // ---------------------------------------------------------------- 指の動きの読み分け(人の指も、自動のペンも同じ道を通る)
+  type Press = { x: number; y: number; a: number; tr: number };
+  type Gest = { t0: number; p0: V2; moved: boolean; cut: Cut | null; press: Press; drag: Press | null; lastP: V2; lastT: number; lastRip: number };
+  let gest: Gest | null = null;
+  const gDown = (p: V2) => {
+    const sh = activeSheet();
+    if (!sh || phase !== 'cut') return;
+    const press = { x: p.x, y: p.y, a: 0.004, tr: -1 };
+    sh.presses.push(press);
+    gest = { t0: now, p0: p, moved: false, cut: null, press, drag: null, lastP: p, lastT: now, lastRip: now };
+  };
+  const gMove = (p: V2) => {
+    const g = gest;
+    if (!g) return;
+    const sh = activeSheet();
+    if (!sh || phase !== 'cut') return;
+    if (!g.moved && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 0.02) {
+      g.moved = true;
+      g.press.tr = now;
+      g.press.a = Math.max(g.press.a, 0.01);
+      g.cut = startCut();
+      if (g.cut) extend(g.cut, g.p0);
+      g.drag = { x: p.x, y: p.y, a: 0.016, tr: -1 };
+      sh.presses.push(g.drag);
+    }
+    if (g.moved && g.cut && gest === g) {
+      extend(g.cut, p);
+      // 指の通り道: 面が指について波打ち、速く動かすほど面全体が揺れる
+      const dtt = Math.max(1 / 120, now - g.lastT);
+      const v = Math.hypot(p.x - g.lastP.x, p.y - g.lastP.y) / dtt;
+      sh.energy = Math.min(6, sh.energy + v * dtt * 1.4);
+      if (g.drag) {
+        g.drag.x = p.x;
+        g.drag.y = p.y;
+        g.drag.a = Math.min(0.03, 0.01 + v * 0.006);
+      }
+      if (now - g.lastRip > 0.22 && v > 0.3) {
+        sh.presses.push({ x: p.x, y: p.y, a: Math.min(0.025, 0.008 + v * 0.004), tr: now });
+        if (g.drag) {
+          // ドラッグのへこみを最後尾に保つ
+          const i = sh.presses.indexOf(g.drag);
+          if (i >= 0) sh.presses.splice(i, 1);
+          sh.presses.push(g.drag);
+        }
+        g.lastRip = now;
+      }
+      g.lastP = p;
+      g.lastT = now;
+    }
+  };
+  const gUp = () => {
+    const g = gest;
+    gest = null;
+    if (!g) return;
+    if (g.press.tr < 0) g.press.tr = now;
+    if (g.drag) g.drag.tr = now;
+    const sh = activeSheet();
+    if (!sh || phase !== 'cut') return;
+    const dur = now - g.t0;
+    if (!g.moved) {
+      if (dur < 0.3) punch(sh, g.p0, 1);
+      else if (dur > 1.1) punch(sh, g.p0, 2.4);
+      else {
+        sh.tension += 0.15;
+        checkTension(sh, g.p0);
+      }
+      return;
+    }
+    const c = g.cut;
+    if (!c || c.xs.length < 2) return;
+    const n = c.xs.length;
+    const gap = Math.hypot(c.xs[0] - c.xs[n - 1], c.ys[0] - c.ys[n - 1]);
+    const speed = c.len / Math.max(dur, 0.05);
+    if (c.len > 0.35 && gap < Math.max(0.09, c.len * 0.14)) cutout(sh, c);
+    else if (speed > 2.0 && c.len > 0.18 && (sh.kind === 'photo' || sh.kind === 'floor')) tear(sh, c, speed);
+    checkTension(sh, { x: c.xs[n - 1], y: c.ys[n - 1] });
+  };
+
+  // ---------------------------------------------------------------- 入力(指)
+  let down = false;
+  let lastX = 0;
+  let lastY = 0;
+  let lastInput = -10;
   const toPlane = (e: PointerEvent) => {
     const sh = activeSheet();
     if (!sh) return null;
     const r = canvas.getBoundingClientRect();
     return hitPlane(e.clientX - r.left, e.clientY - r.top, sh.z);
   };
-  let down = false;
-  let lastX = 0;
   const onDown = (e: PointerEvent) => {
     if (stage >= 4) return;
     down = true;
     lastInput = now;
-    autoStroke = null;
+    act = null;
+    if (gest) {
+      gest.press.tr = now;
+      gest = null;
+    }
     lastX = e.clientX;
+    lastY = e.clientY;
     root.setPointerCapture?.(e.pointerId);
-    cur = startCut();
     const p = toPlane(e);
-    if (cur && p) extend(cur, p);
+    if (p) gDown(p);
   };
   const onMove = (e: PointerEvent) => {
-    swayT.set(((e.clientX / W) * 2 - 1) * 0.05, -((e.clientY / H) * 2 - 1) * 0.04);
-    if (!down) return;
+    if (down) kick((e.clientX - lastX) * 0.0007, -(e.clientY - lastY) * 0.0006);
+    lastY = e.clientY;
+    if (!down) {
+      lastX = e.clientX;
+      return;
+    }
     lastInput = now;
     if (stage === 3) orbitV += (e.clientX - lastX) * 0.00004;
     lastX = e.clientX;
     const p = toPlane(e);
-    if (cur && p) extend(cur, p);
+    if (p) gMove(p);
   };
   const onUp = () => {
+    if (!down) return;
     down = false;
-    cur = null;
+    lastInput = now;
+    gUp();
   };
   root.addEventListener('pointerdown', onDown);
   root.addEventListener('pointermove', onMove);
   root.addEventListener('pointerup', onUp);
   root.addEventListener('pointercancel', onUp);
 
-  // 自動のペン: 画面の端から入って、ゆるく曲がって抜ける線。
+  // ---------------------------------------------------------------- 自動のペン: 引く・はじく・叩く・押す・囲むを、毎回ちがう順で混ぜる
+  type Act = { pts: V2[]; t0: number; dur: number; hold: number; i: number; downed: boolean };
+  let act: Act | null = null;
+  let autoN = 0;
+  const KINDS = ['stroke', 'tap', 'loop', 'flick', 'taps', 'hold', 'stroke', 'flick', 'loop', 'scribble'];
   const makeAuto = () => {
-    const sh = activeSheet()!;
-    const R = rng(100 + autoN++ * 7 + stage * 31);
-    const hw = (VW / 2) * 0.9;
-    const hh = (VH / 2) * 0.8;
-    const side = R() < 0.5 ? -1 : 1;
-    const p0 = { x: side * hw * (0.4 + R() * 0.7), y: (R() * 2 - 1) * hh };
-    const p3 = { x: -side * hw * (0.3 + R() * 0.7), y: (R() * 2 - 1) * hh };
-    const p1 = { x: p0.x * 0.2 + (R() - 0.5) * 0.6, y: p0.y + (R() - 0.5) * 1.2 };
-    const p2 = { x: p3.x * 0.2 + (R() - 0.5) * 0.6, y: p3.y + (R() - 0.5) * 1.2 };
-    const pts: V2[] = [];
-    for (let i = 0; i <= 60; i++) {
-      const t = i / 60;
-      const u = 1 - t;
-      pts.push({
-        x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
-        y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
-      });
+    const R = rng(100 + autoN * 7 + stage * 31 + cycle * 101);
+    const kind = KINDS[(autoN * 3 + stage * 2 + cycle * 5 + Math.floor(R() * 3)) % KINDS.length];
+    autoN++;
+    const sc = stage === 3 ? 0.85 : 1;
+    const hw = (VW / 2) * 0.85 * sc;
+    const hh = (VH / 2) * 0.75 * sc;
+    const rp = (): V2 => ({ x: (R() * 2 - 1) * hw * 0.8, y: (R() * 2 - 1) * hh * 0.8 });
+    let pts: V2[] = [];
+    let dur = 0.9;
+    let hold = 0;
+    if (kind === 'stroke' || kind === 'scribble') {
+      const side = R() < 0.5 ? -1 : 1;
+      const p0 = { x: side * hw * (0.4 + R() * 0.6), y: (R() * 2 - 1) * hh };
+      const p3 = { x: -side * hw * (0.3 + R() * 0.6), y: (R() * 2 - 1) * hh };
+      const p1 = { x: p0.x * 0.2 + (R() - 0.5) * 0.6, y: p0.y + (R() - 0.5) * 1.2 };
+      const p2 = { x: p3.x * 0.2 + (R() - 0.5) * 0.6, y: p3.y + (R() - 0.5) * 1.2 };
+      for (let i = 0; i <= 60; i++) {
+        const t = i / 60;
+        const u = 1 - t;
+        const zig = kind === 'scribble' ? Math.sin(i * 1.7) * 0.06 : 0;
+        pts.push({
+          x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x + zig,
+          y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y + zig * 0.6,
+        });
+      }
+      dur = kind === 'scribble' ? 1.2 : 0.95;
+    } else if (kind === 'flick') {
+      const a = rp();
+      const ang = R() * Math.PI * 2;
+      const L = 0.45 + R() * 0.35;
+      for (let i = 0; i <= 10; i++) pts.push({ x: a.x + Math.cos(ang) * L * (i / 10), y: a.y + Math.sin(ang) * L * (i / 10) });
+      dur = 0.13;
+    } else if (kind === 'loop') {
+      const c = rp();
+      const r = 0.14 + R() * 0.12;
+      const ex = 0.8 + R() * 0.5;
+      for (let i = 0; i <= 40; i++) {
+        const a = (i / 40) * Math.PI * 2.04;
+        pts.push({ x: c.x + Math.cos(a) * r * ex, y: c.y + Math.sin(a) * r });
+      }
+      dur = 0.85;
+    } else if (kind === 'hold') {
+      pts = [rp()];
+      dur = 0.05;
+      hold = 1.25;
+    } else {
+      pts = [rp()];
+      dur = 0.05;
+      hold = 0.04;
     }
-    // 3D 空間では、床の上に収まるように
-    if (stage === 3) pts.forEach((p) => ((p.x *= 0.9), (p.y *= 0.9)));
-    void sh;
-    autoStroke = { pts, t0: now, dur: 0.95, done: 0 };
-    cur = startCut();
+    act = { pts, t0: now, dur, hold, i: 0, downed: false };
+    // 叩くのは、続けて何回か
+    if (kind === 'taps') tapsLeft = 3 + Math.floor(R() * 3);
   };
+  let tapsLeft = 0;
   const runAuto = () => {
-    if (!autoStroke || !cur) return;
-    const k = clamp((now - autoStroke.t0) / autoStroke.dur);
-    const upto = Math.floor(k * (autoStroke.pts.length - 1));
-    const c = cur;
-    while (autoStroke && autoStroke.done <= upto && cur === c) {
-      extend(c, autoStroke.pts[autoStroke.done]);
-      if (autoStroke) autoStroke.done++;
+    const a = act;
+    if (!a) return;
+    if (!a.downed) {
+      a.downed = true;
+      gDown(a.pts[0]);
     }
-    if (autoStroke && k >= 1) {
-      autoStroke = null;
-      cur = null;
-      lastInput = now - 1.0;
+    const k = clamp((now - a.t0) / a.dur);
+    const upto = Math.floor(k * (a.pts.length - 1));
+    while (act === a && a.i <= upto) gMove(a.pts[a.i++]);
+    if (act === a && now - a.t0 >= a.dur + a.hold) {
+      gUp();
+      act = null;
+      lastInput = now - (tapsLeft > 0 ? 1.15 : 0.85);
+      if (tapsLeft > 0) {
+        tapsLeft--;
+        const R = rng(autoN * 13 + tapsLeft);
+        act = { pts: [{ x: (R() * 2 - 1) * VW * 0.32, y: (R() * 2 - 1) * VH * 0.32 }], t0: now + 0.12, dur: 0.05, hold: 0.04, i: 0, downed: false };
+      }
     }
   };
 
-  // ---------------------------------------------------------------- 割れる・落ちる
+  // ---------------------------------------------------------------- 落ち方(毎回ちがう)
+  const MODES: ('shatter' | 'peel' | 'sink')[][] = [
+    ['shatter', 'sink'],
+    ['shatter', 'peel'],
+  ];
+  const beginTransition = (sh: Sheet, p: V2) => {
+    act = null;
+    if (stage === 3) {
+      if (cycle >= 1) return startFlip();
+      mode = 'floor';
+      return startCrack(sh, p);
+    }
+    if (sh.kind === 'glass') {
+      mode = 'shatter';
+      return startCrack(sh, p);
+    }
+    let m = MODES[cycle % 2][stage] ?? 'shatter';
+    if (m === 'peel' && sh.kind !== 'photo') m = 'sink';
+    mode = m;
+    if (m === 'shatter') return startCrack(sh, p);
+    sinkP.x = p.x;
+    sinkP.y = p.y;
+    startFall();
+  };
   let crackFrom: V2 = { x: 0, y: 0 };
-  const startCrack = (p: V2) => {
-    const sh = sheets[stage];
+  const startCrack = (sh: Sheet, p: V2) => {
     phase = 'crack';
     phaseT = 0;
     crackFrom = p;
-    const R = rng(stage * 13 + 3);
+    const R = rng(stage * 13 + cycle * 7 + 3);
     const cracks: Cut[] = [];
     for (const c of sh.cuts) {
       if (c.crack || c.len < 0.12) continue;
@@ -1429,14 +1870,13 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
         const k = newCut(sh.kind === 'glass' ? 0.003 : 0.0035, true);
         let x = c.xs[i];
         let y = c.ys[i];
-        let s = 0;
+        let s2 = 0;
         const jag = sh.kind === 'glass' ? 0.0 : 0.006;
-        while (Math.abs(x) < sh.w / 2 + 0.05 && Math.abs(y) < sh.h / 2 + 0.05 && s < 6) {
+        while (Math.abs(x) < sh.w / 2 + 0.05 && Math.abs(y) < sh.h / 2 + 0.05 && s2 < 6) {
           k.xs.push(x);
           k.ys.push(y);
-          k.ss.push(s);
+          k.ss.push(s2);
           k.bs.push(now);
-          // 紙はゆらいで裂け、ガラスはまっすぐ割れる
           const a = (R() - 0.5) * (sh.kind === 'glass' ? 0.05 : 0.5);
           const ndx = dx * Math.cos(a) - dy * Math.sin(a);
           const ndy = dx * Math.sin(a) + dy * Math.cos(a);
@@ -1447,45 +1887,70 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
           dy /= ll;
           x += dx * 0.02 + (R() - 0.5) * jag;
           y += dy * 0.02 + (R() - 0.5) * jag;
-          s += 0.02;
+          s2 += 0.02;
         }
-        k.len = s;
+        k.len = s2;
         k.t0 = now + R() * 0.08;
-        k.dur = 0.32 + s * 0.05;
+        k.dur = 0.32 + s2 * 0.05;
         cracks.push(k);
       }
     }
+    // 切れ目が少ないとき(叩いた穴だけ等)は、穴から縁へひびを走らせる
+    if (!cracks.length) radial(sh, p.x, p.y, 0.02, 5, 2, 0.5, R);
     sh.cuts.push(...cracks);
     sh.dirty = true;
   };
   const startFall = () => {
-    const sh = sheets[stage];
+    const sh = activeSheet()!;
     phase = 'fall';
     phaseT = 0;
     const glass = sh.kind === 'glass';
-    pieces.push(...shatter(sh, crackFrom, glass ? { speed: 0.6, spin: 1.6, g: 3.2 } : { speed: 1.0, spin: 1.1, g: 2.6 }));
-    sh.mesh.visible = false;
-    // 巻いた帯・ガラスの棒も、面と一緒に落ちる
-    const grp = sh.group;
-    grp.userData.fall = { t: 0 };
+    camFrom.copy(camera.position);
+    lookFrom.copy(tmpL);
+    if (mode === 'shatter' || mode === 'floor') {
+      pieces.push(...shatter(sh, crackFrom, glass ? { speed: 0.6, spin: 1.6, g: 3.2 } : { speed: 1.0, spin: 1.1, g: 2.6 }));
+      sh.mesh.visible = false;
+      if (mode === 'shatter') sh.group.userData.fall = { t: 0 };
+    }
+    if (mode === 'peel') {
+      const corner = [
+        [1, 1],
+        [-1, 1],
+        [1, -1],
+        [-1, -1],
+      ][cycle % 4];
+      const dv = new T.Vector2(corner[0] * sh.w, corner[1] * sh.h).normalize();
+      sh.mat.uniforms.uPeelDir.value.copy(dv);
+      sh.group.userData.peel = { from: Math.abs(dv.x) * sh.w * 0.5 + Math.abs(dv.y) * sh.h * 0.5 };
+      sh.mat.uniforms.uPeel.value = sh.group.userData.peel.from;
+    }
+    if (mode === 'floor') {
+      lines.visible = false;
+      cycle++;
+      buildCycle(floorZ - D);
+    }
     flash = glass ? 3 : 2;
     setSec(glass ? 'drop' : 'chorus');
-    addEdge(sh.kind === 'photo' ? 'rgba(236,233,226,0.9)' : sh.kind === 'board' ? 'rgba(150,140,130,0.9)' : 'rgba(170,230,240,0.9)');
-    camFrom.copy(camera.position);
-    lookFrom.set(0, 0, sh.z);
+    addEdge(sh.kind === 'photo' ? 'rgba(236,233,226,0.9)' : sh.kind === 'board' ? 'rgba(150,140,130,0.9)' : sh.kind === 'glass' ? 'rgba(170,230,240,0.9)' : 'rgba(220,235,255,0.9)');
   };
+  const fallDur = () => (mode === 'floor' ? 1.9 : activeSheet()?.kind === 'glass' ? 1.9 : mode === 'peel' ? 1.7 : mode === 'sink' ? 1.6 : 1.3);
   const endFall = () => {
-    const sh = sheets[stage];
-    sh.gone = true;
-    stage++;
+    if (mode === 'floor') {
+      stage = 0;
+      lines.visible = true;
+      floor.mesh.visible = true;
+    } else {
+      const sh = sheets[stage];
+      sh.gone = true;
+      sh.mesh.visible = false;
+      if (mode !== 'shatter') sh.group.visible = false;
+      stage++;
+    }
     phase = 'cut';
     phaseT = 0;
-    lastInput = now - 0.4;
-    setSec(SEC[stage] || 'C');
-    if (stage === 3) {
-      snapshot();
-      camera.layers.enable(1);
-    }
+    lastInput = now - 0.6;
+    setSec(stage === 3 ? 'C' : stage % 2 ? 'B' : 'A');
+    if (stage === 3) snapshot();
   };
   // 結末: 床が裏返る。線は床に寝て(3D → 2D)、裏返った床の下へ。
   const startFlip = () => {
@@ -1506,11 +1971,11 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
   const frame = (dt: number) => {
     now += dt;
     phaseT += dt;
-    const sh = activeSheet();
-    // 自動のペン
-    if (autoOn && !down && phase === 'cut' && stage <= 3 && !autoStroke && now - lastInput > (stage === 0 && now < 2 ? 1.4 : 1.3)) makeAuto();
-    runAuto();
-    if (stage === 3) {
+    // 押している間、へこみが深くなる
+    if (gest && !gest.moved && gest.press.tr < 0) gest.press.a = Math.min(0.055, 0.004 + (now - gest.t0) * 0.05);
+    if (autoOn && !down && !act && phase === 'cut' && stage <= 3 && now - lastInput > (now < 2 ? 1.1 : 1.25)) makeAuto();
+    if (act && now >= act.t0) runAuto();
+    if (stage === 3 || stage === 2) {
       morph += dt * 0.07;
       if (morph >= 1) {
         morph = 0;
@@ -1520,37 +1985,51 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       }
       lineMat.uniforms.uM.value = morph;
     }
-    if (phase === 'crack' && stage <= 2 && phaseT > (sheets[stage].kind === 'glass' ? 0.42 : 0.55)) startFall();
+    lines.rotation.z += dt * 0.12;
+    if (phase === 'crack' && phaseT > (activeSheet()?.kind === 'glass' ? 0.42 : 0.55)) startFall();
+
+    // はがす
+    for (const sh of sheets) {
+      const pe = sh.group.userData.peel as { from: number } | undefined;
+      if (!pe || phase !== 'fall') continue;
+      const k = eio(clamp(phaseT / 1.5));
+      sh.mat.uniforms.uPeel.value = mix(pe.from, -pe.from - 0.6, k);
+    }
+    // 吸い込まれる: 切れ目と穴が、大きく開く
+    if (phase === 'fall' && mode === 'sink' && stage <= 2) {
+      const w = 1 + 7 * sstep(0.0, 0.7, phaseT);
+      for (const c of sheets[stage].cuts) c.heal = w;
+      sheets[stage].dirty = true;
+    }
 
     placeCamera();
     scene.updateMatrixWorld();
-    // 面(すぐ下の層までだけ描く)
-    sheets.forEach((s, i) => {
-      if (!s.gone && !s.group.userData.fall) s.mesh.visible = i <= stage + 1;
-      if (!s.gone && s.mesh.visible) s.update();
+    sheets.forEach((sh, i) => {
+      if (!sh.gone && !sh.group.userData.fall && !(phase === 'fall' && i === stage && mode !== 'peel' && mode !== 'sink')) sh.mesh.visible = i <= stage + 1 || stage === 3;
+      if (!sh.gone && sh.mesh.visible) sh.update();
     });
     floor.update();
-    sheets[0].mat.uniforms.uGlow.value = 0.32 + 0.12 * Math.sin(now * 1.4);
+    for (const sh of sheets) if (sh.kind === 'photo') sh.mat.uniforms.uGlow.value = 0.32 + 0.12 * Math.sin(now * 1.4);
     floor.mat.uniforms.uGlow.value = 0.3 + 0.1 * Math.sin(now * 1.4);
-    for (const s of sheets)
-      for (const c of s.cuts) {
+    for (const sh of sheets)
+      for (const c of sh.cuts) {
         c.strip?.update(c.len);
         c.rod?.update(c.len);
       }
 
     // 落ちる面に付いている帯・棒
-    for (const s of sheets) {
-      const f = s.group.userData.fall as { t: number } | undefined;
+    for (const sh of sheets) {
+      const f = sh.group.userData.fall as { t: number } | undefined;
       if (!f) continue;
       f.t += dt;
       const t = Math.max(0, f.t - 0.15);
-      s.group.position.z = (s.group.userData.z0 ?? (s.group.userData.z0 = s.group.position.z)) - 1.3 * t * t - 0.2 * t;
-      s.group.position.x = DIR28.x * t * 0.9;
-      s.group.position.y = DIR28.y * t * 0.9;
-      s.group.rotation.z = t * 0.25;
+      sh.group.position.z = (sh.group.userData.z0 ?? (sh.group.userData.z0 = sh.group.position.z)) - 1.3 * t * t - 0.2 * t;
+      sh.group.position.x = DIR28.x * t * 0.9;
+      sh.group.position.y = DIR28.y * t * 0.9;
+      sh.group.rotation.z = t * 0.25;
       if (f.t > 3) {
-        s.group.visible = false;
-        delete s.group.userData.fall;
+        sh.group.visible = false;
+        delete sh.group.userData.fall;
       }
     }
     // 破片
@@ -1558,14 +2037,14 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       p.t += dt;
       const t = p.t - p.delay;
       if (t < 0) return true;
-      p.vel.z -= (stage >= 3 ? 2.2 : 2.8) * dt;
+      p.vel.z -= p.g * dt;
       p.mesh.position.addScaledVector(p.vel, dt);
       p.mesh.quaternion.premultiply(new T.Quaternion().setFromAxisAngle(p.axis, p.spin * dt));
       const below = p.z0 - p.mesh.position.z;
       const isGlass = p.mats[0].uniforms.uKind.value === 2;
       const a = isGlass ? 1 - sstep(DV * 0.75, DV * 1.05, below) : 1 - sstep(D * 0.3, D * 0.8, below);
       for (const m of p.mats) m.uniforms.uAlpha.value = clamp(a);
-      if (t > 4 || a <= 0) {
+      if (t > 5 || a <= 0) {
         scene.remove(p.mesh);
         p.mesh.geometry.dispose();
         p.mats.forEach((m) => m.dispose());
@@ -1573,7 +2052,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       }
       return true;
     });
-    if (phase === 'fall' && stage <= 2 && phaseT > (stage === 2 ? 1.9 : 1.3)) endFall();
+    if (phase === 'fall' && stage <= 3 && phaseT > fallDur()) endFall();
 
     // 裏返り
     if (stage === 4) {
@@ -1583,6 +2062,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
       lineMat.uniforms.uFlat.value = sstep(0.0, 0.45, phaseT);
       lineMat.uniforms.uAlpha.value = 0.6 * (1 - sstep(0.3, 0.9, phaseT));
       for (const c of floor.cuts) c.heal = 1 - sstep(0.0, 0.7, phaseT);
+      floor.fills = phaseT > 0.4 ? [] : floor.fills;
       floor.dirty = true;
       floor.mat.uniforms.uFront.value = mix(0.55, 1.0, sstep(1.2, 1.9, phaseT));
       if (phaseT > 2.0 && !finished) {
@@ -1593,7 +2073,8 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     }
 
     // 下の空間を写す(ガラスが見えている間)
-    const glassSeen = (stage === 1 && sheets[1].cuts.length > 0) || stage === 2 || pieces.some((p) => p.mats[0].uniforms.uKind.value === 2);
+    const gi = sheets.findIndex((sh) => sh.kind === 'glass');
+    const glassSeen = (stage <= 2 && gi >= 0 && !sheets[gi].gone && stage >= gi - 1) || pieces.some((p) => p.mats[0].uniforms.uKind.value === 2);
     if (glassSeen) {
       camera.layers.set(1);
       renderer.setRenderTarget(rtScene);
@@ -1619,11 +2100,14 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
 
   // 結末: 動く絵を、本物の一覧に置き換える(絵合わせしてあるので、見た目は動かない)。
   const finish = () => {
-    setTimeout(() => {
-      onDone();
-      root.classList.remove('is-live');
-      edgeEl.replaceChildren();
-    }, frozen ? 0 : 60);
+    setTimeout(
+      () => {
+        onDone();
+        root.classList.remove('is-live');
+        edgeEl.replaceChildren();
+      },
+      frozen ? 0 : 60
+    );
   };
 
   // 始める: 写真がそろってから(遅くても 2.5 秒で始める)。
@@ -1648,25 +2132,21 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     step: (n = 1, dt = 1 / 60) => {
       for (let i = 0; i < n; i++) frame(dt);
     },
-    dbg: () => ({ scene, floor, sheets, camera, pieces, snapCv, backCv, lineMat }),
-    state: () => ({ stage, phase, phaseT, now, tension: activeSheet()?.tension ?? 0, pieces: pieces.length, objI, morph }),
-    ready: () => loaded,
-    // 画面座標(CSS px)の点列を、1本の線として順に通す
-    stroke: (pts: [number, number][], perFrame = 2) => {
-      const sh = activeSheet();
-      if (!sh) return;
-      cur = startCut();
-      lastInput = now;
-      for (let i = 0; i < pts.length; i++) {
-        const r = canvas.getBoundingClientRect();
-        void r;
-        const p = hitPlane(pts[i][0], pts[i][1], activeSheet()?.z ?? 0);
-        if (cur && p) extend(cur, p);
-        if (i % perFrame === perFrame - 1) frame(1 / 60);
-        lastInput = now;
+    jump: (to: number) => {
+      for (let i = 0; i < to && i < 3; i++) {
+        sheets[i].gone = true;
+        sheets[i].mesh.visible = false;
+        sheets[i].group.visible = false;
       }
-      cur = null;
+      stage = to;
+      phase = 'cut';
+      phaseT = 0;
+      lastInput = now;
+      if (to >= 3) snapshot();
     },
+    dbg: () => ({ scene, floor, sheets, camera, pieces, snapCv, backCv, lineMat }),
+    state: () => ({ stage, cycle, phase, mode, phaseT, now, tension: activeSheet()?.tension ?? 0, pieces: pieces.length, objI, morph }),
+    ready: () => loaded,
   };
 
   return () => {
@@ -1676,7 +2156,7 @@ export function mountDepth(root: HTMLElement, onDone: () => void): () => void {
     root.removeEventListener('pointermove', onMove);
     root.removeEventListener('pointerup', onUp);
     root.removeEventListener('pointercancel', onUp);
-    sheets.forEach((s) => s.dispose());
+    sheets.forEach((sh) => sh.dispose());
     floor.dispose();
     pieces.forEach((p) => scene.remove(p.mesh));
     rtScene.dispose();
