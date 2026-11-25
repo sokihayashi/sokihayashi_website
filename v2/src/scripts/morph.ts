@@ -70,6 +70,7 @@ out float vPar;  // 立体写真の強さ
 out vec2 vScr;   // 画面での位置(px)
 out float vTrans; // 紙の裏から光が当たっている度合い
 out vec4 vGl;     // xyz: 面の向き / w: ガラスとして塗る割合(ガラスの帯)
+out float vClear; // 透明なガラスの割合
 const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
@@ -154,6 +155,7 @@ struct O {
   float par;    // 写真の奥行きで、平面の写真を立体に見せる強さ
   vec3 nrm;     // 面の向き(ガラスの帯だけが使う。画面の座標で)
   float glass;  // ガラスとして塗る割合(ガラスの帯だけ 1)
+  float clear;  // 透明なガラス(中に写真が屈折して見える)の割合
 };
 O base(){
   O o;
@@ -162,7 +164,7 @@ O base(){
   o.shape = vec2(1.0); o.round = 0.0; o.alpha = 1.0; o.lit = 1.0; o.gloss = 0.0; o.face = 1.0;
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
   o.uv = gUVb; o.work = gR2.w; o.gate = -1.0; o.par = 0.0;
-  o.nrm = vec3(0.0, 0.0, 1.0); o.glass = 0.0;
+  o.nrm = vec3(0.0, 0.0, 1.0); o.glass = 0.0; o.clear = 0.0;
   return o;
 }
 // 向きのある細長い面(線・糸・札)
@@ -843,7 +845,7 @@ O feed(O o){
   if (max(tc, tq) <= 0.001) return o;
   O b = sBand();
   b.corner = mix(o.corner, b.corner, tq); b.centre = mix(o.centre, b.centre, tc);
-  if (tc < 0.5) { b.col = o.col; b.tex = o.tex; b.uv = o.uv; b.work = o.work; b.tint = o.tint; b.lit = o.lit; b.gloss = o.gloss; b.par = o.par; b.line = o.line; b.gate = o.gate; b.round = o.round; b.face = o.face; b.trans = o.trans; b.ridge = o.ridge; b.alpha = o.alpha; b.shape = o.shape; b.lineCol = o.lineCol; b.nrm = o.nrm; b.glass = o.glass; }
+  if (tc < 0.5) { b.col = o.col; b.tex = o.tex; b.uv = o.uv; b.work = o.work; b.tint = o.tint; b.lit = o.lit; b.gloss = o.gloss; b.par = o.par; b.line = o.line; b.gate = o.gate; b.round = o.round; b.face = o.face; b.trans = o.trans; b.ridge = o.ridge; b.alpha = o.alpha; b.shape = o.shape; b.lineCol = o.lineCol; b.nrm = o.nrm; b.glass = o.glass; b.clear = o.clear; }
   return b;
 }
 O objQuad(){
@@ -936,24 +938,77 @@ O sObjWrap(){
   o.tint *= 0.62 + 0.45 * max(dot(normalize(vec3(n.x, -n.y, n.z)), objLight(o.centre)), 0.0);
   return feed(o);
 }
-// 34 ガラスの帯(立体の版だけ): 描いた帯が、厚いガラスの帯になり、球に巻かれる。外から持ってきた立体は使わない。帯そのものが立体になる。
-// 太さは ゆっくり変わる(細い線の束 ↔ 厚い帯 ↔ 重なって塊)。面は ひと続きなので、画素ごとに なめらかに塗れる(虹の屈折・映り込み・ふちの光)。
+// ---- ガラス(立体の版だけ)。本人(2026-11-25、最初の版に):「上手く使えていないな。案を出して欲しい」→ 3案に「全部やってみて」。
+//   35 A ガラスの線: 描いた線が、その場でガラスになる(球に巻かない)。ゆっくり描いた所は太い塊、速く描いた所は細い光の線。
+//   34 B 巻き取られる: 帯が中心に巻き取られ、巻き方そのものが変わり続ける(球 → 輪 → らせんの皿 → 結び目)。描いた長さで次の形へ。指に引かれて、ほどける。
+//   36 C 封じたガラス: 黒くしない。厚いガラスの中に 作品が屈折して見え、ふちにだけ 虹。指の下は、レンズのように膨らむ。
+// 面は ひと続きなので、画素ごとに なめらかに塗れる。
+float bornAt(int j){ j = ((j % Mi) + Mi) % Mi; vec4 r = texelFetch(uPath, ivec2(j, 1), 0); return r.w > 0.5 ? r.z : -1.0; }
+// その場所を引いた遅さ(0 = 速い、1 = ゆっくり)。跡は等しい間隔で記録されるので、となりとの時間の差が速さになる。
+float slowAt(int j){ float a = bornAt(j - 1), b = bornAt(j + 1); float dt = (a >= 0.0 && b > a) ? (b - a) * 0.5 : 0.03; return 1.0 - smoothstep(220.0, 1000.0, uDp / max(dt, 0.004)); }
+float slowQ(float t){ return mix(slowAt(gJ), slowAt(gJ + (t > 0.0 ? 1 : -1)), abs(t)); }
+// 35 A ガラスの線。
+O sGlassLine(){
+  O o = base();
+  float wq = slowQ(gTq), wc = slowQ(gFr - 0.5);
+  float hq = uW * mix(0.07, 0.5, wq), tq = uW * mix(0.07, 0.3, wq), hc = uW * mix(0.07, 0.5, wc), tc = uW * mix(0.07, 0.3, wc);
+  float a = gVc * 6.2832, ac = gV * 6.2832;
+  o.corner = vec3(gPq + gNq * cos(a) * hq, tq * 1.2 + sin(a) * tq + tubeZ(gUc));
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp + gN * cos(ac) * hc, tc * 1.2 + sin(ac) * tc + tubeZ(float(gJ) + gFr));
+  o.nrm = normalize(vec3(gNq * cos(a) / hq, sin(a) / tq));
+  o.glass = 1.0; o.tex = 0.0; o.line = 0.0; o.face = 1.0;
+  return o;
+}
+// 36 C 封じたガラス: 帯の上に、かまぼこ形の厚いガラスが載る(上の面だけ。写真は 帯のときと同じ場所に見える)。
+O sGlassClear(){
+  O o = base();
+  float hw = uW * 0.5, ht = uW * 0.34;
+  float a = (gVc + 0.5) * 3.14159, ac = (gV + 0.5) * 3.14159;
+  o.corner = vec3(gPq - gNq * cos(a) * hw, sin(a) * ht);
+  o.centre = vec3(gP + gT * (gFr - 0.5) * uDp - gN * cos(ac) * hw, sin(ac) * ht);
+  o.nrm = normalize(vec3(-gNq * cos(a) / hw, sin(a) / ht + 0.02));
+  o.glass = 1.0; o.clear = 1.0; o.tex = 1.0; o.line = 0.0; o.face = 1.0;
+  return o;
+}
+// 34 B 巻き取られる。芯の線(形ごと)を決め、その上に 断面が楕円の帯を載せる。
+vec3 formC(float k, float u, float turns, out vec3 N){
+  float lon = u * turns * 6.2832;
+  if (k < 0.5) { float lat = mix(-1.25, 1.25, u); N = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon)); return N; }                                   // 球
+  if (k < 1.5) { float th = u * 6.2832; N = vec3(cos(lon) * cos(th), sin(lon), cos(lon) * sin(th)); return vec3(0.7 * cos(th), 0.0, 0.7 * sin(th)) + N * 0.36; } // 輪(輪に巻きつく)
+  if (k < 2.5) { float y = mix(-0.92, 0.92, u); N = vec3(0.0, 1.0, 0.0); return vec3(cos(lon), 0.0, sin(lon)) * (0.12 + 0.88 * sqrt(max(0.0, 1.0 - y * y))) + vec3(0.0, y, 0.0); } // らせんの皿
+  float t = u * 6.2832; N = vec3(cos(3.0 * t) * cos(2.0 * t), sin(3.0 * t), cos(3.0 * t) * sin(2.0 * t)); return vec3(0.62 * cos(2.0 * t), 0.0, 0.62 * sin(2.0 * t)) + N * 0.3;   // 結び目
+}
+vec3 formMix(float u, float turns, out vec3 N){
+  // 描いた長さで、次の形へ進む(触らなくても、自動のペン先が描くので進む)。
+  float ph = uK / 300.0 + uTime * 0.015, k0 = mod(floor(ph), 4.0), k1 = mod(k0 + 1.0, 4.0), w = smoothstep(0.5, 1.0, fract(ph));
+  vec3 n0, n1; vec3 c0 = formC(k0, u, turns, n0);
+  if (w <= 0.0) { N = n0; return c0; }   // 形が移っている間だけ、次の形も計算する(軽くするため)
+  vec3 c1 = formC(k1, u, turns, n1);
+  N = mix(n0, n1, w);
+  return mix(c0, c1, w);
+}
+vec3 glassRot(vec3 p){
+  float a = uTime * 0.25, c = cos(a), s = sin(a); p = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+  float t = 0.45, ct = cos(t), st = sin(t); return vec3(p.x, ct * p.y - st * p.z, st * p.y + ct * p.z);
+}
 vec3 glassAt(float u, float v, out vec3 n){
   float cnt = min(uK, Mf);
-  float R = 0.3 * min(uView.x, uView.y) * (1.0 + 0.1 * sin(u * 9.0 + uTime * 0.7));
-  float lat = mix(-1.25, 1.25, u);
+  float R = 0.36 * min(uView.x, uView.y);
   float turns = clamp(cnt * uDp / (6.2832 * R * 0.72), 1.5, 9.0);
-  float lon = u * turns * 6.2832 + uTime * 0.3;
   float breathe = 0.5 + 0.5 * sin(uTime * 0.33);
-  float hw = uW * mix(0.16, 0.62, breathe), ht = uW * mix(0.1, 0.2, breathe);   // 幅の半分 / 厚みの半分
-  vec3 N = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
-  vec3 T = vec3(-sin(lon), 0.0, cos(lon));
-  vec3 B = cross(N, T);
+  float hw = uW * mix(0.2, 0.55, breathe), ht = uW * mix(0.1, 0.2, breathe);
+  vec3 N, Na;
+  vec3 C = formMix(u, turns, N);
+  vec3 T = normalize(formMix(u + 0.004, turns, Na) - C + vec3(1e-6, 0.0, 0.0));
+  vec3 B = normalize(cross(N, T) + vec3(0.0, 1e-5, 0.0)); N = cross(T, B);
   float a = v * 6.2832, ca = cos(a), sa = sin(a);
-  vec3 p = N * R + B * ca * hw + N * sa * ht;
-  vec3 nn = normalize(B * ca / hw + N * sa / ht);
+  vec3 p = glassRot(C * R + B * ca * hw + N * sa * ht);
+  vec3 nn = glassRot(normalize(B * ca / hw + N * sa / ht));
   n = vec3(nn.x, -nn.y, nn.z);
-  return vec3(uView * 0.5 + vec2(p.x, -p.y), p.z);
+  vec3 sp = vec3(uView * 0.5 + vec2(p.x, -p.y), p.z);
+  // 指に引かれる(テープを引き出すように、近い所が指へ伸びる)。
+  vec2 d = uPen.xy - sp.xy; sp.xy += d * uPen.z * 0.6 * exp(-dot(d, d) / (uW * uW * 5.0));
+  return sp;
 }
 O sGlass(){
   O o = base();
@@ -961,8 +1016,12 @@ O sGlass(){
   vec3 n, nq;
   o.centre = glassAt(clamp((cnt - gAge - 0.5 + (gFr - 0.5)) / cnt, 0.0, 1.0), gV, n);
   o.corner = glassAt(clamp((cnt - gAge - 0.5 + gTq) / cnt, 0.0, 1.0), gVc, nq);
-  o.nrm = nq; o.glass = 1.0; o.line = 0.0; o.face = 1.0;
-  return feed(o);
+  o.nrm = nq; o.glass = 1.0; o.tex = 0.0; o.line = 0.0; o.face = 1.0;
+  // ペン先から出たばかりの所は、描いた線のまま(ガラスの線)。そこから、巻き取られていく。写真の帯は残さない。
+  float tc = gR1.w * (1.0 - smoothstep(10.0, 56.0, gAge - (gFr - 0.5)));
+  float tq = gR1.w * (1.0 - smoothstep(10.0, 56.0, gAge - gTq));
+  if (max(tc, tq) > 0.001) { O l = sGlassLine(); o.corner = mix(o.corner, l.corner, tq); o.centre = mix(o.centre, l.centre, tc); o.nrm = normalize(mix(o.nrm, l.nrm, tq)); }
+  return o;
 }
 O stateOf(int id){
   if (id == 0) return sBand();
@@ -999,6 +1058,8 @@ O stateOf(int id){
   if (id == 32) return sObjStick();
   if (id == 33) return sObjWrap();
   if (id == 34) return sGlass();
+  if (id == 35) return sGlassLine();
+  if (id == 36) return sGlassClear();
   return sFrame();
 }
 
@@ -1121,7 +1182,7 @@ void main(){
     // 影の地図: 光から見た近さだけを書く。立体の紙だけが影を落とす。
     vec3 m = toShadow(wp);
     vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
-    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0); vTrans = 0.0; vGl = vec4(0.0, 0.0, 1.0, 0.0);
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0); vTrans = 0.0; vGl = vec4(0.0, 0.0, 1.0, 0.0); vClear = 0.0;
     gl_Position = solidW < 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
     return;
   }
@@ -1148,6 +1209,7 @@ void main(){
   vLine = mix(A.lineCol, B.lineCol, w);
   vRib = vec2((mod(float(gJ), SEGf) + 0.5 + gTq) * uDp, gVc * uW);
   vGl = vec4(mix(A.nrm, B.nrm, w), mix(A.glass, B.glass, w));
+  vClear = mix(A.clear, B.clear, w);
 }`;
 
 const FS = `#version 300 es
@@ -1157,7 +1219,7 @@ uniform float uW;
 uniform float uSharp;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
 in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr; in float vTrans;
-in vec4 vGl;
+in vec4 vGl; in float vClear;
 uniform float uTime; uniform vec2 uView;
 uniform sampler2D uDAtlas;
 uniform sampler2D uBAtlas; // 被写体を抜いて補った背景
@@ -1280,6 +1342,15 @@ void main(){
     float spc = pow(max(dot(n, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 120.0);
     // 地は黒いガラス。筋・ふちの光・光源の映り込みだけが光る。
     vec3 g = str * (0.3 + 1.2 * fr) * mix(vec3(1.0), film, 0.35) + film * 0.1 * fr + vec3(1.0) * (pow(fr, 2.4) * 1.6 + spc * 1.6) + col * 0.05 * (1.0 - fr);
+    if (vClear > 0.001) {
+      // 透明なガラス: 中の写真が、面の向きのぶん ずれて見える(屈折)。色ごとに ずれが違うので、ふちにだけ虹が出る。指の下は、膨らんで大きく見える。
+      vec2 fd = (vScr - uLight.xy) / (uW * 2.0); float lens = exp(-dot(fd, fd));
+      vec2 bs = (uv - 0.5) * (1.0 - 0.28 * lens), off = vec2(n.x, -n.y) * 0.13;
+      vec3 ph = vec3(0.0);
+      for (int c = 0; c < 3; c++) ph[c] = texture(uAtlas, (vCell + clamp(0.5 + bs + off * (0.7 + 0.3 * float(c)), 0.004, 0.996)) / vec2(${ACOLS}.0, ${AROWS}.0))[c];
+      vec3 gc = ph * vTint * (1.0 - 0.3 * fr) + film * pow(fr, 1.4) * 0.6 + str * 0.2 * fr + vec3(1.0) * (pow(fr, 3.0) * 0.9 + spc * 1.3);
+      g = mix(g, gc, vClear);
+    }
     col = mix(col, g, vGl.w);
   }
   // 不透明さ 1 = ふつうに重なる / 0 = 光として足す。
@@ -1819,7 +1890,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -1827,7 +1898,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -1871,7 +1942,7 @@ export function mountMorph(root: HTMLElement) {
       };
   if (three) {
     // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
-    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.A.pool.push(34); SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34); // ドロップ(0.4秒の ぶつ切り)には入れない
+    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.A.pool.push(35, 36); SECS.B.pool.push(35); SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34, 36); // ドロップ(0.4秒の ぶつ切り)には入れない
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
     if (only >= 0) for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0];
   }
