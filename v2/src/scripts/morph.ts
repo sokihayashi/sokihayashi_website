@@ -844,7 +844,8 @@ O feed(O o){
 }
 O objQuad(){
   O o = base();
-  float h = uObjCell * uObjS;
+  // 向こうを向いた面は出さない(裏の面が すき間から見えて、形が読めなくなっていた)。
+  float h = uObjCell * uObjS * 1.05 * smoothstep(-0.12, 0.05, gOn.z);
   // 指のまわりの面は、押されて浮き、返る。
   vec2 dd = gOp.xy - uPen.xy; float push = uPen.z * exp(-dot(dd, dd) / (uW * uW * 2.2)) * step(0.0, gOn.z);
   float fl = push * 3.1416;
@@ -856,9 +857,11 @@ O objQuad(){
 // 31 虹の立体: 面の向きと光の向きで、溝の虹が出る。
 O sObjIri(){
   objFrame(uObjP, uObjN); O o = objQuad();
-  vec3 H = normalize(objLight(gOp) + vec3(0.0, 0.0, 1.0));
+  vec3 L = objLight(gOp), H = normalize(L + vec3(0.0, 0.0, 1.0));
   float band = pow(max(0.0, 1.0 - abs(dot(gOn, H) - 0.75) * 2.2), 2.0);
-  vec3 ir = (0.5 + 0.5 * cos(6.2832 * (dot(gOt, H) * 3.0 + uTime * 0.08 + vec3(0.0, 0.33, 0.67)))) * (0.4 + 0.9 * band) * (0.45 + 0.75 * pow(1.0 - abs(gOn.z), 1.5)) + pow(max(dot(gOn, H), 0.0), 60.0) * 0.8 + 0.03;
+  // 虹の色は ゆっくり変える(細かく変えると 面ごとの色の粒になって、形が消える)。形は、光の当たり方(陰)で読ませる。
+  float lam = 0.22 + 0.78 * pow(max(dot(gOn, L) * 0.6 + 0.4, 0.0), 1.6);
+  vec3 ir = (0.5 + 0.5 * cos(6.2832 * (dot(gOt, H) * 1.2 + gOn.y * 0.35 + uTime * 0.08 + vec3(0.0, 0.33, 0.67)))) * (0.45 + 0.8 * band) * (0.5 + 0.7 * pow(1.0 - abs(gOn.z), 1.5)) * lam + pow(max(dot(gOn, H), 0.0), 40.0) * 0.7 + 0.02;
   o.col = ir; o.tex = 0.0;
   return feed(o);
 }
@@ -1385,7 +1388,9 @@ export function mountMorph(root: HTMLElement) {
     objCell = Math.sqrt(sb.area / NPt) * 0.95; // 面の半分の大きさ(立体の単位)
     wrap = [lo - mid, hi - mid, mean, 0.42];
   };
-  if (three) ['antiquecamera', 'boombox', 'fox', 'corset', 'sheenchair', 'glassvaseflowers'].forEach((name) => fetch(`${root.dataset.base ?? ''}/lab/deck/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
+  // 立体の選別(2026-11-25、本人:「僕に関係ありそうなもの」「実際にある機種に近いもの」「使えるもので選んで」)。
+  // どれも Poly Haven の CC0(権利放棄。表示・加工・公開に制限なし)。写真機・8mmの撮影機・8mmの映写機・ノート型の計算機・ブラウン管・一体成形の椅子。
+  if (three) ['camera01', 'vintagevideocamera', 'filmstripprojector8mm', 'classiclaptop', 'television02', 'plasticmonoblocchair01'].forEach((name) => fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
     if (dead) return;
     const [nv, ni] = new Uint32Array(b, 0, 2), v = new Int16Array(b, 8, nv * 3), ix = new Uint16Array(b, 8 + nv * 6, ni);
     let off = 8 + nv * 6 + ni * 2; if ((nv * 6 + ni * 2) % 4) off += 2;
@@ -2377,7 +2382,7 @@ export function mountMorph(root: HTMLElement) {
     }
     gl!.uniform1f(u.openW, opOn ? openWk : -1);
     gl!.uniform1f(u.sharp, sharp ? 1 : 0);
-    gl!.uniform1f(uo.s, Math.min((vw * 0.4) / objHalfW, (vh * 0.3) / objHalfH)); gl!.uniform1f(uo.cell, objCell); gl!.uniform4f(uo.wrap, wrap[0], wrap[1], wrap[2], wrap[3]); gl!.uniform1f(uo.nwk, nW); gl!.uniform1f(uo.deep, three ? 1 : 0);
+    gl!.uniform1f(uo.s, Math.min((vw * 0.46) / objHalfW, (vh * 0.32) / objHalfH)); gl!.uniform1f(uo.cell, objCell); gl!.uniform4f(uo.wrap, wrap[0], wrap[1], wrap[2], wrap[3]); gl!.uniform1f(uo.nwk, nW); gl!.uniform1f(uo.deep, three ? 1 : 0);
     gl!.uniform1f(u.twLim, twLim);
     gl!.uniform1f(u.map, mapStrip ? 1 : 0);
     gl!.uniform1f(u.fold, foldOn && sharp ? 1 : 0);
