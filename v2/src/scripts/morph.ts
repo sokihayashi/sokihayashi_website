@@ -69,6 +69,7 @@ out vec3 vLine; // 線の色
 out float vPar;  // 立体写真の強さ
 out vec2 vScr;   // 画面での位置(px)
 out float vTrans; // 紙の裏から光が当たっている度合い
+out vec4 vGl;     // xyz: 面の向き / w: ガラスとして塗る割合(ガラスの帯)
 const float Mf = ${M}.0;
 const int Mi = ${M};
 const int NVi = ${NV};
@@ -151,6 +152,8 @@ struct O {
   float work;   // どの作品の写真か
   float gate;   // 出てくる・消える大きさ(負なら、帯のふつうの決まりに従う)
   float par;    // 写真の奥行きで、平面の写真を立体に見せる強さ
+  vec3 nrm;     // 面の向き(ガラスの帯だけが使う。画面の座標で)
+  float glass;  // ガラスとして塗る割合(ガラスの帯だけ 1)
 };
 O base(){
   O o;
@@ -159,6 +162,7 @@ O base(){
   o.shape = vec2(1.0); o.round = 0.0; o.alpha = 1.0; o.lit = 1.0; o.gloss = 0.0; o.face = 1.0;
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
   o.uv = gUVb; o.work = gR2.w; o.gate = -1.0; o.par = 0.0;
+  o.nrm = vec3(0.0, 0.0, 1.0); o.glass = 0.0;
   return o;
 }
 // 向きのある細長い面(線・糸・札)
@@ -839,7 +843,7 @@ O feed(O o){
   if (max(tc, tq) <= 0.001) return o;
   O b = sBand();
   b.corner = mix(o.corner, b.corner, tq); b.centre = mix(o.centre, b.centre, tc);
-  if (tc < 0.5) { b.col = o.col; b.tex = o.tex; b.uv = o.uv; b.work = o.work; b.tint = o.tint; b.lit = o.lit; b.gloss = o.gloss; b.par = o.par; b.line = o.line; b.gate = o.gate; b.round = o.round; b.face = o.face; b.trans = o.trans; b.ridge = o.ridge; b.alpha = o.alpha; b.shape = o.shape; b.lineCol = o.lineCol; }
+  if (tc < 0.5) { b.col = o.col; b.tex = o.tex; b.uv = o.uv; b.work = o.work; b.tint = o.tint; b.lit = o.lit; b.gloss = o.gloss; b.par = o.par; b.line = o.line; b.gate = o.gate; b.round = o.round; b.face = o.face; b.trans = o.trans; b.ridge = o.ridge; b.alpha = o.alpha; b.shape = o.shape; b.lineCol = o.lineCol; b.nrm = o.nrm; b.glass = o.glass; }
   return b;
 }
 O objQuad(){
@@ -932,6 +936,34 @@ O sObjWrap(){
   o.tint *= 0.62 + 0.45 * max(dot(normalize(vec3(n.x, -n.y, n.z)), objLight(o.centre)), 0.0);
   return feed(o);
 }
+// 34 ガラスの帯(立体の版だけ): 描いた帯が、厚いガラスの帯になり、球に巻かれる。外から持ってきた立体は使わない。帯そのものが立体になる。
+// 太さは ゆっくり変わる(細い線の束 ↔ 厚い帯 ↔ 重なって塊)。面は ひと続きなので、画素ごとに なめらかに塗れる(虹の屈折・映り込み・ふちの光)。
+vec3 glassAt(float u, float v, out vec3 n){
+  float cnt = min(uK, Mf);
+  float R = 0.3 * min(uView.x, uView.y) * (1.0 + 0.1 * sin(u * 9.0 + uTime * 0.7));
+  float lat = mix(-1.25, 1.25, u);
+  float turns = clamp(cnt * uDp / (6.2832 * R * 0.72), 1.5, 9.0);
+  float lon = u * turns * 6.2832 + uTime * 0.3;
+  float breathe = 0.5 + 0.5 * sin(uTime * 0.33);
+  float hw = uW * mix(0.16, 0.62, breathe), ht = uW * mix(0.1, 0.2, breathe);   // 幅の半分 / 厚みの半分
+  vec3 N = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
+  vec3 T = vec3(-sin(lon), 0.0, cos(lon));
+  vec3 B = cross(N, T);
+  float a = v * 6.2832, ca = cos(a), sa = sin(a);
+  vec3 p = N * R + B * ca * hw + N * sa * ht;
+  vec3 nn = normalize(B * ca / hw + N * sa / ht);
+  n = vec3(nn.x, -nn.y, nn.z);
+  return vec3(uView * 0.5 + vec2(p.x, -p.y), p.z);
+}
+O sGlass(){
+  O o = base();
+  float cnt = min(uK, Mf);
+  vec3 n, nq;
+  o.centre = glassAt(clamp((cnt - gAge - 0.5 + (gFr - 0.5)) / cnt, 0.0, 1.0), gV, n);
+  o.corner = glassAt(clamp((cnt - gAge - 0.5 + gTq) / cnt, 0.0, 1.0), gVc, nq);
+  o.nrm = nq; o.glass = 1.0; o.line = 0.0; o.face = 1.0;
+  return feed(o);
+}
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -966,6 +998,7 @@ O stateOf(int id){
   if (id == 31) return sObjIri();
   if (id == 32) return sObjStick();
   if (id == 33) return sObjWrap();
+  if (id == 34) return sGlass();
   return sFrame();
 }
 
@@ -1088,7 +1121,7 @@ void main(){
     // 影の地図: 光から見た近さだけを書く。立体の紙だけが影を落とす。
     vec3 m = toShadow(wp);
     vQ = aQ; vShape = vec2(1.0); vMix = vec4(0.0, 1.0, 0.0, 1.0); vLit = vec4(1.0, 0.0, 0.0, 0.0); vAlt = vec4(0.0);
-    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0); vTrans = 0.0;
+    vUV = vec2(0.5); vCell = vec2(0.0); vRib = vec2(10.0, 0.0); vTint = vec3(1.0); vLine = PAPER; vPar = 0.0; vScr = vec2(0.0); vTrans = 0.0; vGl = vec4(0.0, 0.0, 1.0, 0.0);
     gl_Position = solidW < 0.5 || sc < 0.02 ? vec4(2.0, 2.0, 2.0, 1.0) : vec4(m.xy * 2.0, m.z * 2.0 - 1.0, 1.0);
     return;
   }
@@ -1114,6 +1147,7 @@ void main(){
   vPar = mix(A.par, B.par, w);
   vLine = mix(A.lineCol, B.lineCol, w);
   vRib = vec2((mod(float(gJ), SEGf) + 0.5 + gTq) * uDp, gVc * uW);
+  vGl = vec4(mix(A.nrm, B.nrm, w), mix(A.glass, B.glass, w));
 }`;
 
 const FS = `#version 300 es
@@ -1123,6 +1157,8 @@ uniform float uW;
 uniform float uSharp;
 in vec2 vQ; in vec2 vUV; in vec2 vCell; in vec2 vShape; in vec2 vRib;
 in vec4 vMix; in vec4 vLit; in vec4 vAlt; in vec3 vTint; in vec3 vLine; in float vPar; in vec2 vScr; in float vTrans;
+in vec4 vGl;
+uniform float uTime; uniform vec2 uView;
 uniform sampler2D uDAtlas;
 uniform sampler2D uBAtlas; // 被写体を抜いて補った背景
 uniform vec3 uLight;
@@ -1222,6 +1258,30 @@ void main(){
   col = mix(lc, (1.0 - exp(-1.25 * lc)) * 1.22, step(0.001, vLit.y + abs(vLit.x - 1.0)) * 0.0 + clamp(abs(vLit.x - 1.0) * 4.0, 0.0, 1.0));
   // 糸の膨らみ
   col *= mix(1.0, 0.62 + 0.5 * (1.0 - vQ.y * vQ.y), vLit.w);
+  // ガラスの帯(立体の版の 34 だけ。ほかでは vGl.w = 0 で、ここは通らない)。
+  if (vGl.w > 0.001) {
+    vec3 n = normalize(vGl.xyz); if (n.z < 0.0) n = -n;
+    vec3 L = normalize(vec3(uLight.xy - vScr, uLight.z + 0.25 * max(uView.x, uView.y)));
+    float fr = pow(1.0 - n.z, 2.5);
+    vec3 r = reflect(vec3(0.0, 0.0, -1.0), n);
+    // 映り込み: 帯状の光。指(光)の向きで動く。色ごとに少しずらして、屈折の にじみを作る。
+    float sAx = dot(r.xy, normalize(L.xy + vec2(1e-3, 0.0))) * 1.4 + r.y * 0.8 + uTime * 0.07;
+    float sBx = (r.x - r.y) * 0.9 + n.x * 0.6 - uTime * 0.05;
+    // 細く明るい光の筋。色ごとに ずらす量を大きめにして、筋のふちに 虹の にじみを出す(芯は白い)。
+    // 波長を7つに分けて足す(3色だけだと、赤・緑・青の縞に割れる)。
+    vec3 str = vec3(0.0);
+    for (int c = 0; c < 7; c++) {
+      float t = float(c) / 6.0, k = 1.0 + (t - 0.5) * 0.3;
+      float v = 1.7 * pow(0.5 + 0.5 * sin(sAx * 6.0 * k + 1.3), 14.0) + 1.1 * pow(0.5 + 0.5 * sin(sAx * 15.0 * k - 0.7), 22.0) + 0.9 * pow(0.5 + 0.5 * sin(sBx * 5.0 * k + 2.1), 12.0);
+      str += v * max(vec3(0.0), 1.0 - abs(vec3(t - 1.0, t - 0.5, t)) * 2.2);
+    }
+    str /= vec3(1.9, 2.8, 1.9);
+    vec3 film = 0.5 + 0.5 * cos(6.2832 * (fr * 1.3 + dot(n.xy, L.xy) * 0.7 + uTime * 0.05 + vec3(0.0, 0.33, 0.67)));
+    float spc = pow(max(dot(n, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 120.0);
+    // 地は黒いガラス。筋・ふちの光・光源の映り込みだけが光る。
+    vec3 g = str * (0.3 + 1.2 * fr) * mix(vec3(1.0), film, 0.35) + film * 0.1 * fr + vec3(1.0) * (pow(fr, 2.4) * 1.6 + spc * 1.6) + col * 0.05 * (1.0 - fr);
+    col = mix(col, g, vGl.w);
+  }
   // 不透明さ 1 = ふつうに重なる / 0 = 光として足す。
   o = vec4(col * cov, vMix.y * cov);
 }`;
@@ -1759,7 +1819,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -1767,7 +1827,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -1811,7 +1871,7 @@ export function mountMorph(root: HTMLElement) {
       };
   if (three) {
     // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
-    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.chorus.pool.push(31, 32, 33); SECS.C.pool.push(32, 33); // ドロップ(0.4秒の ぶつ切り)には入れない
+    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.A.pool.push(34); SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34); // ドロップ(0.4秒の ぶつ切り)には入れない
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
     if (only >= 0) for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0];
   }
