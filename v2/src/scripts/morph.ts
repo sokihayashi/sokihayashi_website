@@ -945,7 +945,15 @@ O sObjWrap(){
 // 面は ひと続きなので、画素ごとに なめらかに塗れる。
 float bornAt(int j){ j = ((j % Mi) + Mi) % Mi; vec4 r = texelFetch(uPath, ivec2(j, 1), 0); return r.w > 0.5 ? r.z : -1.0; }
 // その場所を引いた遅さ(0 = 速い、1 = ゆっくり)。跡は等しい間隔で記録されるので、となりとの時間の差が速さになる。
-float slowAt(int j){ float a = bornAt(j - 1), b = bornAt(j + 1); float dt = (a >= 0.0 && b > a) ? (b - a) * 0.5 : 0.03; return 1.0 - smoothstep(220.0, 1000.0, uDp / max(dt, 0.004)); }
+// となり同士の差だけで測ると、1コマの中で まとめて記録された点は「速い」、コマをまたいだ点は「遅い」になり、太さが1点おきに入れ替わって ギザギザになる
+// (本人の iPhone の画面で判明、2026-11-25)。前後6点ぶんの時間で ならす。
+float slowAt(int j){
+  float c = bornAt(j), a = bornAt(j - 6), b = bornAt(j + 6), n = 12.0;
+  if (b < 0.0 || b < c) { b = c; n -= 6.0; }
+  if (a < 0.0 || a > c) { a = c; n -= 6.0; }
+  float dt = (n > 0.0 && b > a) ? (b - a) / n : 0.03;
+  return 1.0 - smoothstep(220.0, 1000.0, uDp / max(dt, 0.004));
+}
 float slowQ(float t){ return mix(slowAt(gJ), slowAt(gJ + (t > 0.0 ? 1 : -1)), abs(t)); }
 // 35 A ガラスの線。
 O sGlassLine(){
@@ -1942,7 +1950,8 @@ export function mountMorph(root: HTMLElement) {
       };
   if (three) {
     // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
-    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); SECS.A.pool.push(35, 36); SECS.B.pool.push(35); SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34, 36); // ドロップ(0.4秒の ぶつ切り)には入れない
+    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); // 本人(2026-11-25):「この表現(ガラス)は、帯に落とし込む系ではないと思う」→ 帯の線から作るガラス(35・36)は、並びから外した(?only=35 / 36 では見られる)。
+    SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34); // ドロップ(0.4秒の ぶつ切り)には入れない
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
     if (only >= 0) for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0];
   }
