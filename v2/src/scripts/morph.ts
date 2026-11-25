@@ -1955,12 +1955,13 @@ export function mountMorph(root: HTMLElement) {
         P: { n: [1, 1], len: 3.2, pool: [28], sty: [1] },
         C: { n: [1, 1], len: 1.6, pool: [19, 16, 25], sty: [1] },
       };
+  let onlyOn = false;
   if (three) {
     // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
     SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); // 本人(2026-11-25):「この表現(ガラス)は、帯に落とし込む系ではないと思う」→ 帯の線から作るガラス(35・36)は、並びから外した(?only=35 / 36 では見られる)。
-    SECS.chorus.pool.push(31, 32, 33, 34); SECS.C.pool.push(32, 33, 34); // ドロップ(0.4秒の ぶつ切り)には入れない
+    SECS.chorus.pool.push(31, 32, 33); SECS.C.pool.push(32, 33); // ドロップ(0.4秒の ぶつ切り)には入れない
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
-    if (only >= 0) for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0];
+    if (only >= 0) { onlyOn = true; for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0]; }
   }
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
   // 入れ替えた並びでは、プロフィールを曲の中に置かない(見ることと読むことを混ぜない。プロフィールは About のページへ)。
@@ -1981,13 +1982,19 @@ export function mountMorph(root: HTMLElement) {
     const S0 = SECS[name];
     const S = !three || objReady ? S0 : { ...S0, pool: S0.pool.filter((c) => c < 31) }; // 立体のデータが届くまでは、立体の表現を選ばない
     const cnt = S.n[0] + Math.floor(Math.random() * (S.n[1] - S.n[0] + 1));
+    // ガラスの立体(34)は、サビに組み込む(本人 2026-11-25:「いいじゃん 組み込もう」)。
+    // サビの頭は 必ず「帯 → ガラスの立体」。帯から変形して現れるように、直前に 短く帯を置く。ガラスは長く見せる(形が1〜2回 変わるくらい)。
+    if (three && name === 'chorus' && !onlyOn) {
+      for (const [c, len, sty] of [[0, 0.55, 0], [34, 4.4, 1]]) { seq.push(c); secOf.push(name); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); }
+    }
     for (let i = 0; i < cnt; i++) {
       const a = seq.length ? seq[seq.length - 1] : -1;
       const b = seq.length > 1 ? seq[seq.length - 2] : -1;
       let c = pick(S.pool);
+      if (three && a === 34) c = pick([1, 21]); // ガラスの次は、帯の仲間(立体の紙か筒)へ変形して戻る。粒へは行かない
       let guard = 0;
       // 直前と同じ表現・同じ系統は避ける(区間の候補が少ないときは、同じ表現だけ避ける)。
-      while (S.pool.length > 1 && (c === a || (guard < 60 && (FAM[c] === FAM[a] || c === b))) && guard++ < 200) c = pick(S.pool);
+      while (!(three && a === 34) && S.pool.length > 1 && (c === a || (guard < 60 && (FAM[c] === FAM[a] || c === b))) && guard++ < 200) c = pick(S.pool);
       seq.push(c);
       secOf.push(name);
       lenOf.push(S.len * (0.85 + Math.random() * 0.3) * (c >= 31 ? 1.7 : 1)); // 立体の表現は、長めに見せる
@@ -2640,6 +2647,8 @@ export function mountMorph(root: HTMLElement) {
   raf = requestAnimationFrame(tick);
 
   (window as unknown as Record<string, unknown>).__morph = {
+    // 確認用: この先の並び(表現・区間・長さ)
+    plan(n = 40) { seqAt(n); return seq.slice(0, n).map((c, i) => `${secOf[i]}:${c}:${lenOf[i].toFixed(2)}`); },
     // 確認用: 表現の並びを指定する
     seq(list: number[], sec = 'A', len = 1, sty = -1) {
       seq.length = secOf.length = lenOf.length = styOf.length = 0;
