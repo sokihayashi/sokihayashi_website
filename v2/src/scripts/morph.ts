@@ -1512,7 +1512,7 @@ export function mountMorph(root: HTMLElement) {
     return t;
   });
   gl.activeTexture(gl.TEXTURE0);
-  type Subj = { p: Float32Array; n: Float32Array; order: Uint32Array; area: number; hx: number; hz: number; lo: number; hi: number };
+  type Subj = { p: Float32Array; n: Float32Array; order: Uint32Array; area: number; hx: number; hz: number; lo: number; hi: number; idx: number };
   const subs: Subj[] = [];
   let objReady = false, objA = -1, objI = 0, objHalfW = 1, objHalfH = 1.25, objCell = 0.01, wrap = [-1.25, 1.25, 0.6, 0.42];
   const applySubject = (sb: Subj) => {
@@ -1534,20 +1534,21 @@ export function mountMorph(root: HTMLElement) {
     objCell = Math.sqrt(sb.area / NPt) * 0.95; // 面の半分の大きさ(立体の単位)
     wrap = [lo - mid, hi - mid, mean, 0.42];
   };
-  // 立体の選別(2026-11-25、本人:「僕に関係ありそうなもの」「実際にある機種に近いもの」「使えるもので選んで」)。
-  // どれも Poly Haven の CC0(権利放棄。表示・加工・公開に制限なし)。写真機・8mmの撮影機・8mmの映写機・ノート型の計算機・ブラウン管・一体成形の椅子。
-  if (three) ['camera01', 'vintagevideocamera', 'filmstripprojector8mm', 'classiclaptop', 'television02', 'plasticmonoblocchair01'].forEach((name) => fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
+  // 立体の選別(2026-11-25〜26、本人:「僕に関係ありそうなもの」「実際にある機種に近いもの」「レトロ機材も混ぜていい」)。
+  // 今の機材(Sketchfab の CC BY。作者の表示は About の下)と、古い機材(Poly Haven の CC0)を交互に並べる。出どころは /lab/obj/SOURCES.md。
+  if (three) ['red', 'camera01', 'mbp', 'television02', 'vr50', 'vintagevideocamera', 'a7m4', 'classiclaptop', 'genelec', 'filmstripprojector8mm', 'panton', 'plasticmonoblocchair01', 'eames'].forEach((name, idx) => fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
     if (dead) return;
     const [nv, ni] = new Uint32Array(b, 0, 2), v = new Int16Array(b, 8, nv * 3), ix = new Uint16Array(b, 8 + nv * 6, ni);
     let off = 8 + nv * 6 + ni * 2; if ((nv * 6 + ni * 2) % 4) off += 2;
     const NPt = 40000, d = new Int16Array(b, off, NPt * 6), K = 1.25 / 32000;
     let area = 0;
     for (let i = 0; i < ni; i += 3) { const a = ix[i] * 3, bb = ix[i + 1] * 3, c = ix[i + 2] * 3, ux = (v[bb] - v[a]) * K, uy = (v[bb + 1] - v[a + 1]) * K, uz = (v[bb + 2] - v[a + 2]) * K, wx = (v[c] - v[a]) * K, wy = (v[c + 1] - v[a + 1]) * K, wz = (v[c + 2] - v[a + 2]) * K; area += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) * 0.5; }
-    const sb: Subj = { p: new Float32Array(NPt * 3), n: new Float32Array(NPt * 3), order: new Uint32Array(NPt), area, hx: 0, hz: 0, lo: 1e9, hi: -1e9 };
+    const sb: Subj = { p: new Float32Array(NPt * 3), n: new Float32Array(NPt * 3), order: new Uint32Array(NPt), area, hx: 0, hz: 0, lo: 1e9, hi: -1e9, idx };
     const key = new Float32Array(NPt);
     for (let i = 0; i < NPt; i++) { for (let k = 0; k < 3; k++) { sb.p[i * 3 + k] = d[i * 6 + k] * K; sb.n[i * 3 + k] = d[i * 6 + 3 + k] / 32000; } const y = sb.p[i * 3 + 1]; sb.lo = Math.min(sb.lo, y); sb.hi = Math.max(sb.hi, y); sb.hx = Math.max(sb.hx, Math.abs(sb.p[i * 3])); sb.hz = Math.max(sb.hz, Math.abs(sb.p[i * 3 + 2])); sb.order[i] = i; key[i] = y + Math.atan2(sb.p[i * 3 + 2], sb.p[i * 3]) * 0.03; }
     sb.order.sort((a, bb) => key[a] - key[bb]);
     subs.push(sb);
+    subs.sort((x, y) => x.idx - y.idx); // 届いた順ではなく、上の並び順で回す
     if (!objReady) { applySubject(sb); objReady = true; }
   }).catch(() => {})); // 届かなかった立体は、使わないだけ
   const quad = gl.createBuffer();

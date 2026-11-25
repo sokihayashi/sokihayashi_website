@@ -51,5 +51,32 @@ import Base from '../layouts/Base.astro';
         （※ここに経歴・取引先・受賞などのクレデンシャルを入れる。）
       </p>
     </div>
+
+    <!-- 立体の作者表示(CC BY 4.0 の条件)。本人の指定(2026-11-26): About の下の方に、英語で、ごく小さく。 -->
+    <p class="credits-3d" lang="en">
+      3D models used in the top page, via Sketchfab, licensed under
+      <a href="https://creativecommons.org/licenses/by/4.0/" rel="license noopener" target="_blank">CC BY 4.0</a>
+      and simplified for this site:
+      <a href="https://sketchfab.com/3d-models/e1127f2c8d4d4d65b9608ff3714890bc" target="_blank" rel="noopener">RED Digital Cinema Weapon Dragon 8K Camera</a> by Christopher Holloway;
+      <a href="https://sketchfab.com/3d-models/93fb2cac30e741f580faf022795f7d50" target="_blank" rel="noopener">SONY A7M4 with GM1635 f2.8</a> by Metazeon;
+      <a href="https://sketchfab.com/3d-models/8e34fc2b303144f78490007d91ff57c4" target="_blank" rel="noopener">macbook pro M3 16 inch 2024</a> by jackbaeten;
+      <a href="https://sketchfab.com/3d-models/bc7308bf9af34d0bbf520ab5d86bec61" target="_blank" rel="noopener">Rolad VR-50HD Multi-Format AV Mixer</a> by JohnnyP;
+      <a href="https://sketchfab.com/3d-models/ce1bff22430e45bf8e3cc2e4f353f4d9" target="_blank" rel="noopener">Genelec 8340A RAW</a> by holofichesystems;
+      <a href="https://sketchfab.com/3d-models/74cd3a7c7df84091b226efd30766c157" target="_blank" rel="noopener">Panton Chair</a> by Geof;
+      <a href="https://sketchfab.com/3d-models/0a45955e2328459d95f403cb00c08b3a" target="_blank" rel="noopener">Vitra Eames Plastic Chair</a> by furnny.
+    </p>
   </section>
 </Base>
+
+<style>
+  .credits-3d {
+    margin-top: clamp(4rem, 12vh, 8rem);
+    max-width: 60ch;
+    font-size: 9px;
+    line-height: 1.5;
+    opacity: 0.45;
+  }
+  .credits-3d a {
+    color: inherit;
+  }
+</style>
