@@ -2014,6 +2014,12 @@ export function mountMorph(root: HTMLElement) {
   let lastSec = '';
   let sFrom = 0;
   let sTo = 0;
+  let numEl: HTMLElement | null = null;
+  if (three && new URLSearchParams(location.search).get('num')) {
+    numEl = document.createElement('div');
+    numEl.style.cssText = 'position:fixed;left:12px;top:calc(env(safe-area-inset-top, 0px) + 12px);z-index:9999;font:600 28px/1 ui-monospace,Menlo,monospace;color:#fff;background:rgba(0,0,0,.6);padding:6px 10px;pointer-events:none';
+    document.body.appendChild(numEl);
+  }
   let analog = 1;
   /**
    * 立体の紙のねじれ角を、跡ごとに決める(入れ替えた並び)。
@@ -2197,6 +2203,8 @@ export function mountMorph(root: HTMLElement) {
     }
     sFrom = seqAt(A);
     sTo = seqAt(A + 1);
+    // 確認用(?num=1): いま出ている表現の番号を左上に出す。短くて言葉にできない表現を、番号で指せるように。
+    if (numEl) { const t = sFrom === sTo ? `${sFrom}` : `${sFrom} → ${sTo}`; if (numEl.textContent !== t) numEl.textContent = t; }
     // 立体は、帯から立体の表現に入るたびに替える。
     // (区間が替わった瞬間で、まだ立体が見えていないとき。順番に回す: 同じ立体が続かない。?only=31 でも替わる。)
     if (three && objReady && A !== objA) { objA = A; if (sFrom < 31 && sTo >= 31) { objI = (objI + 1) % subs.length; applySubject(subs[objI]); } }
