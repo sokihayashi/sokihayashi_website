@@ -1019,16 +1019,16 @@ vec3 glassAt(float u, float v, out vec3 n){
   return sp;
 }
 O sGlass(){
+  // 本人(2026-11-25):「この表現は帯に落とし込む系ではない」「帯から変形とかがいいな」
+  // → ガラスの場面では、帯の全部が ひとつの立体に変形する(ペン先に線を残さない。描いた線の形や幅に縛られない)。
+  //   帯 → 立体 の移りは、ほかの表現と同じく、帯の先頭から順に ほどけて形へ渡る。描いた長さで、次の形へ進む。指は、光と、引く力。
   O o = base();
   float cnt = min(uK, Mf);
-  vec3 n, nq;
-  o.centre = glassAt(clamp((cnt - gAge - 0.5 + (gFr - 0.5)) / cnt, 0.0, 1.0), gV, n);
-  o.corner = glassAt(clamp((cnt - gAge - 0.5 + gTq) / cnt, 0.0, 1.0), gVc, nq);
-  o.nrm = nq; o.glass = 1.0; o.tex = 0.0; o.line = 0.0; o.face = 1.0;
-  // ペン先から出たばかりの所は、描いた線のまま(ガラスの線)。そこから、巻き取られていく。写真の帯は残さない。
-  float tc = gR1.w * (1.0 - smoothstep(10.0, 56.0, gAge - (gFr - 0.5)));
-  float tq = gR1.w * (1.0 - smoothstep(10.0, 56.0, gAge - gTq));
-  if (max(tc, tq) > 0.001) { O l = sGlassLine(); o.corner = mix(o.corner, l.corner, tq); o.centre = mix(o.centre, l.centre, tc); o.nrm = normalize(mix(o.nrm, l.nrm, tq)); }
+  vec3 nq;
+  // 面は ひと続きなので、四隅の位置だけ決めれば足りる(中心は計算しない。軽くするため)。まだ描かれていない所は、1点に畳む。
+  o.corner = gR1.w > 0.5 ? glassAt(clamp((cnt - gAge - 0.5 + gTq) / cnt, 0.0, 1.0), gVc, nq) : vec3(uView * 0.5, 0.0);
+  o.centre = o.corner;
+  o.nrm = gR1.w > 0.5 ? nq : vec3(0.0, 0.0, 1.0); o.glass = 1.0; o.tex = 0.0; o.line = 0.0; o.face = 1.0; o.gate = gR1.w > 0.5 ? 1.0 : 0.0;
   return o;
 }
 O stateOf(int id){
@@ -1116,6 +1116,13 @@ void main(){
     w = clamp(x * (1.0 + SP) - SP * ((1.0 - jit) * gHd + jit * h1), 0.0, 1.0); w = w * w * (3.0 - 2.0 * w);
   }
   float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0)); // 4 は 0(散らさない)
+  // ガラスの立体(34)との行き来は、「変形」にする: 変わり具合を 面ごとではなく 四隅ごとに決め、帯に沿って なめらかに進める。
+  // 面が ばらばらにならず、帯が ひと続きのまま 曲がって、立体になる(本人 2026-11-25:「帯から変形とかがいいな」)。
+  if (uDeep > 0.5 && (int(uFrom + 0.5) == 34 || int(uTo + 0.5) == 34) && sty != 2) {
+    float hc = clamp((gAge - (gFr - 0.5) - aQ.x * 0.25) / max(1.0, min(uK, Mf)), 0.0, 1.0); // 0 = ペン先、1 = いちばん古い所
+    w = smoothstep(hc * 0.55, hc * 0.55 + 0.45, x);
+    bulgeK = 0.0; keep = 1.0;
+  }
 
   // 帯の面: 四隅を、それぞれの位置での芯から作る(となりの面と、ぴったり つながる)。
   // 折り目(試し): 折り目の線をまたぐあたりの面は、2倍に広げて となりと重ねる(線で切りそろえたときの すき間を埋める)。
