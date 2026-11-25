@@ -50,7 +50,8 @@ uniform float uFocus, uFocusAsp;
 uniform float uOpenW;      // 押してひらいた作品の番号(なければ -1)
 uniform float uSharp;      // 入れ替えた並び(1)。つなぎ方と質感を、こちらだけ変える
 // 立体(試し /lab/morph-3d/ だけ): 帯の面ひとつひとつの、立体の上での行き先(位置・向き)。
-uniform highp sampler2D uObjP; uniform highp sampler2D uObjN; uniform highp sampler2D uShell; // uShell: 立体の外形(角度×高さごとの、いちばん外側の半径)
+uniform highp sampler2D uObjP; uniform highp sampler2D uObjN; uniform highp sampler2D uShell; uniform highp sampler2D uObjE0; uniform highp sampler2D uObjE1; uniform highp sampler2D uObjE2; // 稜線の線分: いまの立体の A・B と、次の立体の A・B を 12 個の数に詰めた(37・38)
+ // uShell: 立体の外形(角度×高さごとの、いちばん外側の半径)
 uniform float uObjS, uObjCell, uNWk, uDeep; uniform vec4 uWrap; // uWrap: 立体の下端, 上端, 平均の半径, 巻くときの帯の幅(立体の単位)
 uniform float uTwLim;      // 立体の紙: ねじりの強さの上限(幅 × ねじりの速さ)
 uniform float uMap;        // 立体の紙: 写真の貼り方。0 = 窓(画面にまっすぐ)/ 1 = 帯に沿って貼る
@@ -826,6 +827,7 @@ O sShards(){
 // ---- 立体(試し /lab/morph-3d/ だけ)。帯そのもの(太さ・表現・描いた長さで進む仕組み)は変えていない。帯の面が、そのまま立体へ移る。
 vec3 gOp, gOn, gOt, gOb, gOl, gOln;
 float oh(vec3 p){ p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }
+float gMorph = 0.0;
 void objFrame(highp sampler2D tp, highp sampler2D tn){
   vec3 p = texelFetch(tp, ivec2(gIu, gIv), 0).xyz, n = texelFetch(tn, ivec2(gIu, gIv), 0).xyz;
   gOl = p; gOln = n;
@@ -911,6 +913,51 @@ O sObjStick(){
     }
   }
   return feed(o);
+}
+// 37 線の立体: 立体を、稜線(面の折れ目と縁)の線だけで描く。写真は使わない。
+// 部品の細かい機材(カメラ・計算機・切替機)は、写真を貼ると塊に見えた(2026-11-26)。線なら、製図のように形が読める。
+// 帯の面の半分(偶数の列)が稜線、残りの半分が 輪郭(面の向きが画面と直角になる所。なめらかな椅子は稜線が少ないので)。
+vec3 objRot(vec3 p);
+vec3 objProj(vec3 p){ p = objRot(p); return vec3(uView * 0.5 + vec2(p.x, -p.y) * uObjS, p.z * uObjS); }
+O objEdge(float m){
+  O o = base();
+  vec4 e0 = texelFetch(uObjE0, ivec2(gIu, gIv), 0), e1 = texelFetch(uObjE1, ivec2(gIu, gIv), 0), e2 = texelFetch(uObjE2, ivec2(gIu, gIv), 0);
+  vec3 a = e0.xyz, b = vec3(e0.w, e1.xy);
+  if (m > 0.0) {
+    // 次の立体の稜線へ。並び(下から上)どうしで対応させ、下から順に移る。途中は 外へ ふくらむ。
+    vec3 a2 = vec3(e1.zw, e2.x), b2 = e2.yzw;
+    float lag = float(gIu) / (Mf * 2.0), mm = smoothstep(lag * 0.45, lag * 0.45 + 0.55, m);
+    vec3 mid = mix((a + b) * 0.5, (a2 + b2) * 0.5, mm); vec3 out_ = normalize(vec3(mid.x, 0.0, mid.z) + vec3(1e-4, 0.0, 0.0)) * sin(mm * 3.1416) * 0.3;
+    a = mix(a, a2, mm) + out_; b = mix(b, b2, mm) + out_;
+  }
+  vec3 pa = objProj(a), pb = objProj(b);
+  vec2 d = pb.xy - pa.xy; float dl = length(d); vec2 t = dl > 1e-4 ? d / dl : vec2(1.0, 0.0), nr = vec2(-t.y, t.x);
+  vec2 c2 = (pa.xy + pb.xy) * 0.5, dd = c2 - uPen.xy; float near = uPen.z * exp(-dot(dd, dd) / (uW * uW * 3.0));
+  float wd = 0.5 * max(1.0, uView.x / 390.0) * (1.0 + near * 1.8);
+  vec3 c = (pa + pb) * 0.5;
+  o.centre = c; o.corner = c + vec3(t * aQ.x * (dl * 0.5 + wd) + nr * aQ.y * wd, 0.0);
+  o.gate = 1.0; o.col = vec3(0.92) + vec3(near * 0.4); o.tex = 0.0; o.line = 0.0;
+  return o;
+}
+O objSil(float fade){
+  O o = base();
+  vec2 ns = gOn.xy; float nl = length(ns); ns = nl > 1e-4 ? ns / nl : vec2(1.0, 0.0);
+  vec2 ts = vec2(-ns.y, ns.x);
+  float sil = (1.0 - smoothstep(0.04, 0.14, abs(gOn.z))) * (gOn.z < 0.0 ? 0.3 : 1.0) * fade;
+  float wd = 0.5 * max(1.0, uView.x / 390.0), len = uObjCell * uObjS * 1.7;
+  o.centre = gOp; o.corner = gOp + vec3(ts * aQ.x * len + ns * aQ.y * wd, 0.0);
+  o.gate = sil > 0.05 ? 1.0 : 0.0; o.col = vec3(0.92) * (0.5 + 0.5 * sil); o.tex = 0.0; o.line = 0.0;
+  return o;
+}
+O sObjLine(){
+  if ((gIv % 2) == 0) return feed(objEdge(0.0));
+  objFrame(uObjP, uObjN); return feed(objSil(1.0));
+}
+// 38 線の立体が、次の立体へ形を移す。描くほど進み、端まで行くと戻る(いまの立体 ↔ 次の立体)。
+O sObjMorph(){
+  float t = fract(uK / 300.0 + uTime * 0.08), m = smoothstep(0.1, 0.9, 1.0 - abs(t * 2.0 - 1.0));
+  if ((gIv % 2) == 0) return feed(objEdge(m));
+  objFrame(uObjP, uObjN); return feed(objSil(1.0 - smoothstep(0.0, 0.25, m)));
 }
 // 33 立体に巻く: 帯は帯のまま(絵も、出方も、太さの比も)、立体の外形に、下から上へ らせんに巻きつく。
 // 巻く長さは、描いた長さのぶんだけ。描くほど巻きが増えて、立体の形が現れる。
@@ -1068,6 +1115,8 @@ O stateOf(int id){
   if (id == 34) return sGlass();
   if (id == 35) return sGlassLine();
   if (id == 36) return sGlassClear();
+  if (id == 37) return sObjLine();
+  if (id == 38) return sObjMorph();
   return sFrame();
 }
 
@@ -1500,9 +1549,9 @@ export function mountMorph(root: HTMLElement) {
   const three = root.dataset.set === '3d';
   const uo = { s: U('uObjS'), cell: U('uObjCell'), wrap: U('uWrap'), nwk: U('uNWk'), deep: U('uDeep') };
   const OW = three ? NU : 1, OH = three ? NV : 1;
-  const objDim = [[OW, OH], [OW, OH], [96, 64]];
+  const objDim = [[OW, OH], [OW, OH], [96, 64], [OW, OH], [OW, OH], [OW, OH]];
   const objArr = objDim.map(([a, b]) => new Float32Array(a * b * 4));
-  const objTex = ['uObjP', 'uObjN', 'uShell'].map((name, i) => {
+  const objTex = ['uObjP', 'uObjN', 'uShell', 'uObjE0', 'uObjE1', 'uObjE2'].map((name, i) => {
     const t = gl.createTexture();
     gl.activeTexture(gl.TEXTURE10 + i); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, objDim[i][0], objDim[i][1], 0, gl.RGBA, gl.FLOAT, objArr[i]);
@@ -1512,17 +1561,33 @@ export function mountMorph(root: HTMLElement) {
     return t;
   });
   gl.activeTexture(gl.TEXTURE0);
-  type Subj = { p: Float32Array; n: Float32Array; order: Uint32Array; area: number; hx: number; hz: number; lo: number; hi: number; idx: number };
+  type Subj = { p: Float32Array; n: Float32Array; order: Uint32Array; area: number; hx: number; hz: number; lo: number; hi: number; idx: number; e?: Float32Array };
   const subs: Subj[] = [];
   let objReady = false, objA = -1, objI = 0, objHalfW = 1, objHalfH = 1.25, objCell = 0.01, wrap = [-1.25, 1.25, 0.6, 0.42];
-  const applySubject = (sb: Subj) => {
+  // 表面: 帯に沿って、下から上へ(帯の先頭から順に、立体の下から貼りついていく)。
+  const fillSurface = (sb: Subj, ap: Float32Array, an: Float32Array) => {
     const NPt = sb.p.length / 3, NT = NU * NV, mid = (sb.lo + sb.hi) / 2;
-    // 表面: 帯に沿って、下から上へ(帯の先頭から順に、立体の下から貼りついていく)。
     for (let iu = 0; iu < NU; iu++) for (let iv = 0; iv < NV; iv++) {
       const j = sb.order[Math.min(NPt - 1, Math.floor(((iu * NV + iv) * NPt) / NT))], k = (iv * NU + iu) * 4;
-      objArr[0][k] = sb.p[j * 3]; objArr[0][k + 1] = sb.p[j * 3 + 1] - mid; objArr[0][k + 2] = sb.p[j * 3 + 2];
-      objArr[1][k] = sb.n[j * 3]; objArr[1][k + 1] = sb.n[j * 3 + 1]; objArr[1][k + 2] = sb.n[j * 3 + 2];
+      ap[k] = sb.p[j * 3]; ap[k + 1] = sb.p[j * 3 + 1] - mid; ap[k + 2] = sb.p[j * 3 + 2];
+      an[k] = sb.n[j * 3]; an[k + 1] = sb.n[j * 3 + 1]; an[k + 2] = sb.n[j * 3 + 2];
     }
+  };
+  // 稜線の線分(37・38): いまの立体の A・B と、次の立体の A・B を、3枚の RGBA に詰める。帯の面 1枚につき 1本。
+  const fillEdges = (sb: Subj, nx: Subj) => {
+    const E = sb.e, F = nx.e ?? sb.e, NT = NU * NV; if (!E || !F) return;
+    const NE = E.length / 6, m0 = (sb.lo + sb.hi) / 2, m1 = (nx.lo + nx.hi) / 2, [e0, e1, e2] = [objArr[3], objArr[4], objArr[5]];
+    for (let iu = 0; iu < NU; iu++) for (let iv = 0; iv < NV; iv++) {
+      const j = Math.min(NE - 1, Math.floor(((iu * NV + iv) * NE) / NT)) * 6, k = (iv * NU + iu) * 4;
+      e0[k] = E[j]; e0[k + 1] = E[j + 1] - m0; e0[k + 2] = E[j + 2]; e0[k + 3] = E[j + 3];
+      e1[k] = E[j + 4] - m0; e1[k + 1] = E[j + 5]; e1[k + 2] = F[j]; e1[k + 3] = F[j + 1] - m1;
+      e2[k] = F[j + 2]; e2[k + 1] = F[j + 3]; e2[k + 2] = F[j + 4] - m1; e2[k + 3] = F[j + 5];
+    }
+  };
+  const applySubject = (sb: Subj, nx: Subj = sb) => {
+    const NPt = sb.p.length / 3, mid = (sb.lo + sb.hi) / 2;
+    fillSurface(sb, objArr[0], objArr[1]);
+    fillEdges(sb, nx);
     // 巻く: 立体の外形(高さ×角度ごとの いちばん外側)に、下から上へ らせん。
     const TH = 96, HH = 64, shell = new Float32Array(TH * HH), lo = sb.lo, hi = sb.hi;
     for (let i = 0; i < NPt; i++) { const x = sb.p[i * 3], y = sb.p[i * 3 + 1], z = sb.p[i * 3 + 2], a = Math.min(TH - 1, Math.floor(((Math.atan2(z, x) / (Math.PI * 2) + 1) % 1) * TH)), h = Math.min(HH - 1, Math.floor(((y - lo) / (hi - lo + 1e-6)) * HH)), r = Math.hypot(x, z); if (r > shell[h * TH + a]) shell[h * TH + a] = r; }
@@ -1547,9 +1612,13 @@ export function mountMorph(root: HTMLElement) {
     const key = new Float32Array(NPt);
     for (let i = 0; i < NPt; i++) { for (let k = 0; k < 3; k++) { sb.p[i * 3 + k] = d[i * 6 + k] * K; sb.n[i * 3 + k] = d[i * 6 + 3 + k] / 32000; } const y = sb.p[i * 3 + 1]; sb.lo = Math.min(sb.lo, y); sb.hi = Math.max(sb.hi, y); sb.hx = Math.max(sb.hx, Math.abs(sb.p[i * 3])); sb.hz = Math.max(sb.hz, Math.abs(sb.p[i * 3 + 2])); sb.order[i] = i; key[i] = y + Math.atan2(sb.p[i * 3 + 2], sb.p[i * 3]) * 0.03; }
     sb.order.sort((a, bb) => key[a] - key[bb]);
+    return fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.edges.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null).then((eb) => {
+    if (dead) return;
+    if (eb && eb.byteLength === 40000 * 12) { const ei = new Int16Array(eb), ef = new Float32Array(ei.length); for (let i = 0; i < ei.length; i++) ef[i] = ei[i] * K; sb.e = ef; }
     subs.push(sb);
     subs.sort((x, y) => x.idx - y.idx); // 届いた順ではなく、上の並び順で回す
-    if (!objReady) { applySubject(sb); objReady = true; }
+    if (!objReady) { applySubject(sb); objReady = true; } else if (subs.length > 1) applySubject(subs[objI], subs[(objI + 1) % subs.length]);
+    });
   }).catch(() => {})); // 届かなかった立体は、使わないだけ
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -1906,7 +1975,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -1914,7 +1983,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -1959,8 +2028,9 @@ export function mountMorph(root: HTMLElement) {
   let onlyOn = false;
   if (three) {
     // 立体の表現を、当初の並びに足す(31 虹の立体 / 32 貼り込んだ立体 / 33 立体に巻く)。?only=31 のように指定すると、帯とその表現だけを行き来する(確かめ用)。
-    SECS.A.pool.push(33, 31); SECS.B.pool.push(32, 31); // 本人(2026-11-25):「この表現(ガラス)は、帯に落とし込む系ではないと思う」→ 帯の線から作るガラス(35・36)は、並びから外した(?only=35 / 36 では見られる)。
-    SECS.chorus.pool.push(31, 32, 33); SECS.C.pool.push(32, 33); // ドロップ(0.4秒の ぶつ切り)には入れない
+    SECS.A.pool.push(33, 31, 37); SECS.B.pool.push(32, 31, 38); // 37 線の立体 / 38 線の立体が次の立体へ移る(2026-11-26、本人:「モーフィング的に変わる、アウトライン表示、込みで広く」)
+ // 本人(2026-11-25):「この表現(ガラス)は、帯に落とし込む系ではないと思う」→ 帯の線から作るガラス(35・36)は、並びから外した(?only=35 / 36 では見られる)。
+    SECS.chorus.pool.push(31, 32, 33, 38); SECS.C.pool.push(32, 33, 37); // ドロップ(0.4秒の ぶつ切り)には入れない
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
     if (only >= 0) { onlyOn = true; for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0]; }
   }
@@ -2208,7 +2278,7 @@ export function mountMorph(root: HTMLElement) {
     if (numEl) { const t = sFrom === sTo ? `${sFrom}` : `${sFrom} → ${sTo}`; if (numEl.textContent !== t) numEl.textContent = t; }
     // 立体は、帯から立体の表現に入るたびに替える。
     // (区間が替わった瞬間で、まだ立体が見えていないとき。順番に回す: 同じ立体が続かない。?only=31 でも替わる。)
-    if (three && objReady && A !== objA) { objA = A; if (sFrom < 31 && sTo >= 31) { objI = (objI + 1) % subs.length; applySubject(subs[objI]); } }
+    if (three && objReady && A !== objA) { objA = A; if (sFrom < 31 && sTo >= 31) { objI = (objI + 1) % subs.length; applySubject(subs[objI], subs[(objI + 1) % subs.length]); } }
     const wOf = (id: number) => (sFrom === id ? 1 - x : 0) + (sTo === id ? x : 0);
     trail = Math.max(sstep(0.15, 0.75, wOf(2)), sstep(0.3, 0.9, wOf(8)) * 0.8);
     solid = sstep(0.25, 1, wOf(1));
