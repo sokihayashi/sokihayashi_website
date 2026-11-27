@@ -2592,6 +2592,19 @@ vec3 gfxT(int tr, vec3 m, float Yc, vec2 cq, float dark, float alt){
     return dark > 0.5 ? (on ? PAP : INK) : (on ? INK : PAP);
   }
   if (tr == 6) { vec2 g = floor(cq / 7.0); return mod(g.x + g.y, 2.0) < 1.0 ? vec3(0.78) : vec3(0.93); }
+  if (tr == 8) { // ソラリゼーション(印画紙の反転現象): 明るい所ほど反転し、明暗の境に細い白い線(マッキー線)が立つ
+    float th = 0.5, s = Yc < th ? Yc / th : (1.0 - Yc) / (1.0 - th);
+    float e1 = toneAt((cq + vec2(1.6, 0.0)) * uDpr / uRes), e2 = toneAt((cq + vec2(0.0, 1.6)) * uDpr / uRes);
+    bool edge = (Yc > th) != (e1 > th) || (Yc > th) != (e2 > th);
+    return edge ? PAP : vec3(0.02 + 0.86 * s * s);
+  }
+  if (tr == 9) { // 走査線(カメラ = 空間を線の像にする): 横線の太さが、その段の明るさで変わる
+    float P = 4.0, row = (floor(cq.y / P) + 0.5) * P;
+    float Lc = toneAt(vec2(cq.x, row) * uDpr / uRes);
+    float w = dark > 0.5 ? Lc : 1.0 - Lc;
+    bool on = abs(fract(cq.y / P) - 0.5) < w * 0.5;
+    return dark > 0.5 ? (on ? PAP : INK) : (on ? INK : PAP);
+  }
   if (tr == 7) { // ずれた写し: 主題の灰色の写しを、少しずらして地に置く(版ずれ)
     vec2 off = vec2(16.0, -7.0) * (alt > 0.5 ? 1.0 : -1.0);
     float e = toneAt((cq + off) * uDpr / uRes);
@@ -2625,7 +2638,13 @@ int gfxPick(vec2 cq, vec2 S, float Yc, out float rule, out float alt){
   if (tpl == 3) return subj > 0.5 ? 4 : 3;                        // 地は輪郭線、主題は縦の細線
   if (tpl == 4) return nearSubj(cq, uDark) > 0.5 ? 5 : 2;         // 全体を1ビットに、主題のまわりだけ網点
   if (tpl == 5) { float v = isle(cq, k + 7.0); return (v > 0.6 && subj < 0.5) ? 6 : 3; } // 輪郭線の地に、島の形の市松
-  return 7;                                                        // ずれた写し(版ずれ)
+  if (tpl == 6) return 7;                                          // ずれた写し(版ずれ)
+  if (tpl == 7) return 2;                                          // 全体を1ビット(墨の刷り)
+  if (tpl == 8) return 8;                                          // ソラリゼーション(印画紙)
+  if (tpl == 9) return 1;                                          // 全体の反転(ネガ)
+  if (tpl == 10) return 9;                                         // 走査線(カメラ)
+  if (tpl == 11) return subj > 0.5 ? 4 : 0;                        // 主題だけ縦の細線(線の束と重なってモアレ)
+  return 0;
 }
 float grainAmt(float l, float shadow){ return smoothstep(0.0, 0.18, l + shadow) * (1.0 - smoothstep(0.7, 1.0, l)) * (0.55 + 0.45 * (1.0 - abs(l * 2.0 - 0.9))); }
 void main(){
@@ -2745,9 +2764,10 @@ void main(){
     vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
     m *= 1.0 - 0.5 * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03)));
     // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
-    float gq = grain(cq / 2.3, fq + 900) * 0.8 + grain(cq / 1.05, fq + 1700) * 0.3;
+    // (本人「グレインが粗い」: 粒の大きさを約半分に、強さを約6割に。細かい方は画面の画素の大きさ)
+    float gq = grain(cq / 1.15, fq + 900) * 0.7 + grain(gl_FragCoord.xy / 1.3, fq + 1700) * 0.35;
     float lm = dot(m, vec3(0.3333));
-    m += gq * (0.018 + 0.12 * smoothstep(0.02, 0.35, lm) * (1.0 - 0.4 * smoothstep(0.85, 1.0, lm)));
+    m += gq * (0.011 + 0.074 * smoothstep(0.02, 0.35, lm) * (1.0 - 0.4 * smoothstep(0.85, 1.0, lm)));
     // ごみ: コマごとに、ときどき小さな点
     vec2 cell = floor(cq / 48.0);
     float hh = hu(ivec2(cell), fq + 333);
@@ -3459,7 +3479,8 @@ export function mountMorph(root: HTMLElement) {
   // 指の通った跡(0.04秒ごとに10点。位置・速さ・時刻)
   const TRN = 10, trX = new Float32Array(TRN * 4), trT = new Float64Array(TRN).fill(-99), trA = new Float32Array(TRN).fill(99), trO = new Float32Array(TRN * 4);
   let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0, sunX = -1, sunY = -1, prX = 0, prY = 0, prT = 0, glareK = 0;
-  let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0;
+  let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0, sndV = 0;
+  const sndKind = (d: number) => (d < 2.2 || d >= 99 ? 1 : d < 9.5 ? 2 : d < 17.5 ? 3 : 0); // なぞりの音の種類(1 ペン / 2 墨 / 3 板 / 0 なし)
   // 場面の変わり目(反転と明るさの山)
   const DEV_CUTS = [17.5, 34.5, 39.5, 60, 72, 84, 96];
   // ---- クライン群(4次元の先)。複素数は [実部, 虚部]
@@ -3494,6 +3515,10 @@ export function mountMorph(root: HTMLElement) {
   const BEATS = [2.4, 1.2, 1.2, 2.4, 0.6, 0.6, 1.2, 2.4];
   // 短い拍の割り付けの型の順(同じ型が続かないように): 1 島の反転 / 2 主題だけ点 / 3 地は輪郭・主題は細線 / 4 1ビットと主題のまわりの網点 / 5 輪郭と島の市松 / 6 ずれた写し
   const TPL = [1, 5, 3, 2, 6, 4, 3, 1, 2, 5, 6, 4];
+  // 場面ごとの版(本人 2026-11-28「全ての表現に同様のグラフィックの処理をしているのが気になる。もっとそれぞれに合う表現を」)
+  //   線・しずく: 墨の刷り(島の反転・1ビット) / クラドニ: 砂は網点、節は輪郭と縦線 / 印画紙・植物: 写真の現象(ソラリゼーション・ネガ)
+  //   焼き付け・機材: 走査線 / 4次元: 面の上の版だけ(画面の版は休む) / 線の束: 縦線と重ねたモアレ / クライン群: ずれた写しと反転 / 球: 版なし(光だけ) / 紙に戻る: 1ビット
+  const PLATE_FAM = (d: number): number[] => (d < 9.5 ? [1, 7] : d < 17.5 ? [2, 3] : d < 34.4 ? [8, 9] : d < 42.5 ? [10] : d < 61.5 ? [] : d < 72 ? [11] : d < 84 ? [6, 9] : d < 99 ? [] : [7]);
   let devObjI = 0, devObjN = 0;
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
@@ -3722,7 +3747,7 @@ export function mountMorph(root: HTMLElement) {
       if (cut) sfx.pon(ANALOG[st]);
       secHook(sec, cut);
     }
-    sfx.climb(f);
+    if (!devOn) sfx.climb(f); // 展開の間は、なぞりの音だけにする(進みの階段の音は鳴らさない)
   }
 
   // ---------- 画面の文字(仮): 左下に いまの状態、網点のときは作品名。右下に音。
@@ -3925,7 +3950,8 @@ export function mountMorph(root: HTMLElement) {
       stroke = false;
       waitMove = true;
     } else if (devCanDraw()) begin(penX, penY);
-    sfx.pluck(K / SEG);
+    if (devOn) sfx.tap(sndKind(devLoop(devT)[0]), ptX / Math.max(1, vw), chlB); // 展開の紙の間: 紙を叩く音・板を弾く音
+    else sfx.pluck(K / SEG);
     try {
       root.setPointerCapture(e.pointerId);
     } catch {}
@@ -4085,6 +4111,12 @@ export function mountMorph(root: HTMLElement) {
       penVX = drawing ? ddx : 0; penVY = drawing ? ddy : 0;
       penV += (Math.min(1, Math.hypot(penVX, penVY) / (dt * 2400)) - penV) * (1 - Math.exp(-dt / 0.15));
       gl!.uniform1f(u.penV, penV);
+      // なぞりの音(紙の間): 線はペンのこすれ、しずくは墨、クラドニは指が弓
+      if (devOn) {
+        const spd = Math.hypot(penVX, penVY) / Math.max(dt, 1e-3);
+        sndV += (Math.min(1, spd / 1800) - sndV) * (1 - Math.exp(-dt / 0.045));
+        sfx.rub(sndKind(dtl), drawing, sndV, ptX / Math.max(1, vw), spd > 1 ? penVY / Math.hypot(penVX, penVY) : 0, chlB);
+      }
       // 紙の鳴り方
       if (devOn && dtl >= 9.5 && dtl < 17.0) {
         if (drawing) chlAt = now; // 触っている間は、鳴り方を変えない(指の輪が主役)
@@ -4212,7 +4244,8 @@ export function mountMorph(root: HTMLElement) {
           while (i < BEATS.length - 1 && r >= BEATS[i]) { r -= BEATS[i]; i++; }
           beatK = cyc * BEATS.length + i; beatPh = r;
           let nq = 0; for (let j = 0; j < i; j++) if (BEATS[j] < 2.4) nq++;
-          beatQ = BEATS[i] >= 2.4 ? 0 : TPL[(cyc * 5 + nq) % TPL.length];
+          const fam = devOn ? PLATE_FAM(dtl) : TPL;
+          beatQ = BEATS[i] >= 2.4 || !fam.length ? 0 : fam[(cyc * 5 + nq) % fam.length];
         }
         // 4次元の切り口: 版は、画面に出ない軸(w)で立体の面の上に決まる。拍ごとに両側の版が入れ替わる。
         // その間、後からかける版(画面の区画)は休む(同じ拍を、立体の上の入れ替えが受け持つ)
@@ -4328,6 +4361,7 @@ export function mountMorph(root: HTMLElement) {
   raf = requestAnimationFrame(tick);
 
   (window as unknown as Record<string, unknown>).__morph = {
+    sfx, // 確認用: 音(?sfxrec で録れる)
     // 確認用: この先の並び(表現・区間・長さ)
     plan(n = 40) { seqAt(n); return seq.slice(0, n).map((c, i) => `${secOf[i]}:${c}:${lenOf[i].toFixed(2)}`); },
     // 確認用: 表現の並びを指定する
