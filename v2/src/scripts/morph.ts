@@ -1261,7 +1261,7 @@ O sCone(){
   vec3 pc = photo(wk, vec2(phC / 6.2831853, rhoC));
   // 柔らかさ: 縁ほど明るく、育つほど薄れる。頂点のまわりは淡く。
   float soft = smoothstep(0.0, 0.12, g) * pow(1.0 - g, 1.6) * (0.25 + 0.75 * rhoC * rhoC);
-  o.col = (pc * 0.16 + 0.006) * soft * smoothstep(0.0, 1.8, uPartT);
+  o.col = (pc * 0.3 + 0.01) * soft * smoothstep(0.0, 1.8, uPartT);
   o.tex = 0.0; o.alpha = 0.0;
   o.gate = 1.0;
   return o;
@@ -1277,7 +1277,7 @@ O sTess(){
   // 自由に動く2軸(6通り)と、固定する2軸の符号(4通り)
   ivec2 ax = pr == 0 ? ivec2(0, 1) : pr == 1 ? ivec2(0, 2) : pr == 2 ? ivec2(0, 3) : pr == 3 ? ivec2(1, 2) : pr == 4 ? ivec2(1, 3) : ivec2(2, 3);
   ivec2 fx = pr == 0 ? ivec2(2, 3) : pr == 1 ? ivec2(1, 3) : pr == 2 ? ivec2(1, 2) : pr == 3 ? ivec2(0, 3) : pr == 4 ? ivec2(0, 2) : ivec2(0, 1);
-  float shrink = 0.62;
+  float shrink = 0.78;
   float s0 = ((float(iu) + 0.5) / float(G)) * 2.0 - 1.0, t0 = ((float(iv) + 0.5) / float(G)) * 2.0 - 1.0;
   float sv = s0 + aQ.x * shrink / float(G), tv = t0 + aQ.y * shrink / float(G);
   vec4 pv = vec4(0.0), pm = vec4(0.0);
@@ -1286,11 +1286,12 @@ O sTess(){
   pv[fx.x] = fa; pv[fx.y] = fb; pm[fx.x] = fa; pm[fx.y] = fb;
   pv *= 0.5; pm *= 0.5;
   float tm = uTime * 0.24 + uK * 0.002;
-  float a = tm + uTilt.x * 1.1, b = tm * 0.69 + 0.5 - uTilt.y * 0.9, g = tm * 0.17;
+  // 4次元の回し(xw 面)を速めにして、内側の立方体が外へ出てくるのが数秒で見えるようにする
+  float a = tm * 1.7 + uTilt.x * 1.1, b = tm * 0.69 + 0.5 - uTilt.y * 0.9, g = tm * 0.17;
   vec3 P = proj4(rot4(pv, a, b, g), 2.2);
   vec3 M = proj4(rot4(pm, a, b, g), 2.2);
   vec2 c = uView * 0.5;
-  float S = min(uView.x, uView.y) * 0.34;
+  float S = min(uView.x, uView.y) * 0.4;
   O o = base();
   o.corner = viewRot(vec3(c + P.xy * S, P.z * S), c, 0.45);
   o.centre = viewRot(vec3(c + M.xy * S, M.z * S), c, 0.45);
