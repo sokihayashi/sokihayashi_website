@@ -2542,33 +2542,40 @@ vec3 gfxT(int tr, vec3 m, float Yc, vec2 cq, float dark, float alt){
     return dark > 0.5 ? (on ? PAP : INK) : (on ? INK : PAP);
   }
   if (tr == 6) { vec2 g = floor(cq / 7.0); return mod(g.x + g.y, 2.0) < 1.0 ? vec3(0.78) : vec3(0.93); }
+  if (tr == 7) { // ずれた写し: 主題の灰色の写しを、少しずらして地に置く(版ずれ)
+    vec2 off = vec2(16.0, -7.0) * (alt > 0.5 ? 1.0 : -1.0);
+    float e = toneAt((cq + off) * uDpr / uRes);
+    bool es = dark > 0.5 ? e > 0.42 : e < 0.42, ms = dark > 0.5 ? Yc > 0.42 : Yc < 0.42;
+    return (!ms && es) ? (dark > 0.5 ? vec3(0.4) : vec3(0.6)) : m;
+  }
   return m;
 }
-// 割り付け: 拍ごとに型を選び、型の中の位置は拍ごとに変える。静かな拍は、何もしない(余白)
-int gfxPick(vec2 cq, vec2 S, out float rule, out float alt){
+// 割り付け: 拍ごとに型を選ぶ。静かな拍は、何もしない(余白)。
+// 四角い区画はやめた(本人: 四角にしたり範囲を制限する必要のないものは、もっと広げる)。境は、雲のような島の形か、主題そのものの形。
+float isle(vec2 cq, float k){ return vn(cq * 0.0062 + vec2(k * 3.17, uBeat.y * 0.1), 900) * 0.72 + vn(cq * 0.019 + vec2(1.7, k * 1.3), 901) * 0.28; }
+float nearSubj(vec2 cq, float dark){
+  float m = 0.0;
+  for (int i = 0; i < 4; i++) { float a = float(i) * 1.5708 + 0.4; vec2 o = vec2(cos(a), sin(a)) * 9.0; float t = toneAt((cq + o) * uDpr / uRes); m = max(m, dark > 0.5 ? t : 1.0 - t); }
+  return smoothstep(0.25, 0.5, m);
+}
+int gfxPick(vec2 cq, vec2 S, float Yc, out float rule, out float alt){
   rule = 0.0; alt = 0.0;
   int tpl = int(uBeat.z + 0.5);
   if (uBeat.x < 0.0 || tpl == 0) return 0;
   float k = uBeat.x;
-  float h2 = hk(k, 2), h3 = hk(k, 3), dr = uBeat.y * 6.0; // 拍の中で、わずかに滑る
+  float h2 = hk(k, 2);
   alt = step(0.5, hk(k, 4));
-  if (tpl == 1) { float sx = S.x * (0.28 + 0.44 * h2) + dr; rule = step(abs(cq.x - sx), 0.6); return cq.x < sx ? 1 : 0; }
-  if (tpl == 2) { float y0 = S.y * (0.14 + 0.5 * h2) + dr, bh = S.y * (0.16 + 0.14 * h3); rule = step(abs(cq.y - y0), 0.6) + step(abs(cq.y - y0 - bh), 0.6); return cq.y > y0 && cq.y < y0 + bh ? 5 : 0; }
-  if (tpl == 3) { float sx = S.x * (0.3 + 0.4 * h2) - dr; rule = step(abs(cq.x - sx), 0.6); return cq.x < sx ? 3 : 4; }
-  if (tpl == 4) {
-    vec2 r0 = vec2(S.x * (0.06 + 0.42 * h2), S.y * (0.06 + 0.56 * h3)), r1 = r0 + vec2(S.x * 0.46, S.y * 0.2);
-    bool inR = all(greaterThan(cq, r0)) && all(lessThan(cq, r1));
-    vec2 e = min(abs(cq - r0), abs(cq - r1));
-    rule = (inR || (cq.x > r0.x - 1.0 && cq.x < r1.x + 1.0 && cq.y > r0.y - 1.0 && cq.y < r1.y + 1.0)) ? step(min(e.x, e.y), 0.6) : 0.0;
-    return inR ? 5 : 2;
+  float subj = uDark > 0.5 ? step(0.42, Yc) : step(Yc, 0.42); // この画素が主題か
+  if (tpl == 1) { // 島の反転: 雲のような島の中だけ白黒が入れ替わる。島の縁に細い線
+    float v = isle(cq, k), th = 0.5 + 0.06 * (h2 - 0.5);
+    rule = 1.0 - smoothstep(0.0, fwidth(v) * 1.1, abs(v - th));
+    return v > th ? 1 : 0;
   }
-  if (tpl == 5) {
-    vec2 r0 = vec2(S.x * (0.1 + 0.6 * h2), S.y * (0.1 + 0.75 * h3)), r1 = r0 + vec2(S.x * 0.22, S.y * 0.07);
-    bool inR = all(greaterThan(cq, r0)) && all(lessThan(cq, r1));
-    return inR ? 6 : 3;
-  }
-  float sy = S.y * (0.3 + 0.4 * h2) + dr; rule = step(abs(cq.y - sy), 0.6);
-  return cq.y < sy ? 1 : 5;
+  if (tpl == 2) return subj > 0.5 ? 5 : 0;                        // 主題だけを点の格子で刷る(地はそのまま)
+  if (tpl == 3) return subj > 0.5 ? 4 : 3;                        // 地は輪郭線、主題は縦の細線
+  if (tpl == 4) return nearSubj(cq, uDark) > 0.5 ? 5 : 2;         // 全体を1ビットに、主題のまわりだけ網点
+  if (tpl == 5) { float v = isle(cq, k + 7.0); return (v > 0.6 && subj < 0.5) ? 6 : 3; } // 輪郭線の地に、島の形の市松
+  return 7;                                                        // ずれた写し(版ずれ)
 }
 float grainAmt(float l, float shadow){ return smoothstep(0.0, 0.18, l + shadow) * (1.0 - smoothstep(0.7, 1.0, l)) * (0.55 + 0.45 * (1.0 - abs(l * 2.0 - 0.9))); }
 void main(){
@@ -2684,7 +2691,7 @@ void main(){
     Yc = Yc < 0.5 ? Yc * 0.96 : 0.48 + (Yc - 0.5) * 1.55;
     Yc *= 1.0 + (hu(ivec2(7, 3), fq) - 0.5) * 0.07; // コマごとの明滅
     vec3 m = vec3(clamp(Yc, 0.0, 1.0)) + ch * 0.3 * smoothstep(0.15, 0.6, Y); // 色は、光のふちにだけ少し残す
-    { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), rule, alt); if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); if (rule > 0.0) m = vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94); }
+    { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), clamp(Yc, 0.0, 1.0), rule, alt); if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); m = mix(m, vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94), clamp(rule, 0.0, 1.0)); }
     vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
     m *= 1.0 - 0.5 * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03)));
     // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
@@ -3435,7 +3442,7 @@ export function mountMorph(root: HTMLElement) {
   let lastDevT = 0, inv = 0, boost = 0, droste = 0, cine = 0, glareV = 0, darkV = 0, beatK = -1, beatPh = 0, beatQ = 0;
   // 拍の並び(秒): 長い拍は静か(余白)、短い拍に版の重ねを差し込む。12秒で一巡
   const BEATS = [2.4, 1.2, 1.2, 2.4, 0.6, 0.6, 1.2, 2.4];
-  // 短い拍の割り付けの型の順(同じ型が続かないように): 1 左右で反転 / 2 点の帯 / 3 輪郭と細線 / 4 1ビットと点の窓 / 5 輪郭と市松 / 6 上下で点と反転
+  // 短い拍の割り付けの型の順(同じ型が続かないように): 1 島の反転 / 2 主題だけ点 / 3 地は輪郭・主題は細線 / 4 1ビットと主題のまわりの網点 / 5 輪郭と島の市松 / 6 ずれた写し
   const TPL = [1, 5, 3, 2, 6, 4, 3, 1, 2, 5, 6, 4];
   let devObjI = 0, devObjN = 0;
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
