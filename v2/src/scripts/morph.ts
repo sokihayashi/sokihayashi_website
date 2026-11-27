@@ -1554,7 +1554,8 @@ float dDropR(int k){
 }
 float dTowerH(int k){ return uView.y * (0.3 + 0.22 * hsh(uint(k) * 13U + 3U)); }
 // 見る位置: kt = 0 で真上から(紙そのもの)、1 で斜め上から(床)。紙の座標(画面の座標)が、そのまま床の座標になる。
-float dPit(float kt){ return mix(1.5707963, 1.2 - uTilt.y * 0.15, kt); } // 紙を「板」にしない: 少しだけ傾け、紙は画面からはみ出したまま
+float dvCamP = 1.2;
+float dPit(float kt){ return mix(1.5707963, dvCamP - uTilt.y * 0.15, kt); } // 紙を「板」にしない: 紙は画面からはみ出したまま。奥は闇に溶かす
 float dYaw(float kt){ return kt * (0.16 + 0.1 * sin(uTime * 0.06) + uTilt.x * 0.5); }
 vec3 dCam(vec3 p, float kt){
   vec2 c = uView * 0.5;
@@ -1597,7 +1598,9 @@ vec2 dWake(vec2 p){
   return ws > 1e-4 ? d / ws * min(ws, 1.0) * 0.085 : vec2(0.0);
 }
 // この面(粒)の持ちもの
-float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy; int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
+float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy;
+// 見る角度の道のり: 芽は斜め上から → 植物が伸びる間は低く(闇の中の野) → 綿毛が飛ぶと真上へ(焼きついた日光写真を見せる)
+float dCamPath(float t){ return t < 42.5 ? 1.2 - 0.44 * dsm(27.0, 30.5, t) + 0.6 * dsm(34.3, 36.6, t) : 1.2; } int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
 DP dLine(){
   vec2 c = uView * 0.5;
   return dDot(dCam(vec3(dvLine.x - c.x, 5.0, dvLine.y - c.y), 0.0), vec2(dvValid ? 1.35 : 0.0), 0.0, D_INK);
@@ -1624,7 +1627,8 @@ float dExpo(vec2 fp, float t){
   if (t >= 42.5) return 0.0;
   vec2 sf = dFloorAt(uSun.xy, 1.0);
   float de = clamp(length(fp - sf) / length(uView), 0.0, 1.0);
-  return dsm(17.4 + de * 1.8, 18.7 + de * 1.8, t); // 太陽の真下から、外へ焼けていく
+  float dj = hsh(uint(floor(fp.x * 0.07) * 131.0 + floor(fp.y * 0.07) * 977.0 + 50000.0)) - 0.5; // 焼けむら(格子の段を見せない)
+  return dsm(17.4 + de * 1.8 + dj * 0.45, 18.7 + de * 1.8 + dj * 0.45, t); // 太陽の真下から、外へ焼けていく
 }
 // 光のほうから、床へ影を投げる
 vec3 dCast(vec3 P, vec3 L){ float dy = max(L.y - P.y, L.y * 0.12); vec3 S = L + (P - L) * (L.y / dy); S.y = 0.6; return S; }
@@ -1773,9 +1777,9 @@ DP dPlant(float t, float kt){
   int k = dvK;
   vec3 R = vec3(dvCk.x - c.x, 0.0, dvCk.y - c.y);
   float hk = hsh(uint(k) * 29U + 11U);
-  float H = uView.y * (0.5 + 0.3 * hsh(uint(k) * 13U + 3U)); // こちらへ向かって伸びる
+  float H = uView.y * (0.36 + 0.22 * hsh(uint(k) * 13U + 3U));
   // 影の粒: 綿毛が飛ぶ瞬間(34.4秒)の形と太陽で止まり、紙に焼きついて残る(日光写真)。紙が落ちると一緒に落ちる
-  bool shd = dvA3 < 0.3;
+  bool shd = dvA3 < 0.38;
   bool burn = shd && t > 34.4;
   float fall = dsm(39.5, 42.5, t);
   float tm = burn ? uPrint.z : uTime;
@@ -1788,7 +1792,7 @@ DP dPlant(float t, float kt){
   vec3 tip = dStemP(R, lv, H, Phi, gs);
   vec3 top = dStemP(R, lv, H, Phi, 1.0);
   vec3 tanT = vec3(lv.x * sin(Phi), cos(Phi), lv.y * sin(Phi));
-  float r = shd ? dvA3 / 0.3 : (dvA3 - 0.3) / 0.7;
+  float r = shd ? dvA3 / 0.38 : (dvA3 - 0.38) / 0.62;
   float e1 = hsh(uint(gI) * 3U + 1U), e2 = hsh(uint(gI) * 7U + 13U), e3 = hsh(uint(gI) * 17U + 5U);
   vec3 P; float sz = 1.0; vec3 col = D_PAPER;
   if (r < 0.13) {
@@ -1840,7 +1844,7 @@ DP dPlant(float t, float kt){
     P = mix(tip, q, open);
   }
   dvHy = clamp(P.y / H, 0.0, 1.0);
-  if (shd) { dvHy = 0.0; vec3 S = dCast(P, L); S.y -= fall * uView.y * 1.5; return dDot(dCam(S, kt), vec2(burn ? 1.15 : 1.05), 1.0, D_SHADE * (burn ? 1.1 : 1.0) * (1.0 - fall)); }
+  if (shd) { dvHy = 0.0; vec3 S = dCast(P, L); S.y -= fall * uView.y * 1.5; return dDot(dCam(S, kt), vec2(burn ? 1.8 : 1.05), 1.0, (burn ? D_PAPER * 0.93 : D_SHADE) * (1.0 - fall)); } // 焼きついた影は、紙の白
   return dDot(dCam(P, kt), vec2(sz), 1.0, col);
 }
 // ---- 4次元: 塔の輪の1本1本が、4次元の球の上の円(ホップ・ファイバー)になる。
@@ -1961,7 +1965,7 @@ DP dObj(float t, float kt, float th4){
   vec3 Ls = dSunP(kt);
   float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), normalize(Ls - w)), 0.0);
   vec3 cl = D_PAPER * lit * (0.9 + 0.2 * dvA1);
-  if (dvA3 >= 0.3 && dvA3 < 0.4 && t < 41.0) { float bk = dsm(39.5, 41.0, t); return dDot(dCam(mix(dCast(w, Ls), w, bk), kt), vec2(mix(0.95, 1.3, bk)), 1.0, mix(D_SHADE, cl, bk)); }
+  if (dvA3 >= 0.38 && dvA3 < 0.46 && t < 41.0) { float bk = dsm(39.5, 41.0, t); return dDot(dCam(mix(dCast(w, Ls), w, bk), kt), vec2(mix(0.95, 1.3, bk)), 1.0, mix(D_SHADE, cl, bk)); }
   return dDot(dCam(w, kt), vec2(1.3), 1.0, cl);
 }
 // 指で押すと、その場所の粒が よける(墨が分かれる、塔の粒が割れる、光の線が曲がる)。指が磁石・つまみになる場面では、よけさせない
@@ -2007,6 +2011,7 @@ O dPaper(float t, float first, int NG){
   O o = base();
   o.centre = Pc; o.corner = Pc + (Pv - Pc) * vis;
   o.col = mix(paper, cy, ex) * (1.0 - fall * step(t, 42.5));
+  o.col *= mix(1.0, smoothstep(-520.0, -60.0, Pc.z), kc); // 奥の紙は闇に溶ける(縁を見せない)
   o.tex = 0.0; o.gate = 1.0; o.round = 0.0; o.shape = vec2(1.0);
   return o;
 }
@@ -2016,6 +2021,7 @@ O sDev(){
   float tt = t < 42.5 ? t : t - 8.0;
   float first = 1.0 - step(0.5, uDev.y);
   int NG = ${NU} * NVi - 4096;
+  dvCamP = dCamPath(t);
   if (gI >= NG) return dPaper(t, first, NG);
   float cnt = dCnt();
   dvValid = gR1.w > 0.5 && gAge < cnt;
@@ -2049,11 +2055,11 @@ O sDev(){
   else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.5; }
   else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 1.0, 29.5 + dvA2 * 1.0, t); push = 0.0; wk = 0.8; }
   else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.6 * dvHy * dvHy; } // 上ほど、なぞった向きへ しなる
-  else if (dvA3 < 0.3 && t < 42.5) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影は、紙が落ちるまで残る
+  else if (dvA3 < 0.38 && t < 42.5) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影は、紙が落ちるまで残る
   else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
-  else if (tt < 39.0) { if (dvA3 < 0.3) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
+  else if (tt < 39.0) { if (dvA3 < 0.38) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
   else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.0; }
   else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; }
   else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.0; }
@@ -2065,7 +2071,7 @@ O sDev(){
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
   o.centre = mix(dCentre(A), dCentre(B), b);
-  if (t >= 34.5 && t < 37.5 && dvA3 >= 0.3) { vec2 dr = vec2(60.0 + 70.0 * dvA1, -(50.0 + 80.0 * dvA3)) * sin(3.14159 * b); o.corner.xy += dr; o.centre.xy += dr; } // 綿毛が風に乗って、機材の形へ
+  if (t >= 34.5 && t < 37.5 && dvA3 >= 0.38) { vec2 dr = vec2(60.0 + 70.0 * dvA1, -(50.0 + 80.0 * dvA3)) * sin(3.14159 * b); o.corner.xy += dr; o.centre.xy += dr; } // 綿毛が風に乗って、機材の形へ
   // 重なる(不透明)⇔ 光として足す、が入れ替わる所では、明るさを いったん落としてから入れ替える
   if (A.a != B.a) o.col = b < 0.5 ? A.col * (1.0 - b * 1.6) : B.col * (0.2 + 1.6 * (b - 0.5));
   else o.col = mix(A.col, B.col, b);
