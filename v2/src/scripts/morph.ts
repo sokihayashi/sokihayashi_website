@@ -2157,6 +2157,12 @@ export function mountMorph(root: HTMLElement) {
   //   2D: 帯から入り、平らな表現を1回ずつ / 3D: 4本の帯が起き上がって入り、立体の表現を1回ずつ(ガラスは、立体の紙と筒の間)/ 4D: 光の線
   // 周を重ねるたびに、パートの中の順番を入れ替える。
   let partI = 0;
+  // これまで作った表現を、次元ごとに全部使う(本人 2026-11-27:「何回もリファレンスを投げて表現を増やしてきた。使える表現が5つってなんだ？」)。
+  // 外したのは、本人が外すと言ったものだけ: 4 リソ・5 フィルム・6 刺繍(写真の色を変える/見た目だけの違い)、18 線だけの帯(色を落とす)、
+  //   30 割れる(写真が分かれているだけ)、27 全画面(平面の四角)、28 プロフィール(About へ)、35・36 帯の線から作るガラス(帯に落とし込む系ではない)。
+  // 2D: 平らな帯の上で起きる表現 / 3D: 面が立ち、奥行きで見せる表現(帯が4本に増えて起き上がる 40 から入る。ガラス 34 と立体は別に入れる)
+  const P2D = [2, 3, 7, 8, 9, 10, 11, 13, 14, 16, 19, 20, 25, 29];
+  const P3D = [12, 15, 17, 22, 23, 24, 26];
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
   const growParts = () => {
@@ -2164,10 +2170,10 @@ export function mountMorph(root: HTMLElement) {
     partI++;
     if (P === 0) {
       push1(0, 'A2D', partI === 1 ? 1.4 : 1.0, 0);
-      for (const c of shuffle([29, 20, 19, 8])) push1(c, 'A2D', 0.95, pick([0, 1, 3]));
+      for (const c of shuffle(P2D)) push1(c, 'A2D', 0.95, pick([0, 1, 3]));
     } else if (P === 1) {
       push1(40, 'up', 2.6, 0);
-      const others = shuffle([17, 14, ...(objReady ? [31, 32, 33, 37, 38] : [])]);
+      const others = shuffle([...P3D, ...(objReady ? [31, 32, 33, 37, 38] : [])]);
       const core = Math.random() < 0.5 ? [1, 34, 21] : [21, 34, 1];
       const at = Math.floor(Math.random() * (others.length + 1));
       const list = [...others.slice(0, at), ...core, ...others.slice(at)];
