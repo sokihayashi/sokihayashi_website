@@ -74,6 +74,8 @@ uniform vec3 uKl;            // 48: a の倍率の対数(大きさ, 角度)と�
 uniform float uObjOn;        // 48: 機材の立体のデータが届いているか
 uniform vec3 uPrint;         // 48: 綿毛が飛ぶ瞬間の太陽の位置と時刻(影が紙に焼きつく)
 uniform vec3 uSun;           // 48: 太陽の位置(画面の座標。触っている間は指、離すと空をめぐる)と、指で動かしている度合い
+uniform float uFlat;         // 確認用(?flat=1): 立体の間も真上から、寄って見る(グラフィックとしての見え方の比較)
+uniform float uChlR;         // 48: 鳴る紙(クラドニ)の向き。サイトの斜め(長辺から28°)に置き、なぞるとターンテーブルのように回る
 uniform vec4 uSlc;           // 48: 4次元の切り口(切る位置, 切る向き, 拍で版を入れ替える, 効き)。版は、画面に出ない軸(w)で決まる
 uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
@@ -1561,7 +1563,7 @@ float dYaw(float kt){ return kt * (0.16 + 0.1 * sin(uTime * 0.06) + uTilt.x * 0.
 vec3 dCam(vec3 p, float kt){
   vec2 c = uView * 0.5;
   float pit = dPit(kt), yaw = dYaw(kt);
-  float zm = mix(1.0, 0.94, kt);
+  float zm = mix(1.0, uFlat > 0.5 ? 1.45 : 0.94, kt);
   float Y0 = mix(0.0, uView.y * 0.03, kt);
   float x1 = p.x * cos(yaw) + p.z * sin(yaw), z1 = -p.x * sin(yaw) + p.z * cos(yaw);
   float y2 = p.y * cos(pit) - z1 * sin(pit), z2 = p.y * sin(pit) + z1 * cos(pit);
@@ -1571,7 +1573,7 @@ vec3 dCam(vec3 p, float kt){
 vec2 dFloorAt(vec2 s, float kt){
   vec2 c = uView * 0.5;
   float pit = dPit(kt), yaw = dYaw(kt);
-  float zm = mix(1.0, 0.94, kt), Y0 = mix(0.0, uView.y * 0.03, kt);
+  float zm = mix(1.0, uFlat > 0.5 ? 1.45 : 0.94, kt), Y0 = mix(0.0, uView.y * 0.03, kt);
   float x1 = (s.x - c.x) / zm, y2 = -(s.y - c.y - Y0) / zm;
   float z1 = -y2 / max(sin(pit), 0.2);
   return vec2(x1 * cos(yaw) - z1 * sin(yaw), x1 * sin(yaw) + z1 * cos(yaw));
@@ -1622,7 +1624,7 @@ float dTrace(vec2 s, float r){
 // この面(粒)の持ちもの
 float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy;
 // 見る角度の道のり: 芽は斜め上から → 植物が伸びる間は低く(闇の中の野) → 綿毛が飛ぶと真上へ(焼きついた日光写真を見せる)
-float dCamPath(float t){ return t < 42.5 ? 1.2 - 0.44 * dsm(27.0, 30.5, t) + 0.6 * dsm(34.3, 36.6, t) : 1.2; } int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
+float dCamPath(float t){ return uFlat > 0.5 && t < 42.5 ? 1.5707963 : t < 42.5 ? 1.2 - 0.44 * dsm(27.0, 30.5, t) + 0.6 * dsm(34.3, 36.6, t) : 1.2; } int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
 DP dLine(){
   vec2 c = uView * 0.5;
   return dDot(dCam(vec3(dvLine.x - c.x, 5.0, dvLine.y - c.y), 0.0), vec2(dvValid ? 1.35 : 0.0), 0.0, D_INK);
@@ -1661,7 +1663,10 @@ vec2 dSandUV(){
   uv.y += 0.012 * sin(uv.x * 18.0 + uv.y * 6.0); // 眠っている砂丘(わずかな濃淡)
   return uv;
 }
-vec2 dPlate(vec2 uv){ return uView * 0.5 + (uv - 0.5) * uView * vec2(0.9, 0.84); }
+// 板の座標 ⇔ 画面の点。板は画面より大きく、縁を見せない(模様の式は周期的に続く)。斜めに置いて、指で回す(本人「クラドニ図形を斜めにした場合、四角にする必要があるのか」)
+vec2 dPlate(vec2 uv){ vec2 q = (uv - 0.5) * uView * vec2(0.9, 0.84); float co = cos(uChlR), si = sin(uChlR); return uView * 0.5 + vec2(co * q.x - si * q.y, si * q.x + co * q.y); }
+vec2 dPlateUV(vec2 s){ vec2 d = s - uView * 0.5; float co = cos(uChlR), si = sin(uChlR); return vec2(co * d.x + si * d.y, -si * d.x + co * d.y) / (uView * vec2(0.9, 0.84)) + 0.5; }
+vec2 dSandScr(){ return uView * 0.5 + (dSandUV() - 0.5) * uView * 1.08; } // 砂は画面いっぱい(少しはみ出す)
 float chlF(vec2 uv, float n, float m, float sg){ return cos(n * D_PI * uv.x) * cos(m * D_PI * uv.y) + sg * cos(m * D_PI * uv.x) * cos(n * D_PI * uv.y); }
 vec2 chlG(vec2 uv, float n, float m, float sg){
   float a = n * D_PI, b = m * D_PI;
@@ -1671,7 +1676,7 @@ vec2 chlG(vec2 uv, float n, float m, float sg){
 // 指で鳴らす: 指の所から同心円の波が板に広がり、砂はその輪(節)にも集まる。指を動かすと、輪ごと砂がついてくる。速く動かすと輪が細かくなる。
 float chlRing(vec2 uv, out vec2 g){
   vec2 asp = vec2(0.9 * uView.x, 0.84 * uView.y) / (0.84 * uView.y);
-  vec2 fu = (uFing.xy - uView * 0.5) / (uView * vec2(0.9, 0.84)) + 0.5;
+  vec2 fu = dPlateUV(uFing.xy);
   vec2 d = (uv - fu) * asp; float r = length(d) + 1e-4;
   float k = 26.0 + 40.0 * uPenV;
   g = -k * sin(k * r) * d * asp / r;
@@ -1685,15 +1690,15 @@ vec2 chlProj(vec2 uv, float n, float m, float sg, float ring){
     float L = length(st); if (L > 0.08) st *= 0.08 / L;
     uv -= st;
   }
-  return clamp(uv, 0.0, 1.0);
+  return uv; // 板の外へも模様が続く(縁で止めない)
 }
 DP dSand(){
-  vec2 c = uView * 0.5; vec2 p = dPlate(dSandUV());
+  vec2 c = uView * 0.5; vec2 p = dSandScr();
   return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), 0.0), vec2(0.62), 0.0, D_INK); // 眠った砂は、灰色の ざらつき(大きいと黒い板になった)
 }
 DP dChl(float t, float kt){
   vec2 c = uView * 0.5;
-  vec2 uv0 = dSandUV();
+  vec2 uv0 = dPlateUV(dSandScr());
   float ring = uFing.z * 0.85 * (1.0 - kt);
   vec2 ua = chlProj(uv0, uChl.x, uChl.y, uChl2.x, ring);
   vec2 ub = chlProj(uv0, uChl.z, uChl.w, uChl2.y, ring);
@@ -1710,7 +1715,7 @@ DP dChl(float t, float kt){
 // 磁石は しずくの真ん中(のちに塔が立つ所)の上。時間とともに 1 → 2 → 4 → 8 本。指も磁石(いちばん強い)。
 DP dNeedle(float t, float kt){
   vec2 c = uView * 0.5;
-  vec2 uv = chlProj(dSandUV(), uChl.z, uChl.w, uChl2.y, 0.0);
+  vec2 uv = chlProj(dPlateUV(dSandScr()), uChl.z, uChl.w, uChl2.y, 0.0);
   vec2 p = dPlate(uv);
   vec3 base = vec3(p.x - c.x, 2.0, p.y - c.y);
   vec2 g = chlG(uv, uChl.z, uChl.w, uChl2.y);
@@ -1759,7 +1764,7 @@ DP dGrass(float t, float kt){
   int bid = gI / 4; int j = gI - bid * 4;
   vec2 buv = vec2(hsh(uint(bid) * 13U + 17U), hsh(uint(bid) * 19U + 5U));
   vec2 jit = (vec2(hsh(uint(bid) * 23U + 1U), hsh(uint(bid) * 31U + 9U)) - 0.5) * 7.0;
-  vec2 R = dPlate(chlProj(buv, uChl.z, uChl.w, uChl2.y, 0.0)) - c + jit;
+  vec2 R = dPlate(chlProj(dPlateUV(c + (buv - 0.5) * uView * 1.08), uChl.z, uChl.w, uChl2.y, 0.0)) - c + jit;
   float hb = hsh(uint(bid) * 7U + 3U);
   float gr = dsm(19.6 + hb * 1.4, 21.8 + hb * 1.4, t);
   float boost = 0.0;
@@ -2104,11 +2109,12 @@ O sDev(){
   else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.5; }
   else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 1.0, 29.5 + dvA2 * 1.0, t); push = 0.0; wk = 0.8; }
   else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.2 * dvHy * dvHy; wr = 100.0; } // 上ほど、なぞった向きへ しなる(花の頭が ちぎれないよう、広く効かせる)
-  else if (dvA3 < 0.38 && t < 42.5) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影は、紙が落ちるまで残る
+  else if (dvA3 < 0.38 && t < 36.0) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影(フォトグラム)を、ひと息 見せる
+  else if (dvA3 < 0.38 && t < 38.2) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(36.0 + dvA2 * 0.8, 37.4 + dvA2 * 0.8, t); push = 0.0; wk = 0.0; } // 焼きついた影が立ち上がって、機材になる(像が実体になる)。影と機材を中途半端に重ねない(本人「草とカメラが中途半端にかぶるのも変」)
   else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
-  else if (tt < 39.0) { if (dvA3 < 0.38) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.4 * b; } // 上の粒から先に、空へ
+  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else if (dvA3 < 0.38) A = dPlant(t, kt); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.4 * b; } // 上の粒から先に、空へ
   else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
   else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.6; wr = 90.0; }
   else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
@@ -2842,7 +2848,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), slc: U('uSlc'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), slc: U('uSlc'), chlR: U('uChlR'), flat: U('uFlat'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -3466,7 +3472,8 @@ export function mountMorph(root: HTMLElement) {
   const devCanDraw = () => !devOn || devT <= 0 || devLoop(devT)[0] < 7.5; // 描けるのは、紙が始まってから しずくの間まで
   // 紙の鳴り方(クラドニ図形)。触らなければ、2.6秒ごとに次の鳴り方へ。触っている間は、指の所から輪が広がる(シェーダー側)。
   const CHL = [[1, 4, 1], [2, 5, -1], [3, 7, 1], [2, 3, 1], [4, 7, -1], [1, 6, 1], [3, 5, -1], [5, 8, 1], [2, 7, 1], [3, 4, -1]];
-  let chlA = CHL[0], chlB = CHL[0], chlX = 1, chlI = 0, chlAt = 0;
+  let chlA = CHL[0], chlB = CHL[0], chlX = 1, chlI = 0, chlAt = 0, chlR = 0, chlW = 0;
+  const FLAT = new URLSearchParams(location.search).get('flat') === '1'; // 確認用
   const chlTo = (m: number[]) => {
     if (m[0] === chlB[0] && m[1] === chlB[1] && m[2] === chlB[2]) return;
     chlA = chlB; chlB = m; chlX = 0; boost = Math.max(boost, 0.16);
@@ -3518,7 +3525,8 @@ export function mountMorph(root: HTMLElement) {
   // 場面ごとの版(本人 2026-11-28「全ての表現に同様のグラフィックの処理をしているのが気になる。もっとそれぞれに合う表現を」)
   //   線・しずく: 墨の刷り(島の反転・1ビット) / クラドニ: 砂は網点、節は輪郭と縦線 / 印画紙・植物: 写真の現象(ソラリゼーション・ネガ)
   //   焼き付け・機材: 走査線 / 4次元: 面の上の版だけ(画面の版は休む) / 線の束: 縦線と重ねたモアレ / クライン群: ずれた写しと反転 / 球: 版なし(光だけ) / 紙に戻る: 1ビット
-  const PLATE_FAM = (d: number): number[] => (d < 9.5 ? [1, 7] : d < 17.5 ? [2, 3] : d < 34.4 ? [8, 9] : d < 42.5 ? [10] : d < 61.5 ? [] : d < 72 ? [11] : d < 84 ? [6, 9] : d < 99 ? [] : [7]);
+  // 先頭が その場面の「ふだんの版」(長い拍も、この刷り方で見せる。本人「まだグラフィック化できてないな」)、残りが短い拍に差し込む版。0 は版なし
+  const PLATE_FAM = (d: number): number[] => (d < 9.5 ? [7, 1] : d < 17.5 ? [2, 3] : d < 34.4 ? [7, 8, 9] : d < 42.5 ? [10, 9] : d < 61.5 ? [0] : d < 72 ? [11, 7] : d < 84 ? [0, 6, 9] : d < 99 ? [0] : [7, 1]);
   let devObjI = 0, devObjN = 0;
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
@@ -4127,6 +4135,17 @@ export function mountMorph(root: HTMLElement) {
         }
       }
       chlX = Math.min(1, chlX + dt / 0.9);
+      // 鳴る紙の向き: サイトの斜め(長辺から28°)から始まる。砂の間になぞると、指の中心まわりの動きで ターンテーブルのように回り、惰性で回り続ける
+      if (!devOn || dtl < 7.5) { chlR = 0; chlW = 0; }
+      else if (dtl < 17.5) {
+        if (drawing) {
+          const rx = ptX - vw * 0.5, ry = ptY - vh * 0.5, r2 = Math.max(rx * rx + ry * ry, 3600);
+          chlW += ((rx * penVY - ry * penVX) / r2 / Math.max(dt, 1e-3) - chlW) * (1 - Math.exp(-dt / 0.08));
+        } else chlW *= Math.exp(-dt / 1.4);
+        chlR += chlW * dt;
+      }
+      gl!.uniform1f(u.chlR, -0.4887 + chlR);
+      gl!.uniform1f(u.flat, FLAT ? 1 : 0);
       const ex = chlX * chlX * (3 - 2 * chlX);
       gl!.uniform4f(u.chl, chlA[0], chlA[1], chlB[0], chlB[1]);
       gl!.uniform3f(u.chl2, chlA[2], chlB[2], ex);
@@ -4244,8 +4263,9 @@ export function mountMorph(root: HTMLElement) {
           while (i < BEATS.length - 1 && r >= BEATS[i]) { r -= BEATS[i]; i++; }
           beatK = cyc * BEATS.length + i; beatPh = r;
           let nq = 0; for (let j = 0; j < i; j++) if (BEATS[j] < 2.4) nq++;
-          const fam = devOn ? PLATE_FAM(dtl) : TPL;
-          beatQ = BEATS[i] >= 2.4 || !fam.length ? 0 : fam[(cyc * 5 + nq) % fam.length];
+          const fam = devOn ? PLATE_FAM(dtl) : [0, ...TPL];
+          const alts = fam.slice(1);
+          beatQ = BEATS[i] >= 2.4 || !alts.length ? fam[0] : alts[(cyc * 5 + nq) % alts.length];
         }
         // 4次元の切り口: 版は、画面に出ない軸(w)で立体の面の上に決まる。拍ごとに両側の版が入れ替わる。
         // その間、後からかける版(画面の区画)は休む(同じ拍を、立体の上の入れ替えが受け持つ)
