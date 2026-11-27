@@ -1961,9 +1961,9 @@ DP dTubes(float t){
     float hs = 0.75 * max(length(dTubeC(i, u + TAU / 150.0, S4) - C), rr * TAU / 20.0);
     float trc = dTrace(dScr(Xw), 60.0);
     bool sw = trc > 0.35 + 0.2 * dvA2; // なぞった所だけ、白黒が入れ替わる(刷りを引っかいた跡。0.6秒ほどで戻る)
-    if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dDot(Xw, vec2(back ? hs : 0.0), 1.0, sw ? fill : ln); }
+    if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dDot(Xw, vec2(back ? hs : 0.0), 2.0, sw ? fill : ln); }
     vec3 fc = pat ? (fract(u * 5.0 / TAU + v * 2.0 / TAU) < 0.5 ? D_INK : D_PAPER) : fill; // 2条の らせん縞(床屋の看板)。巻きが細かいと、硬貨を積んだように見えた
-    return dDot(Xw, vec2(hs), 1.0, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc);
+    return dDot(Xw, vec2(hs), 2.0, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc);
   }
   if (pat || k >= 8752) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill); // 縞の管には格子を引かない。余りの粒は使わない
   vec3 a, b;
@@ -2453,7 +2453,9 @@ void main(){
   vec2 p = vQ * vShape;
   float r = min(vShape.x, vShape.y);
   vec2 q = max(abs(p) - (vShape - r), 0.0);
-  float cov = mix(1.0, clamp(r - length(q) + 0.5, 0.0, 1.0), vMix.x);
+  float aa = clamp(r - length(q) + 0.5, 0.0, 1.0);
+  float cov = mix(1.0, aa, min(vMix.x, 1.0));
+  if (vMix.x > 1.5) { if (aa < 0.5) discard; cov = 1.0; } // 丸さ 2 = ふちを ぼかさない不透明の丸(管の面)。ぼかしたふちが奥行きを書き、後から描く隣の粒の上に白い弧(硬貨のふち)を残した
   if (cov <= 0.002) discard;
   vec2 uv = clamp(vUV, vec2(0.004), vec2(0.996));
   float shade = 1.0;
@@ -2842,9 +2844,10 @@ void main(){
     Yc = Yc < 0.5 ? Yc * 0.96 : 0.48 + (Yc - 0.5) * 1.55;
     Yc *= 1.0 + (hu(ivec2(7, 3), fq) - 0.5) * 0.07; // コマごとの明滅
     vec3 m = vec3(clamp(Yc, 0.0, 1.0)) + ch * 0.3 * smoothstep(0.15, 0.6, Y); // 色は、光のふちにだけ少し残す
-    { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), clamp(Yc, 0.0, 1.0), rule, alt); if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); m = mix(m, vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94), clamp(rule, 0.0, 1.0)); }
+    int trP = 0;
+    { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), clamp(Yc, 0.0, 1.0), rule, alt); trP = tr; if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); m = mix(m, vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94), clamp(rule, 0.0, 1.0)); }
     vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
-    m *= 1.0 - 0.5 * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03)));
+    m *= 1.0 - (trP == 1 ? 0.14 : 0.5) * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03))); // 反転の版(白い紙)では、周辺の落ちを弱く(白い紙が、灰色に濁って見えた)
     // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
     // (本人「グレインが粗い」: 粒の大きさを約半分に、強さを約6割に。細かい方は画面の画素の大きさ)
     float gq = grain(cq / 1.15, fq + 900) * 0.7 + grain(gl_FragCoord.xy / 1.3, fq + 1700) * 0.35;
