@@ -72,6 +72,7 @@ uniform vec4 uKm[8];         // 48: クライン群の4つの生成元(a, b, A, 
 uniform vec4 uKf;            // 48: 生成元 a の吸い込む不動点(xy)と、湧き出す不動点(zw)
 uniform vec3 uKl;            // 48: a の倍率の対数(大きさ, 角度)と、流れの位相(0〜1で一巡)
 uniform float uObjOn;        // 48: 機材の立体のデータが届いているか
+uniform vec3 uSun;           // 48: 太陽の位置(画面の座標。触っている間は指、離すと空をめぐる)と、指で動かしている度合い
 uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
@@ -1534,6 +1535,8 @@ const int DK = 9;
 const vec3 D_INK = vec3(0.05, 0.05, 0.055);
 const vec3 D_PAPER = vec3(0.925, 0.918, 0.895);
 const vec3 D_GRAY = vec3(0.80, 0.81, 0.84);
+const vec3 D_CYAN = vec3(0.055, 0.19, 0.40); // 日光写真(サイアノタイプ)の青
+const vec3 D_SHADE = vec3(0.60, 0.71, 0.85);  // 影: 光の届かなかった所は、焼けずに白っぽく残る
 const float D_PI = 3.14159265;
 float dsm(float a, float b, float t){ return smoothstep(a, b, t); }
 vec2 dPath(float age){ int j = int(mod(uK - 1.0 - age, Mf)); return texelFetch(uPath, ivec2(j, 0), 0).xy; }
@@ -1593,7 +1596,7 @@ vec2 dWake(vec2 p){
   return ws > 1e-4 ? d / ws * min(ws, 1.0) * 0.085 : vec2(0.0);
 }
 // この面(粒)の持ちもの
-float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt; int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
+float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy; int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
 DP dLine(){
   vec2 c = uView * 0.5;
   return dDot(dCam(vec3(dvLine.x - c.x, 5.0, dvLine.y - c.y), 0.0), vec2(dvValid ? 1.35 : 0.0), 0.0, D_INK);
@@ -1611,6 +1614,16 @@ DP dDrop(float kt){
   vec3 col = (dvK % 3 == 0 && !halo && dvA2 > 0.33 && dvA2 < 0.43) ? D_PAPER : D_INK;
   return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), kt), hs, 0.0, col);
 }
+// ---- 太陽(指)と、日光写真。紙は光で青く焼け、光の届かなかった所(砂・影)は白く残る
+vec3 dSunP(float kt){ vec2 f = dFloorAt(uSun.xy, kt); return vec3(f.x, uView.y * 0.85, f.y); }
+float dExpo(vec2 fp, float t){
+  if (t >= 42.5) return 0.0;
+  vec2 sf = dFloorAt(uSun.xy, 1.0);
+  float de = clamp(length(fp - sf) / length(uView), 0.0, 1.0);
+  return dsm(17.4 + de * 1.8, 18.7 + de * 1.8, t); // 太陽の真下から、外へ焼けていく
+}
+// 光のほうから、床へ影を投げる
+vec3 dCast(vec3 P, vec3 L){ float dy = max(L.y - P.y, L.y * 0.12); vec3 S = L + (P - L) * (L.y / dy); S.y = 0.6; return S; }
 // ---- 砂と、鳴る紙(クラドニ図形)
 // 板の上の砂は、板が鳴ると「揺れない所(節)」へ集まる。節は f = 0 の線。f の形は、鳴り方(n, m)で決まる。
 // 砂の1粒は、もとの場所から、いちばん近い節の線へ移る(ニュートン法で f = 0 へ寄せる)。
@@ -1662,7 +1675,7 @@ DP dChl(float t, float kt){
   vec2 jr = vec2(hsh(uint(gI) * 3U + uint(tq) * 7U), hsh(uint(gI) * 5U + uint(tq) * 11U)) - 0.5;
   uv += jr * (0.03 * sin(D_PI * x) + (0.004 + uPenV * 0.02) * uPen.z * (1.0 - kt));
   vec2 p = dPlate(uv);
-  return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), kt), vec2(1.05), 0.0, mix(D_INK, D_GRAY * (0.75 + 0.25 * dvA1), kt));
+  return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), kt), vec2(1.05), 0.0, mix(D_INK, D_PAPER * (0.8 + 0.2 * dvA1), dExpo(p - c, t))); // 紙が焼けると、砂の図形は白く抜ける(ネガ)
 }
 // ---- 鉄の針と磁石(aidoga_lab「RINGING METAL」: 眠った粉が、力の線に沿って立つ)
 // 磁石は しずくの真ん中(のちに塔が立つ所)の上。時間とともに 1 → 2 → 4 → 8 本。指も磁石(いちばん強い)。
@@ -1709,6 +1722,116 @@ DP dTower(float t, float kt){
   vec3 w = vec3(dvCk.x - c.x + cos(ang) * rt, y, dvCk.y - c.y + sin(ang) * rt);
   vec3 col = D_GRAY * (0.42 + 0.6 * max(cos(ang - 2.4), 0.0)) * (0.9 + 0.2 * dvA1);
   return dDot(dCam(w, kt), vec2(1.5), 1.0, col);
+}
+// ---- 芽(針の場面の置きかえ): 図形の線の上の砂が、芽になって立つ。向く先は磁石ではなく光(指)。
+// 1本の芽は4つの粒(4つの節)。根もとは暗く、先ほど光る。しずくの所から順に(1 → 2 → 4 → 9)、背の高い株が育つ。指の下は、よく伸びる。
+DP dGrass(float t, float kt){
+  vec2 c = uView * 0.5;
+  int bid = gI / 4; int j = gI - bid * 4;
+  vec2 buv = vec2(hsh(uint(bid) * 13U + 17U), hsh(uint(bid) * 19U + 5U));
+  vec2 jit = (vec2(hsh(uint(bid) * 23U + 1U), hsh(uint(bid) * 31U + 9U)) - 0.5) * 7.0;
+  vec2 R = dPlate(chlProj(buv, uChl.z, uChl.w, uChl2.y, 0.0)) - c + jit;
+  float hb = hsh(uint(bid) * 7U + 3U);
+  float gr = dsm(19.6 + hb * 1.4, 21.8 + hb * 1.4, t);
+  float boost = 0.0;
+  for (int k = 0; k < DK; k++) {
+    float tk = 21.0 + (k == 0 ? 0.0 : k < 2 ? 1.5 : k < 4 ? 3.0 : 4.5);
+    float sk = dsm(tk, tk + 1.4, t);
+    if (sk <= 0.0) continue;
+    vec2 dd = R - (dDropC(k, 0.0, 1.0) - c);
+    boost = max(boost, sk * exp(-dot(dd, dd) / (2.0 * 64.0 * 64.0)));
+  }
+  vec3 L = dSunP(kt);
+  vec2 dL = L.xz - R;
+  float fb = uSun.z * exp(-dot(dL, dL) / (2.0 * 95.0 * 95.0));
+  float H = (5.0 + 34.0 * hb * hb * hb + 78.0 * boost + 46.0 * fb) * gr;
+  vec2 lean = dL / L.y * 0.85;
+  float ll = length(lean); if (ll > 1.1) lean *= 1.1 / ll;
+  lean += vec2(sin(uTime * 1.3 + R.x * 0.02 + R.y * 0.013), cos(uTime * 1.1 + R.y * 0.017)) * 0.16; // 風
+  float sq = 0.3 * min(length(lean), 1.0);
+  float u0 = float(j) * 0.25, u1 = u0 + 0.25;
+  vec3 a = vec3(R.x + lean.x * H * u0 * u0, H * u0 * (1.0 - sq * u0), R.y + lean.y * H * u0 * u0);
+  vec3 b = vec3(R.x + lean.x * H * u1 * u1, H * u1 * (1.0 - sq * u1), R.y + lean.y * H * u1 * u1);
+  vec3 col = mix(D_CYAN * 1.7, D_PAPER, pow(u1, 0.8)) * (0.85 + 0.3 * dvA1); // 根もとは青に沈み、先だけ白く光る
+  return dSeg(dCam(a, kt), dCam(b, kt), 0.5 - 0.28 * u0, col, 1.0);
+}
+// ---- 植物(塔の場面の置きかえ): 9つのしずくから伸びる。茎は光(指)のほうへ弧を描いて曲がる。
+// 葉は黄金角(137.5°)ずつ回って9枚。てっぺんの花は種の渦(ヴォーゲルの式: r = √i, θ = i × 137.5° → フィボナッチの螺旋)。
+// 花は指のほうを向く。影は、指(太陽)から放射状に床へ伸びる。日光写真なので、影は白い。
+vec3 dStemP(vec3 R, vec2 lv, float H, float Phi, float s){
+  float ph = Phi * s;
+  float x = H / Phi * (1.0 - cos(ph)), y = H / Phi * sin(ph);
+  return R + vec3(lv.x * x, y, lv.y * x);
+}
+DP dPlant(float t, float kt){
+  vec2 c = uView * 0.5;
+  int k = dvK;
+  vec3 R = vec3(dvCk.x - c.x, 0.0, dvCk.y - c.y);
+  float hk = hsh(uint(k) * 29U + 11U);
+  float H = dTowerH(k) * 1.05;
+  float gs = dsm(27.3 + hk * 0.9, 30.6 + hk * 0.9, t); // 早回しで伸びる
+  vec3 L = dSunP(kt);
+  vec2 dL = L.xz - R.xz; float dlen = length(dL);
+  vec2 lv = dlen > 1e-3 ? dL / dlen : vec2(1.0, 0.0);
+  float Phi = max(1.0 * atan(dlen, L.y) * (1.0 + 0.25 * uSun.z) + 0.06 * sin(uTime * 0.8 + float(k) * 1.9), 0.02);
+  vec3 tip = dStemP(R, lv, H, Phi, gs);
+  vec3 top = dStemP(R, lv, H, Phi, 1.0);
+  vec3 tanT = vec3(lv.x * sin(Phi), cos(Phi), lv.y * sin(Phi));
+  bool shd = dvA3 < 0.22;
+  float r = shd ? dvA3 / 0.22 : (dvA3 - 0.22) / 0.78;
+  float e1 = hsh(uint(gI) * 3U + 1U), e2 = hsh(uint(gI) * 7U + 13U), e3 = hsh(uint(gI) * 17U + 5U);
+  vec3 P; float sz = 1.0; vec3 col = D_PAPER;
+  if (r < 0.13) {
+    // 茎
+    float s = e1 * gs;
+    float ang = e2 * 6.2831853;
+    float rad = 2.6 * (1.0 - 0.55 * s);
+    P = dStemP(R, lv, H, Phi, s) + vec3(cos(ang) * rad, 0.0, sin(ang) * rad);
+    col = D_PAPER * (0.62 + 0.38 * max(cos(ang - 2.2), 0.0));
+    sz = 1.05;
+  } else if (r < 0.62) {
+    // 葉: 縁は細い線、中に筋、面は まばらな点(植物図鑑の版画の描き方)。節を茎の先が通り過ぎてから開く
+    float n = floor((r - 0.13) / 0.49 * 9.0);
+    float sn = 0.14 + 0.72 * n / 8.0;
+    float lg = dsm(sn, sn + 0.2, gs);
+    vec3 nd = dStemP(R, lv, H, Phi, sn);
+    float th = n * 2.39996 + float(k) * 1.3;
+    vec2 dO = normalize(vec2(cos(th), sin(th)) + lv * 0.45);
+    float Lf = H * (0.34 - 0.17 * sn) * lg;
+    float age = dsm(32.0 + hk * 0.6, 34.2, t); // 実を結ぶと、葉は垂れる
+    float al = 0.55 - 0.7 * age + 0.1 * sin(uTime * 1.6 + n * 1.3 + float(k));
+    float v = e2 < 0.46 ? (e3 < 0.5 ? -1.0 : 1.0) : (e2 < 0.68 ? 0.0 : e3 * 2.0 - 1.0);
+    float wv = Lf * 0.21 * pow(sin(3.14159 * e1), 0.8);
+    vec3 q = nd + vec3(dO.x, 0.0, dO.y) * Lf * e1 * cos(al) + vec3(0.0, Lf * (e1 * sin(al) - (0.6 + 0.3 * age) * e1 * e1), 0.0) + vec3(-dO.y, 0.0, dO.x) * wv * v;
+    P = mix(tip, q, lg);
+    col = D_PAPER * (abs(v) > 0.99 ? 0.95 : (e2 < 0.68 ? 0.82 : 0.55));
+    sz = abs(v) > 0.99 ? 1.0 : 0.85;
+  } else {
+    // 花: 種の渦(回り続ける)。実を結ぶと、渦の種がそのまま球に並び直し、綿毛の球になる(球の上の黄金角の並び)
+    float open = dsm(0.86, 1.0, gs);
+    vec3 nh = normalize(mix(tanT, normalize(L - top), 0.8));
+    vec3 ax = abs(nh.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 b1 = normalize(cross(nh, ax)), b2 = cross(nh, b1);
+    float Rh = H * 0.15 * open;
+    float i = floor((r - 0.62) / 0.38 * 233.0);
+    float f = (i + 0.5) / 233.0;
+    float a = i * 2.39996 + uTime * 0.12;
+    vec3 qd = top + (b1 * cos(a) + b2 * sin(a)) * Rh * sqrt(f) + nh * Rh * 0.12 * (1.0 - sqrt(f));
+    float zz = 1.0 - 2.0 * f, rr = sqrt(max(1.0 - zz * zz, 0.0));
+    vec3 dir = (b1 * cos(a) + b2 * sin(a)) * rr + nh * zz;
+    float Rs = H * 0.19;
+    float uu = e2 < 0.45 ? 1.0 : 0.18 + 0.82 * e3;         // 綿毛の先(房)と、種から伸びる細い軸
+    vec3 tuft = e2 < 0.45 ? (b1 * (e3 - 0.5) + b2 * (e1 - 0.5)) * Rs * 0.16 : vec3(0.0);
+    vec3 qs = top + nh * Rs * 0.25 + dir * Rs * uu + tuft;
+    float sd = dsm(32.0 + hk * 0.6, 33.5 + hk * 0.6, t);
+    vec3 q = mix(qd, qs, sd);
+    sz = mix(0.75 + 0.55 * sqrt(f), e2 < 0.45 ? 0.85 : 0.6, sd);
+    col = D_PAPER * mix(0.7 + 0.3 * sqrt(f), e2 < 0.45 ? 1.0 : 0.7, sd);
+    P = mix(tip, q, open);
+  }
+  dvHy = clamp(P.y / H, 0.0, 1.0);
+  if (shd) { dvHy = 0.0; return dDot(dCam(dCast(P, L), kt), vec2(0.95), 1.0, D_SHADE); }
+  return dDot(dCam(P, kt), vec2(sz), 1.0, col);
 }
 // ---- 4次元: 塔の輪の1本1本が、4次元の球の上の円(ホップ・ファイバー)になる。
 // はじめは全部が赤道の上(= クリフォードトーラス)。45秒から、高さごとに緯度が分かれて、入れ子 → くぐり合う円の束。
@@ -1824,9 +1947,12 @@ DP dObj(float t, float kt, float th4){
   float pr = 2.6 / (2.6 - w4);
   float S = min(uView.x, uView.y) * 0.42;
   vec3 w = vec3(p.x * pr * S, (p.y - uWrap.x) * pr * S + 3.0, p.z * pr * S);
-  vec3 L = normalize(vec3(-0.5, 0.8, 0.45));
-  float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), L), 0.0);
-  return dDot(dCam(w, kt), vec2(1.3), 1.0, D_GRAY * lit * (0.9 + 0.2 * dvA1));
+  // 青写真: 太陽(指)に照らされ、床に白い影を落とす。床が落ちる(39.5秒〜)と、影の粒は立体へ戻る
+  vec3 Ls = dSunP(kt);
+  float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), normalize(Ls - w)), 0.0);
+  vec3 cl = D_PAPER * lit * (0.9 + 0.2 * dvA1);
+  if (dvA3 < 0.18 && t < 41.0) { float bk = dsm(39.5, 41.0, t); return dDot(dCam(mix(dCast(w, Ls), w, bk), kt), vec2(mix(0.95, 1.3, bk)), 1.0, mix(D_SHADE, cl, bk)); }
+  return dDot(dCam(w, kt), vec2(1.3), 1.0, cl);
 }
 // 指で押すと、その場所の粒が よける(墨が分かれる、塔の粒が割れる、光の線が曲がる)。指が磁石・つまみになる場面では、よけさせない
 O dPush(O o, float k){
@@ -1859,25 +1985,15 @@ O dPaper(float t, float first, int NG){
   vec3 paper = mix(vec3(step(0.5, sn)) * 0.85 + 0.05, D_PAPER, settle);
   float kc = t < 42.5 ? dsm(17.5, 20.0, t) : 0.0;
   float y = t < 42.5 ? -fall * uView.y * 1.5 : 0.0;
-  // 塔の影: 光と反対へ伸びる
-  float sh = 0.0;
-  if (kc > 0.001) {
-    vec2 Ld = normalize(vec2(0.75, 0.55));
-    float rise = dsm(27.0, 30.5, t) * (1.0 - dsm(34.5, 36.5, t));
-    if (rise > 0.0) for (int k = 0; k < DK; k++) {
-      vec2 b0 = dDropC(k, 0.0, 1.0) - c;
-      float R = dDropR(k);
-      vec2 b1 = b0 + Ld * (dTowerH(k) * 1.1 * rise + R * 0.3);
-      vec2 pa = cc - b0, ba = b1 - b0;
-      float hh = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-3), 0.0, 1.0);
-      sh = max(sh, (1.0 - smoothstep(R * 0.4, R * 1.1, length(pa - ba * hh))) * (0.3 + 0.7 * rise));
-    }
-  }
+  // 日光写真の青: 刷毛で塗ったむら
+  float ex = dExpo(cc, t);
+  float bru = 0.5 + 0.5 * sin((cc.x * 0.8 + cc.y * 0.35) * 0.02 + sin(cc.y * 0.013 + cc.x * 0.004) * 2.2);
+  vec3 cy = D_CYAN * (0.84 + 0.22 * bru + 0.1 * (cl - 0.5));
   vec3 Pc = dCam(vec3(cc.x, y, cc.y), kc);
   vec3 Pv = dCam(vec3(cv.x, y, cv.y), kc);
   O o = base();
   o.centre = Pc; o.corner = Pc + (Pv - Pc) * vis;
-  o.col = mix(paper, vec3(0.30, 0.31, 0.34) * (1.0 - 0.7 * sh), kc) * (1.0 - fall * step(t, 42.5));
+  o.col = mix(paper, cy, ex) * (1.0 - fall * step(t, 42.5));
   o.tex = 0.0; o.gate = 1.0; o.round = 0.0; o.shape = vec2(1.0);
   return o;
 }
@@ -1909,21 +2025,21 @@ O sDev(){
     o.gate = mix(sc0, dvValid ? 1.0 : 0.0, b01);
     return dPush(o, 1.0);
   }
-  DP A, B; float b = 0.0; float push = 0.35; float wk = 1.0;
+  DP A, B; float b = 0.0; float push = 0.35; float wk = 1.0; dvHy = 0.0;
   if (t < 2.2) { A = dLine(); B = A; }
   else if (t < 4.2) { A = dLine(); B = dDrop(0.0); b = dsm(2.2 + dvA2 * 0.7, 3.5 + dvA2 * 0.7, t); }
   else if (t < 7.5) { A = dDrop(0.0); B = A; }
   else if (t < 9.5) { A = dDrop(0.0); B = dSand(); b = dsm(7.5 + dvA3 * 0.6, 8.9 + dvA3 * 0.6, t); } // しずくが崩れて、砂が紙いっぱいに眠る
   else if (t < 11.0) { A = dSand(); B = dChl(t, 0.0); b = dsm(9.5, 11.0, t); push = 0.0; wk = 0.5; } // 紙が鳴りはじめる
   else if (t < 17.5) { A = dChl(t, 0.0); B = A; push = 0.0; wk = 0.5; }
-  else if (t < 21.0) { A = dChl(t, kt); B = dNeedle(t, kt); b = dsm(19.5, 21.0, t); push = 0.0; wk = 0.6; } // 紙が傾き、砂が針になる
-  else if (t < 27.0) { A = dNeedle(t, kt); B = A; push = 0.0; wk = 0.5; }
-  else if (t < 30.5) { A = dNeedle(t, kt); B = dTower(t, kt); b = dsm(27.0 + dvA3 * 1.0, 29.5 + dvA3 * 1.0, t); push = 0.0; wk = 0.8; }
-  else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dTower(t, kt); B = A; push = 0.0; wk = 0.4 + 2.2 * dvTt * dvTt; } // なぞった向きへ しなる
-  else if (t < 37.5) { A = dTower(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
+  else if (t < 21.0) { A = dChl(t, kt); B = dGrass(t, kt); b = dsm(19.5, 21.0, t); push = 0.0; wk = 0.6; } // 紙が傾いて青く焼け、白く抜けた砂が芽になる
+  else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.5; }
+  else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 1.0, 29.5 + dvA2 * 1.0, t); push = 0.0; wk = 0.8; }
+  else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.6 * dvHy * dvHy; } // 上ほど、なぞった向きへ しなる
+  else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
-  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dTower(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
+  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
   else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.0; }
   else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; }
   else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.0; }
@@ -1935,6 +2051,7 @@ O sDev(){
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
   o.centre = mix(dCentre(A), dCentre(B), b);
+  if (t >= 34.5 && t < 37.5) { vec2 dr = vec2(60.0 + 70.0 * dvA1, -(50.0 + 80.0 * dvA3)) * sin(3.14159 * b); o.corner.xy += dr; o.centre.xy += dr; } // 綿毛が風に乗って、機材の形へ
   // 重なる(不透明)⇔ 光として足す、が入れ替わる所では、明るさを いったん落としてから入れ替える
   if (A.a != B.a) o.col = b < 0.5 ? A.col * (1.0 - b * 1.6) : B.col * (0.2 + 1.6 * (b - 0.5));
   else o.col = mix(A.col, B.col, b);
@@ -2509,7 +2626,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -3145,7 +3262,7 @@ export function mountMorph(root: HTMLElement) {
   let bunTwV = 0, knobWas = false;
   // 指の通った跡(0.04秒ごとに10点。位置・速さ・時刻)
   const TRN = 10, trX = new Float32Array(TRN * 4), trT = new Float64Array(TRN).fill(-99), trA = new Float32Array(TRN).fill(99);
-  let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0;
+  let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0, sunX = -1, sunY = -1;
   let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0;
   // 場面の変わり目(反転と明るさの山)
   const DEV_CUTS = [17.5, 34.5, 39.5, 60, 72, 84, 96];
@@ -3815,6 +3932,15 @@ export function mountMorph(root: HTMLElement) {
       if (tracking) { fingX = ptX; fingY = ptY; }
       fingOn += ((tracking ? 1 : 0) - fingOn) * (1 - Math.exp(-dt / (tracking ? 0.15 : 0.7)));
       gl!.uniform3f(u.fing, fingX, fingY, devOn ? fingOn : 0);
+      // 太陽: 触っている間は指の所。離すと、ゆっくり空をめぐる(芽と植物が向きを追い、影がまわる)
+      {
+        const sa = now * 0.19;
+        const tx = tracking ? ptX : vw * (0.5 + 0.36 * Math.cos(sa)), ty = tracking ? ptY : vh * (0.58 + 0.22 * Math.sin(sa));
+        if (sunX < 0) { sunX = tx; sunY = ty; }
+        const sk = 1 - Math.exp(-dt / (tracking ? 0.1 : 1.6));
+        sunX += (tx - sunX) * sk; sunY += (ty - sunY) * sk;
+        gl!.uniform3f(u.sun, sunX, sunY, devOn ? fingOn : 0);
+      }
       // クライン群: 時刻で形の道のりをたどり、指で ta を曲げる(離すと、ゆっくり戻る)
       if (devOn && dtl >= 71) {
         let ta: Cx = KPATH[0][1], tb: Cx = KPATH[0][2];
