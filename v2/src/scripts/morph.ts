@@ -1318,7 +1318,7 @@ O sCity(){
   // 写真は縦長の画面に合わせて、真ん中を切り出す
   vec3 pc = photo(wk, uvC);
   float l = dot(pc, vec3(0.2126, 0.7152, 0.0722));
-  float H = min(uView.x, uView.y) * 0.32;
+  float H = min(uView.x, uView.y) * 0.18; // 高すぎると写真が読めない(0.32 で確認)
   float dpen = distance(cen, uPen.xy);
   float press = uPen.z * exp(-dpen * dpen / (uW * uW * 30.0));
   float wave = sin(dpen * 0.045 - uTime * 3.0) * uPen.z * exp(-dpen / (uW * 14.0)) * 0.25;
