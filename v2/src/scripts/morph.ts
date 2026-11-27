@@ -61,6 +61,7 @@ uniform vec3 uPen;   // 指(ペン)の位置と、あるかどうか
 uniform vec3 uLight; // 光の位置(立体のとき)
 uniform vec2 uCam;   // 視点の ずれ
 uniform vec2 uTilt;  // 指の位置から決まる傾き(-1..1)
+uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
 out vec4 vLit;  // x: 明るさ / y: 艶 / z: 写真の色を使う割合 / w: 糸の膨らみ
@@ -1081,6 +1082,7 @@ O sGlass(){
 // ---- 帯から育つ展開(2026-11-27。本人:「ベースは帯。案は帯の展開を発展させるために足している」)
 // 見る向きを少し回す(帯の中に奥行きがあったと分かる)。指の位置で傾き、ゆっくり回り続ける。
 vec3 viewRot(vec3 p, vec2 c, float amt){
+  amt *= step(0.5, uPart);
   p.xy -= c;
   float ay = (uTilt.x * 0.8 + sin(uTime * 0.23) * 0.55) * amt, ax = (0.42 - uTilt.y * 0.6) * amt;
   p = vec3(p.x * cos(ay) + p.z * sin(ay), p.y, -p.x * sin(ay) + p.z * cos(ay));
@@ -1123,7 +1125,7 @@ O sMapLine(){
   O o = base();
   o.centre = (A + B) * 0.5;
   o.corner = P + vec3(vec2(-d.y, d.x) * 0.55 * aQ.y, 0.0);
-  o.col = photo(gR2.w, gUVp) * 0.2 + 0.012;
+  o.col = (photo(gR2.w, gUVp) * 0.2 + 0.012) * smoothstep(0.0, 1.8, uPartT); // 4D のパートの入り: 暗闇から線が現れる
   o.tex = 0.0; o.alpha = 0.0; o.shape = vec2(L * 0.5, 0.55);
   return o;
 }
@@ -1146,7 +1148,8 @@ O sEcho(){
   vec2 Tp = normalize(mix(r.zw, r2.zw, fu) + vec2(1e-5, 0.0));
   vec2 Np = vec2(-Tp.y, Tp.x);
   float breathe = 0.5 + 0.5 * sin(uTime * 0.31);
-  float deep = smoothstep(0.15, 0.85, breathe);
+  // 3D のパートの入り: 平らに並んだ4本が、ゆっくり奥行きへ起き上がる。そのあとは呼吸する。
+  float deep = smoothstep(0.3, 2.6, uPartT) * mix(0.55, 1.0, breathe) * step(0.5, uPart);
   vec2 c = uView * 0.5;
   vec3 X = vec3(Pp + Np * (lv * uW * 0.34 + kc * uW * mix(0.42, 0.75, breathe)), 0.0);
   X.z = kc * uW * 3.2 * deep - gHd * uW * 26.0 * deep;
@@ -1338,7 +1341,9 @@ void main(){
   }
   const float F = 1500.0;
   vec2 ctr = uView * 0.5;
-  vec2 sp = ctr + uCam + (wp.xy - ctr - uCam) * F / (F - wp.z);
+  // 2D のパートでは、奥行きを使わない(どの表現も紙の上の絵になる)。3D に入ると、奥行きが効き始める。
+  float zz = wp.z * smoothstep(0.0, 1.4, uPart > 0.5 ? uPartT + float(uPart > 1.5) * 9.0 : 0.0);
+  vec2 sp = ctr + uCam + (wp.xy - ctr - uCam) * F / (F - zz);
   vScr = sp;
   float depth = clamp(-(wp.z + (1.0 - gHd) * 3.0) / 1600.0, -0.99, 0.99);
   gl_Position = vec4(sp.x / uView.x * 2.0 - 1.0, 1.0 - sp.y / uView.y * 2.0, mix(0.6, depth, alpha), 1.0);
@@ -1624,7 +1629,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -2120,16 +2125,24 @@ export function mountMorph(root: HTMLElement) {
     // 帯から育つ展開(2026-11-27): 39 写像の線(Ayumu Nagamatsu の図形から)/ 40 増える帯 → 空間
     // 次元が1つずつ増える(本人 2026-11-27:「2Dで描くという原初の動作から、次元が増えて3次元になり、コンテンツは1次元増えて4次元のような展開」):
     //   前半(イントロ・Aメロ・Bメロ)は平面の帯 → サビで帯が増えて奥行きになる(40)→ Cメロのあとに4次元(39、4つめの軸は作品)。
-    SECS.chorus.pool.push(40);
-    SECS.D4 = { n: [1, 1], len: 2.6, pool: [39], sty: [0] };
+    // パートをはっきり分ける(本人 2026-11-27:「もっとはっきりパートを分けて欲しい」)。パートの中では、その次元の表現だけを使う。
+    //   2D: 平らな帯の表現だけ(奥行きは画面の作りで切ってある)/ 3D: 帯が増えて起き上がる所から入る / 4D: 光の線だけ
+    SECS.A2D = { n: [1, 2], len: 0.95, pool: [0, 29, 20, 19], sty: [0, 1, 3] };
+    SECS.B2D = { n: [2, 3], len: 0.5, pool: [8, 29, 20, 19, 0], sty: [1, 3, 2] };
+    SECS.drop2D = { n: [5, 8], len: 0.2, pool: [29, 20, 19, 8, 0], sty: [2] };
+    SECS.up = { n: [1, 1], len: 2.6, pool: [40], sty: [0] };
+    SECS.chorus.pool = [1, 17, 21, 31, 32, 33, 38, 40];
+    SECS.B3 = { n: [2, 3], len: 0.6, pool: [1, 17, 21, 31, 37, 40], sty: [1, 3] };
+    SECS.drop3 = { n: [5, 7], len: 0.25, pool: [17, 21, 1, 14, 31], sty: [2] };
+    SECS.D4 = { n: [1, 1], len: 3.4, pool: [39], sty: [0] };
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
-    if (only >= 0) { onlyOn = true; for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0]; }
+    if (only >= 0) { onlyOn = true; for (const k of Object.keys(SECS)) if (k !== 'intro' && k !== 'P') SECS[k].pool = [only, 0]; }
   }
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
   // 入れ替えた並びでは、プロフィールを曲の中に置かない(見ることと読むことを混ぜない。プロフィールは About のページへ)。
   const FORM = sharp
     ? three
-      ? ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'D4', 'drop', 'chorus']
+      ? ['intro', 'A2D', 'B2D', 'drop2D', 'A2D', 'B2D', 'up', 'chorus', 'B3', 'drop3', 'chorus', 'D4']
       : ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus']
     : ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
   const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
@@ -2178,6 +2191,10 @@ export function mountMorph(root: HTMLElement) {
   let lastSec = '';
   let sFrom = 0;
   let sTo = 0;
+  // パート: 2D(描く)→ 3D(帯が増えて奥行きになる)→ 4D(作品の軸を足して、4次元で回す)。立体の版だけ。それ以外の版は、ずっと 2D のまま(奥行きは今までどおり)。
+  const PART: Record<string, number> = three ? { intro: 0, A2D: 0, B2D: 0, drop2D: 0, up: 1, chorus: 1, B3: 1, drop3: 1, D4: 2 } : {};
+  let curPart = three ? 0 : 1;
+  let partAt = 0;
   let numEl: HTMLElement | null = null;
   if (three && new URLSearchParams(location.search).get('num')) {
     numEl = document.createElement('div');
@@ -2381,6 +2398,8 @@ export function mountMorph(root: HTMLElement) {
     const st = x > 0.5 ? sTo : sFrom;
     const si = x > 0.5 ? A + 1 : A;
     const sec = secOf[si] || 'A';
+    const part = PART[sec] ?? (three ? 1 : 0);
+    if (part !== curPart) { curPart = part; partAt = now; }
     if (st !== lastState || sec !== lastSec) {
       const cut = st !== lastState;
       lastState = st;
@@ -2689,6 +2708,8 @@ export function mountMorph(root: HTMLElement) {
     if (sharp) bankPaper();
     gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, M, foldOn ? 5 : 3, gl!.RGBA, gl!.FLOAT, path);
     gl!.uniform1f(u.time, now);
+    gl!.uniform1f(u.part, curPart);
+    gl!.uniform1f(u.partT, now - partAt);
     // プロフィールの額: 開くとき・閉じるときの動き
     ovX += ((panelOpen ? 1 : 0) - ovX) * (1 - Math.exp(-dt / 0.28));
     if (Math.abs(ovX - (panelOpen ? 1 : 0)) < 0.002) ovX = panelOpen ? 1 : 0;
