@@ -1702,10 +1702,21 @@ precision highp float;
 uniform sampler2D uImg;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
+uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
 in vec2 vUv;
 out vec4 o;
 float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// フィルムの粒: 画素ごとの白いノイズではなく、なめらかに つながった塊(値ノイズを2段)。
+float hu(ivec2 q, int f){ uint x = uint(q.x) * 1597334677U ^ uint(q.y) * 3812015801U ^ uint(f) * 2654435769U; x ^= x >> 15; x *= 2246822519U; x ^= x >> 13; x *= 3266489917U; x ^= x >> 16; return float(x) / 4294967295.0; }
+float vn(vec2 p, int f){
+  vec2 i = floor(p), u = fract(p); u = u * u * (3.0 - 2.0 * u);
+  ivec2 q = ivec2(i);
+  return mix(mix(hu(q, f), hu(q + ivec2(1, 0), f), u.x), mix(hu(q + ivec2(0, 1), f), hu(q + ivec2(1, 1), f), u.x), u.y);
+}
+float grain(vec2 p, int f){ return ((vn(p, f) - 0.5) * 0.68 + (vn(p * 2.07 + 13.1, f + 7) - 0.5) * 0.32) * 2.6; }
+// 粒の出方は明るさで変わる: 中間調でいちばん見え、深い黒と飛んだ白では消える(ネガの濃度の性質)。
+float grainAmt(float l, float shadow){ return smoothstep(0.0, 0.18, l + shadow) * (1.0 - smoothstep(0.7, 1.0, l)) * (0.55 + 0.45 * (1.0 - abs(l * 2.0 - 0.9))); }
 void main(){
   float an = uAnalog; float dg = 1.0 - an;
   vec2 px = 1.0 / uRes;
@@ -1720,7 +1731,7 @@ void main(){
   c *= 1.0 - dg * 0.07 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159 * 0.5));
   // アナログ: 粒子、周辺の落ち、黒の浮き、わずかな暖かさ
   float n = h(floor(gl_FragCoord.xy / 1.5) + fract(uTime * 7.0) * 91.0) - 0.5;
-  c += n * 0.05 * an;
+  c += n * 0.05 * an * (1.0 - clamp(uGrade.x + uGrade.y + uGrade.z, 0.0, 1.0)); // 立体の版では、下のパートごとの粒に置き換える
   vec2 q = vUv - 0.5;
   c *= mix(1.0, 1.0 - 0.45 * dot(q, q) * 2.0, an);
   c = mix(c, c * vec3(1.03, 1.0, 0.93) + 0.012, an);
@@ -1753,12 +1764,31 @@ void main(){
     float mid = smoothstep(0.15, 0.45, lum) * (1.0 - smoothstep(0.55, 0.9, lum));
     c3 *= mix(vec3(1.0), vec3(1.035, 1.0, 0.965), mid);
     c3 += bl * vec3(1.0, 0.32, 0.1) * 0.9;
-    float n2 = h(floor(gl_FragCoord.xy / 2.5) + fract(uTime * 11.0) * 57.0) - 0.5;
-    c3 += n2 * 0.045 * (0.4 + 0.6 * smoothstep(0.0, 0.5, lum)) * (1.0 - smoothstep(0.6, 1.0, lum));
     // 4D(光): 黒は沈めきる。光の線は、にじんで空気に溶ける。
     vec3 c4 = max(c - 0.012, 0.0) * 1.03;
     c4 += bl * vec3(0.85, 0.9, 1.0) * 0.6;
     c = c * (1.0 - g2 - g3 - g4) + c2 * g2 + c3 * g3 + c4 * g4;
+
+    // ---- 粒(グレイン)。パートごとに、粒の大きさ・動き方・色の混ざり方を変える。
+    vec2 cp = gl_FragCoord.xy / max(uDpr, 1.0); // CSS の画素で
+    int fr = int(floor(uTime * 24.0));          // フィルムは毎秒24コマ。粒も24回だけ入れ替わる(60回だとデジタルのノイズに見える)
+    float lc = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    vec3 gr = vec3(0.0);
+    // 2D 刷り: 紙の目。動かない、細かい粒(刷った紙は、時間で粒が変わらない)
+    if (g2 > 0.001) gr += vec3(grain(cp / 1.05, 3)) * 0.034 * grainAmt(lc, 0.08) * g2;
+    // 3D 35mm: 細かめの粒が毎コマ入れ替わる。色の層ごとに、粒が少しずれる(カラーネガの3層)
+    if (g3 > 0.001) {
+      float m = grain(cp / 1.5, fr);
+      vec3 ch = vec3(grain(cp / 1.5 + 31.7, fr + 101), grain(cp / 1.5 + 57.3, fr + 211), grain(cp / 1.5 + 83.9, fr + 307));
+      gr += (vec3(m) * 0.78 + ch * 0.22) * 0.062 * grainAmt(lc, 0.03) * g3;
+    }
+    // 4D 16mm: 粗い粒。暗い所にも少し残り、闇そのものが ざらつく(夜の場面の増感した粒)
+    if (g4 > 0.001) {
+      float m = grain(cp / 2.7, fr);
+      float cg = grain(cp / 2.7 + 41.3, fr + 409);
+      gr += (vec3(m) + vec3(cg, -cg * 0.4, -cg * 0.6) * 0.18) * (0.075 * grainAmt(lc, 0.0) + 0.011) * g4;
+    }
+    c += gr;
   }
   o = vec4(max(c, 0.0), 1.0);
 }`;
@@ -1800,7 +1830,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -3046,6 +3076,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.bindTexture(gl!.TEXTURE_2D, keepTex);
     if (three) { const tg = [curPart === 0 ? 1 : 0, curPart === 1 ? 1 : 0, curPart === 2 ? 1 : 0]; for (let i = 0; i < 3; i++) grade[i] += (tg[i] - grade[i]) * Math.min(1, gDt * 1.4); }
     gl!.uniform3f(pu.grade, grade[0], grade[1], grade[2]);
+    gl!.uniform1f(pu.dpr, cv.width / Math.max(1, vw));
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.time, now);
     gl!.uniform2f(pu.res, cv.width, cv.height);
