@@ -1598,6 +1598,26 @@ vec2 dWake(vec2 p){
   }
   return ws > 1e-4 ? d / ws * min(ws, 1.0) * 0.085 : vec2(0.0);
 }
+// 画面の上の位置(遠近を掛けた後)。指の跡は画面の座標なので、跡と比べるときは、ここで比べる
+vec2 dScr(vec3 p){
+  float zz = p.z * smoothstep(0.0, 1.4, uPart > 0.5 ? uPartT + float(uPart > 1.5) * 9.0 : 0.0);
+  vec2 ctr = uView * 0.5;
+  return ctr + uCam + (p.xy - ctr - uCam) * 1500.0 / (1500.0 - zz);
+}
+// なぞった跡(新しい順の10点を線でつなぐ)。なぞった所ほど 1 に近く、離すと0.6秒ほどで消える
+float dTrace(vec2 s){
+  float m = 0.0;
+  for (int i = 0; i < 9; i++) {
+    float a0 = uTrA[i], a1 = uTrA[i + 1];
+    if (a0 > 1.6 || a1 > 1.6 || abs(a1 - a0) > 0.25) continue;
+    vec2 p0 = uTr[i].xy, e = uTr[i + 1].xy - p0;
+    float h = clamp(dot(s - p0, e) / max(dot(e, e), 1e-3), 0.0, 1.0);
+    vec2 q = s - (p0 + e * h);
+    m = max(m, exp(-dot(q, q) / 2312.0) * exp(-mix(a0, a1, h) / 0.6)); // 幅 ±34px
+  }
+  if (uTrA[0] < 1.6) { vec2 q = s - uTr[0].xy; m = max(m, exp(-dot(q, q) / 2312.0) * exp(-uTrA[0] / 0.6)); } // 押しただけ・止めている指
+  return m;
+}
 // この面(粒)の持ちもの
 float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy;
 // 見る角度の道のり: 芽は斜め上から → 植物が伸びる間は低く(闇の中の野) → 綿毛が飛ぶと真上へ(焼きついた日光写真を見せる)
@@ -1865,6 +1885,9 @@ DP d4D(float t){
   vec3 tint = mix(vec3(1.0, 0.88, 0.76), vec3(0.74, 0.86, 1.0), float(lvl) / 6.0);
   vec3 Pw = vec3(c + P.xy * S4, clamp(P.z * S4, -1400.0, 1000.0));
   DP ln = dSeg(Pw, vec3(c + Q.xy * S4, clamp(Q.z * S4, -1400.0, 1000.0)), 0.45, tint * 0.055, 0.0);
+  // なぞった所: 光の線が明るく太くなる。版のある間は、そこだけ版が入れ替わる(刷りを引っかいたように、通った跡が残り、0.6秒ほどで戻る)
+  float trc = dTrace(dScr(Pw));
+  ln.col *= 1.0 + 2.2 * trc; ln.hs.y *= 1.0 + 0.8 * trc;
   if (uSlc.w < 0.01) return ln;
   // 版は、画面に出ない軸(4つめの w)で決まる。後からかける版ではなく、立体の面そのものの描き方。
   // w を一定にした切り口(= 3次元の断面)は、太い光の線。その片側は線のまま、反対側は 面に沿った点の格子(格子は面に貼りつき、4次元で回すと一緒に歪む)。
@@ -1872,11 +1895,11 @@ DP d4D(float t){
   float sl = H.w * cos(uSlc.y) + H.x * sin(uSlc.y) - uSlc.x;
   float cut = 1.0 - smoothstep(0.018, 0.04, abs(sl));
   if (cut > 0.5) { ln.hs.y = mix(0.45, mix(1.0, 0.6, sp), uSlc.w); ln.col *= mix(1.0, mix(5.5, 2.0, sp), uSlc.w); return ln; } // 輪がほどけた後は、切り口を控える(短い光の筋が散って、花火に見えた)
-  bool dots = (sl < 0.0) != (uSlc.z > 0.5);
+  bool dots = ((sl < 0.0) != (uSlc.z > 0.5)) != (trc > 0.3 + 0.3 * dvA2);
   if (!dots || uSlc.w < 0.05 + 0.9 * dvA1) return ln; // 入り・抜けは、粒ごとに少しずつ版が替わる(一度に切り替えない)
   float dq = 6.2831853 / 64.0, aq = (floor(ang / dq) + 0.5) * dq;
   vec3 R = stereo(rot4(hopf(nb, aq).yzwx, uRot4.x, uRot4.y, uRot4.z));
-  DP d = dDot(vec3(c + R.xy * S4, clamp(R.z * S4, -1400.0, 1000.0)), vec2(1.5), 1.0, tint * 0.02);
+  DP d = dDot(vec3(c + R.xy * S4, clamp(R.z * S4, -1400.0, 1000.0)), vec2(1.5 * (1.0 + 0.5 * trc)), 1.0, tint * 0.02 * (1.0 + 1.5 * trc));
   d.a = 0.0; // 光として足す(線と同じ)
   return d;
 }
@@ -1902,7 +1925,9 @@ DP dBundle(float t){
   vec3 B0 = vec3(cos(m0 * th + dl) * sc, sin(m0 * th + dl) * sc, h);
   vec3 B1 = vec3(cos((m0 + 1.0) * th + dl) * sc, sin((m0 + 1.0) * th + dl) * sc, h);
   A = dRotV(A); vec3 B = dRotV(mix(B0, B1, fm));
-  return dSeg(vec3(c + A.xy * S, A.z * S), vec3(c + B.xy * S, B.z * S), 0.4, vec3(0.84, 0.82, 1.0) * 0.011, 0.0);
+  vec3 Aw = vec3(c + A.xy * S, A.z * S), Bw = vec3(c + B.xy * S, B.z * S);
+  float trc = max(dTrace(dScr(Aw)), max(dTrace(dScr(Bw)), dTrace(dScr((Aw + Bw) * 0.5)))); // なぞった所を通る線が光る
+  return dSeg(Aw, Bw, 0.4 * (1.0 + 0.8 * trc), vec3(0.84, 0.82, 1.0) * 0.011 * (1.0 + 3.0 * trc), 0.0);
 }
 // ---- 4次元の先: クライン群の極限集合(Indra's Pearls の「おばあちゃんのレシピ」で作る2つの生成元 a, b と、その逆 A, B)
 // 粒の1つ1つが、自分だけの でたらめな語(a b A b B …)を持ち、それを順に当てていくと、極限集合の上に落ちる。
@@ -1941,7 +1966,8 @@ DP dKPlane(float t){
   vec2 z = kPoint();
   float Sk = min(uView.x, uView.y) * 0.3;
   vec2 p = c + vec2(z.x, -z.y) * Sk;
-  DP d = dDot(vec3(p, 0.0), vec2(0.9), 1.0, vec3(0.92, 0.94, 1.0) * 0.08);
+  float trc = dTrace(dScr(vec3(p, 0.0)));
+  DP d = dDot(vec3(p, 0.0), vec2(0.9 * (1.0 + 1.2 * trc)), 1.0, vec3(0.92, 0.94, 1.0) * 0.08 * (1.0 + 2.2 * trc));
   d.a = 0.0;
   return d;
 }
@@ -1957,7 +1983,9 @@ DP dKSphere(float t){
   float dv = dsm(88.0, 91.0, t), zd = mix(1.0, 7.0, dv * dv);
   float front = 0.5 + 0.5 * P.z;
   vec3 col = mix(vec3(0.55, 0.65, 1.0) * 0.05, vec3(1.0, 0.96, 0.9) * 0.16, front) * mix(1.0, 0.6, dv);
-  DP d = dDot(vec3(c + P.xy * Ss * zd, clamp(P.z * Ss * zd + dv * 600.0, -1400.0, 1100.0)), vec2(mix(0.8, 1.2, front)), 1.0, col);
+  vec3 Pk = vec3(c + P.xy * Ss * zd, clamp(P.z * Ss * zd + dv * 600.0, -1400.0, 1100.0));
+  float trc = dTrace(dScr(Pk));
+  DP d = dDot(Pk, vec2(mix(0.8, 1.2, front) * (1.0 + 1.0 * trc)), 1.0, col * (1.0 + 2.2 * trc));
   d.a = 0.0;
   return d;
 }
@@ -2075,15 +2103,15 @@ O sDev(){
   else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
-  else if (tt < 39.0) { if (dvA3 < 0.38) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
-  else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.0; }
-  else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; }
-  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.0; }
-  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; } // 線の束が、無限の円に凝る
-  else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 0.0; }
-  else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.0; } // 球に巻きつく
-  else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.0; }
-  else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.0; wk = 0.0; } // 描いた順に、線が描き直される
+  else if (tt < 39.0) { if (dvA3 < 0.38) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.4 * b; } // 上の粒から先に、空へ
+  else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; }
+  else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.6; }
+  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.7; }
+  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.8; } // 線の束が、無限の円に凝る
+  else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 1.0; }
+  else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.9; } // 球に巻きつく
+  else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; }
+  else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.0; wk = 0.8 * (1.0 - b); } // 描いた順に、線が描き直される
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
   o.centre = mix(dCentre(A), dCentre(B), b);
@@ -2097,7 +2125,7 @@ O sDev(){
   o.shape = mix(dShape(A), dShape(B), b);
   o.round = mix(A.rnd, B.rnd, b);
   o.gate = 1.0;
-  vec2 wd = dWake(o.centre.xy) * wk;
+  vec2 wd = wk > 0.0 ? dWake(dScr(o.centre)) * wk : vec2(0.0);
   o.corner.xy += wd; o.centre.xy += wd;
   return dPush(o, push);
 }
@@ -3424,7 +3452,7 @@ export function mountMorph(root: HTMLElement) {
   const bun = [0, 1, 0.6, 0];
   let bunTwV = 0, knobWas = false;
   // 指の通った跡(0.04秒ごとに10点。位置・速さ・時刻)
-  const TRN = 10, trX = new Float32Array(TRN * 4), trT = new Float64Array(TRN).fill(-99), trA = new Float32Array(TRN).fill(99);
+  const TRN = 10, trX = new Float32Array(TRN * 4), trT = new Float64Array(TRN).fill(-99), trA = new Float32Array(TRN).fill(99), trO = new Float32Array(TRN * 4);
   let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0, sunX = -1, sunY = -1, prX = 0, prY = 0, prT = 0, glareK = 0;
   let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0;
   // 場面の変わり目(反転と明るさの山)
@@ -4093,8 +4121,9 @@ export function mountMorph(root: HTMLElement) {
         trLast = now; trPX = ptX; trPY = ptY;
       }
       if (!tracking) trLast = 0;
-      for (let i = 0; i < TRN; i++) trA[i] = now - trT[i];
-      gl!.uniform4fv(u.tr, trX);
+      // 新しい順に並べて渡す(跡を線でつないで、なぞった所そのものを絵に残すため)
+      for (let k = 0; k < TRN; k++) { const j = (trI - 1 - k + TRN * 2) % TRN; trA[k] = now - trT[j]; for (let c = 0; c < 4; c++) trO[k * 4 + c] = trX[j * 4 + c]; }
+      gl!.uniform4fv(u.tr, trO);
       gl!.uniform1fv(u.trA, trA);
       if (tracking) { fingX = ptX; fingY = ptY; }
       fingOn += ((tracking ? 1 : 0) - fingOn) * (1 - Math.exp(-dt / (tracking ? 0.15 : 0.7)));
