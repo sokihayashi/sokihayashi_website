@@ -1786,7 +1786,7 @@ vec3 kSphere(vec2 z){ vec2 Z = z / 1.6; float n2 = dot(Z, Z); return vec3(2.0 * 
 DP dKPlane(float t){
   vec2 c = uView * 0.5;
   vec2 z = kPoint();
-  float Sk = min(uView.x, uView.y) * 0.21;
+  float Sk = min(uView.x, uView.y) * 0.3;
   vec2 p = c + vec2(z.x, -z.y) * Sk;
   DP d = dDot(vec3(p, 0.0), vec2(0.9), 1.0, vec3(0.92, 0.94, 1.0) * 0.08);
   d.a = 0.0;
@@ -1803,7 +1803,7 @@ DP dKSphere(float t){
   // 88秒から、吸い込まれる方へ飛び込む
   float dv = dsm(88.0, 91.0, t), zd = mix(1.0, 7.0, dv * dv);
   float front = 0.5 + 0.5 * P.z;
-  vec3 col = mix(vec3(0.55, 0.65, 1.0) * 0.035, vec3(1.0, 0.96, 0.9) * 0.1, front) * mix(1.0, 0.6, dv);
+  vec3 col = mix(vec3(0.55, 0.65, 1.0) * 0.05, vec3(1.0, 0.96, 0.9) * 0.16, front) * mix(1.0, 0.6, dv);
   DP d = dDot(vec3(c + P.xy * Ss * zd, clamp(P.z * Ss * zd + dv * 600.0, -1400.0, 1100.0)), vec2(mix(0.8, 1.2, front)), 1.0, col);
   d.a = 0.0;
   return d;
@@ -3867,7 +3867,8 @@ export function mountMorph(root: HTMLElement) {
         if (mirror !== ruleMirror) { ruleMirror = mirror; for (const el of ruleEls) { el.style.transition = 'transform .7s cubic-bezier(.7,0,.3,1)'; el.style.transform = mirror ? 'scaleX(-1)' : ''; } }
         finderEl.style.opacity = finder ? '1' : '0';
         if (finder) { focusEl.style.left = `${(drawing ? ptX : vw * 0.5) - 34}px`; focusEl.style.top = `${(drawing ? ptY : vh * 0.52) - 34}px`; recEl.style.opacity = Math.floor(now * 1.6) % 2 ? '1' : '0.15'; }
-        droste += ((dtl >= 87 && dtl < 98.5 ? 1 : 0) - droste) * (1 - Math.exp(-dt / 1.2));
+        droste += ((dtl >= 87 && dtl < 95.5 ? 1 : 0) - droste) * (1 - Math.exp(-dt / 0.7));
+        if (dtl >= 97.5 || dtl < 80) droste = 0; // 紙が戻る前に消す(紙の白が入れ子になって、白い四角が出ていた)
       } else droste = 0;
       // 場面の変わり目
       if (devOn && dtl > lastDevT) for (const cT of DEV_CUTS) if (lastDevT < cT && dtl >= cT) { inv = 2; boost = 0.6; }
