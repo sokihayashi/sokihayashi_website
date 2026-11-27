@@ -1951,35 +1951,37 @@ DP dTubes(float t){
   const float TAU = 6.2831853;
   bool dark = i % 2 == 0, pat = i == 3; // 黒い管(白い格子) / 白い管(黒い格子) / 縞の管。版で反転するので、ここでは逆の色で描く
   vec3 fill = dark ? D_INK : D_PAPER, ln = dark ? D_PAPER : D_INK;
-  if (k < 6000) { // 面の小片 150×20(前半)と、輪郭の殻 150×20(後半: 少し太い管の、裏を向いた小片だけ。手前の面に隠れず、ふちだけが線として残る)
+  if (k < 6000) { // 面の帯 150×20(前半)と、輪郭の殻 150×20(後半: 少し太い管の、裏を向いた帯だけ。手前の面に隠れず、ふちだけが線として残る)
+    // 面は、管に沿った短い帯でしきつめる(丸い小片では、ふちが波打って、硬貨を積んだように見えた。帯は端どうしがつながるので、ふちが滑らか)
     bool shell = k >= 3000;
     int q = shell ? k - 3000 : k, iu = q / 20, iv = q - iu * 20;
-    float u = TAU * (float(iu) + 0.5) / 150.0, v = TAU * (float(iv) + 0.5) / 20.0;
+    float du = TAU / 150.0, u = du * (float(iu) + 0.5), v = TAU * (float(iv) + 0.5) / 20.0;
     dvTu = u / TAU;
     float rr = shell ? r + 1.1 : r;
     vec3 C = dTubeC(i, u, S4), Xw = c3 + dTubeX(i, u, v, rr, S4);
-    float hs = 0.75 * max(length(dTubeC(i, u + TAU / 150.0, S4) - C), rr * TAU / 20.0);
+    vec3 Pa = c3 + dTubeX(i, u - du * 0.6, v, rr, S4), Pb = c3 + dTubeX(i, u + du * 0.6, v, rr, S4);
+    float hw = 0.2 * rr;
     float trc = dTrace(dScr(Xw), 60.0);
     bool sw = trc > 0.35 + 0.2 * dvA2; // なぞった所だけ、白黒が入れ替わる(刷りを引っかいた跡。0.6秒ほどで戻る)
-    if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dDot(Xw, vec2(back ? hs : 0.0), 2.0, sw ? fill : ln); }
+    if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dSeg(Pa, Pb, back ? hw : 0.0, sw ? fill : ln, 1.0); }
     vec3 fc = pat ? (fract(u * 5.0 / TAU + v * 2.0 / TAU) < 0.5 ? D_INK : D_PAPER) : fill; // 2条の らせん縞(床屋の看板)。巻きが細かいと、硬貨を積んだように見えた
-    return dDot(Xw, vec2(hs), 2.0, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc);
+    return dSeg(Pa, Pb, hw, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc, 1.0);
   }
-  if (pat || k >= 8752) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill); // 縞の管には格子を引かない。余りの粒は使わない
+  if (pat || k >= 8152) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill); // 縞の管には格子を引かない。余りの粒は使わない
   vec3 a, b;
   if (k < 7152) { // 輪の線(管をぐるりと回る) 48本
     int q = k - 6000, j = q / 24, w = q - j * 24;
     float u = TAU * (float(j) + 0.25) / 48.0; dvTu = u / TAU;
     a = dTubeX(i, u, TAU * float(w) / 24.0, r, S4); b = dTubeX(i, u, TAU * float(w + 1) / 24.0, r, S4);
-  } else { // 縦の線(管に沿う) 16本
+  } else { // 縦の線(管に沿う) 10本(16本だと、黒い管が白い縞で灰色に見えた)
     int q = k - 7152, l = q / 100, w = q - l * 100;
-    float v = TAU * (float(l) + 0.5) / 16.0; dvTu = float(w) / 100.0;
+    float v = TAU * (float(l) + 0.5) / 10.0; dvTu = float(w) / 100.0;
     a = dTubeX(i, TAU * float(w) / 100.0, v, r, S4); b = dTubeX(i, TAU * float(w + 1) / 100.0, v, r, S4);
   }
   a += c3; b += c3;
   a += normalize(eye - a) * 5.0; b += normalize(eye - b) * 5.0; // 面より少し手前へ(斜めの面では、隣の小片が線を隠していた)。裏側の線は、管の太さ(約18px)の分だけ奥なので隠れる
   float trc = dTrace(dScr(a), 60.0);
-  return dSeg(a, b, 0.5, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
+  return dSeg(a, b, 0.38, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
 }
 // ---- 線の束(Ayumu Nagamatsu「円と、座標変換した円の写像の頂点同士を結ぶ」)
 // 下の円の点 θ と、上の円の点 kθ + δ を、まっすぐ結ぶ。k・上の円の大きさ・高さ を回すだけで、星・球・扇・錐・ウニになる。
