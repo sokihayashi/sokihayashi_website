@@ -1078,6 +1078,90 @@ O sGlass(){
   o.nrm = gR1.w > 0.5 ? nq : vec3(0.0, 0.0, 1.0); o.glass = 1.0; o.tex = 0.0; o.line = 0.0; o.face = 1.0; o.gate = gR1.w > 0.5 ? 1.0 : 0.0;
   return o;
 }
+// ---- 帯から育つ展開(2026-11-27。本人:「ベースは帯。案は帯の展開を発展させるために足している」)
+// 見る向きを少し回す(帯の中に奥行きがあったと分かる)。指の位置で傾き、ゆっくり回り続ける。
+vec3 viewRot(vec3 p, vec2 c, float amt){
+  p.xy -= c;
+  float ay = (uTilt.x * 0.8 + sin(uTime * 0.23) * 0.55) * amt, ax = (0.42 - uTilt.y * 0.6) * amt;
+  p = vec3(p.x * cos(ay) + p.z * sin(ay), p.y, -p.x * sin(ay) + p.z * cos(ay));
+  p = vec3(p.x, p.y * cos(ax) - p.z * sin(ax), p.y * sin(ax) + p.z * cos(ax));
+  p.xy += c;
+  return p;
+}
+// 39 写像の線 → 4次元: 帯と、帯を「4つめの軸」へずらした写しを、同じ場所どうし細い光の線で結ぶ。
+// 立方体とその写しを頂点どうしで結ぶと、4次元の立方体(超立方体)になる。それと同じ作りを、描いた帯でやる。
+// 4つめの軸には、作品を並べる(作品ごとに、4つめの軸の上の位置が違う)。=「描く(2D)→ 奥行き(3D)→ 中身の次元(4D)」の最後の段。
+// 4次元の中で回すと、作品どうしが すり抜け、裏返り、形が内と外を入れ替える(3次元には無い動き)。それを3次元へ、さらに画面へ投影する。
+// (Ayumu Nagamatsu「円と、座標変換した円の写像の頂点同士を結ぶ、という図形」2016 から。規則は1つ。変わるのは回り方だけ)
+// 線の色は、その場所の写真の色(色は落とさない)。光として足すので、重なった所が光る。
+vec3 proj4(vec4 p, float D4){ return p.xyz * (D4 / (D4 - p.w)); }
+vec4 rot4(vec4 p, float a, float b, float g){
+  // xw 面・zw 面・xy 面で回す
+  p = vec4(p.x * cos(a) - p.w * sin(a), p.y, p.z, p.x * sin(a) + p.w * cos(a));
+  p = vec4(p.x, p.y, p.z * cos(b) - p.w * sin(b), p.z * sin(b) + p.w * cos(b));
+  p = vec4(p.x * cos(g) - p.y * sin(g), p.x * sin(g) + p.y * cos(g), p.z, p.w);
+  return p;
+}
+O sMapLine(){
+  // 線は間引く(幅方向8本に1本、長さ方向2枚に1枚)。全部引くと、重なって白く飛ぶ。
+  if ((gIv % 8) != 3 || (gIu % 2) != 0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 0.0);
+  vec2 c = uView * 0.5;
+  float S = max(uView.x, uView.y) * 0.5;
+  float t = uTime * 0.28 + uK * 0.002;
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  float wk = (gR2.w / max(nwk - 1.0, 1.0)) - 0.5; // 作品の、4つめの軸の上の位置
+  vec2 xy = (gC0.xy - c) / S;
+  vec4 p0 = vec4(xy, -0.22, wk * 0.9 - 0.35);
+  vec4 p1 = vec4(xy * 0.62, 0.22, wk * 0.9 + 0.35);
+  float a = t * 0.9 + uTilt.x * 1.2, b = t * 0.63 + 0.7 - uTilt.y * 1.0, g = t * 0.21;
+  vec3 A3 = proj4(rot4(p0, a, b, g), 2.4);
+  vec3 B3 = proj4(rot4(p1, a, b, g), 2.4);
+  vec3 A = viewRot(vec3(c + A3.xy * S, A3.z * S), c, 0.6);
+  vec3 B = viewRot(vec3(c + B3.xy * S, B3.z * S), c, 0.6);
+  vec3 P = mix(A, B, aQ.x * 0.5 + 0.5);
+  vec2 d = B.xy - A.xy; float L = length(d); d = L > 1e-3 ? d / L : vec2(1.0, 0.0);
+  O o = base();
+  o.centre = (A + B) * 0.5;
+  o.corner = P + vec3(vec2(-d.y, d.x) * 0.55 * aQ.y, 0.0);
+  o.col = photo(gR2.w, gUVp) * 0.2 + 0.012;
+  o.tex = 0.0; o.alpha = 0.0; o.shape = vec2(L * 0.5, 0.55);
+  return o;
+}
+// 40 増える帯 → 空間: 帯が、時間差のついた何本かの帯に分かれる(それぞれ別の作品)。
+// 分かれた帯の間は、はじめは平面の上の すき間。それが奥行きになり、視点が回って、帯の束が立体だったと分かる。
+O sEcho(){
+  const int K = 4;
+  int k = gIv / (NVi / K);
+  float lv = (float(gIv - k * (NVi / K)) + 0.5 + aQ.y * 0.5) / float(NVi / K) - 0.5;
+  float kc = float(k) - float(K - 1) * 0.5;
+  int lag = k * 5;
+  int jk = gJ - lag; jk = jk < 0 ? jk + Mi : jk;
+  int jk2 = jk + 1 == Mi ? 0 : jk + 1;
+  vec4 r = texelFetch(uPath, ivec2(jk, 0), 0);
+  vec4 r2 = texelFetch(uPath, ivec2(jk2, 0), 0);
+  float okk = texelFetch(uPath, ivec2(jk, 1), 0).w;
+  if (okk < 0.5) { r = vec4(gP, gT); r2 = r; }
+  float fu = gFr + aQ.x * 0.25;
+  vec2 Pp = mix(r.xy, r2.xy, clamp(fu, 0.0, 1.0) * step(distance(r.xy, r2.xy), uDp * 1.6));
+  vec2 Tp = normalize(mix(r.zw, r2.zw, fu) + vec2(1e-5, 0.0));
+  vec2 Np = vec2(-Tp.y, Tp.x);
+  float breathe = 0.5 + 0.5 * sin(uTime * 0.31);
+  float deep = smoothstep(0.15, 0.85, breathe);
+  vec2 c = uView * 0.5;
+  vec3 X = vec3(Pp + Np * (lv * uW * 0.34 + kc * uW * mix(0.42, 0.75, breathe)), 0.0);
+  X.z = kc * uW * 3.2 * deep - gHd * uW * 26.0 * deep;
+  X = viewRot(X, c, deep);
+  O o = base();
+  o.corner = X;
+  o.centre = viewRot(vec3(Pp + Np * kc * uW * mix(0.42, 0.75, breathe), kc * uW * 3.2 * deep - gHd * uW * 26.0 * deep), c, deep);
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  o.work = mod(gR2.w + float(k) * 7.0, nwk);
+  o.uv = vec2(gUVs.x, lv + 0.5);
+  o.line = 1.0;
+  o.lit = 1.0 - 0.25 * deep * gHd;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1117,6 +1201,8 @@ O stateOf(int id){
   if (id == 36) return sGlassClear();
   if (id == 37) return sObjLine();
   if (id == 38) return sObjMorph();
+  if (id == 39) return sMapLine();
+  if (id == 40) return sEcho();
   return sFrame();
 }
 
@@ -1975,7 +2061,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -1983,7 +2069,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2031,13 +2117,20 @@ export function mountMorph(root: HTMLElement) {
     SECS.A.pool.push(33, 31, 37); SECS.B.pool.push(32, 31, 38); // 37 線の立体 / 38 線の立体が次の立体へ移る(2026-11-26、本人:「モーフィング的に変わる、アウトライン表示、込みで広く」)
  // 本人(2026-11-25):「この表現(ガラス)は、帯に落とし込む系ではないと思う」→ 帯の線から作るガラス(35・36)は、並びから外した(?only=35 / 36 では見られる)。
     SECS.chorus.pool.push(31, 32, 33, 38); SECS.C.pool.push(32, 33, 37); // ドロップ(0.4秒の ぶつ切り)には入れない
+    // 帯から育つ展開(2026-11-27): 39 写像の線(Ayumu Nagamatsu の図形から)/ 40 増える帯 → 空間
+    // 次元が1つずつ増える(本人 2026-11-27:「2Dで描くという原初の動作から、次元が増えて3次元になり、コンテンツは1次元増えて4次元のような展開」):
+    //   前半(イントロ・Aメロ・Bメロ)は平面の帯 → サビで帯が増えて奥行きになる(40)→ Cメロのあとに4次元(39、4つめの軸は作品)。
+    SECS.chorus.pool.push(40);
+    SECS.D4 = { n: [1, 1], len: 2.6, pool: [39], sty: [0] };
     const only = parseInt(new URLSearchParams(location.search).get('only') ?? '', 10);
     if (only >= 0) { onlyOn = true; for (const k of ['A', 'B', 'chorus', 'drop', 'C']) SECS[k].pool = [only, 0]; }
   }
   // ハイパーポップのMVやライブ演出の速さ: ドロップを多めに、プロフィール(P)も曲の中に置く。
   // 入れ替えた並びでは、プロフィールを曲の中に置かない(見ることと読むことを混ぜない。プロフィールは About のページへ)。
   const FORM = sharp
-    ? ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus']
+    ? three
+      ? ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'D4', 'drop', 'chorus']
+      : ['intro', 'A', 'B', 'drop', 'chorus', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus']
     : ['intro', 'A', 'B', 'drop', 'chorus', 'P', 'B', 'drop', 'A', 'B', 'chorus', 'drop', 'C', 'drop', 'chorus', 'P'];
   const BEAT = 1.9; // 長さ1の区間が、触らずに進む秒数
   const LOOP = 1; // 2周目以降は Aメロから
@@ -2051,7 +2144,7 @@ export function mountMorph(root: HTMLElement) {
     const name = FORM[formI];
     formI = formI + 1 < FORM.length ? formI + 1 : LOOP;
     const S0 = SECS[name];
-    const S = !three || objReady ? S0 : { ...S0, pool: S0.pool.filter((c) => c < 31) }; // 立体のデータが届くまでは、立体の表現を選ばない
+    const S = !three || objReady ? S0 : { ...S0, pool: S0.pool.filter((c) => c < 31 || c >= 39) }; // 立体のデータが届くまでは、立体の表現を選ばない
     const cnt = S.n[0] + Math.floor(Math.random() * (S.n[1] - S.n[0] + 1));
     // ガラスの立体(34)は、サビに組み込む(本人 2026-11-25:「いいじゃん 組み込もう」)。
     // サビの頭は 必ず「帯 → ガラスの立体」。帯から変形して現れるように、直前に 短く帯を置く。ガラスは長く見せる(形が1〜2回 変わるくらい)。
