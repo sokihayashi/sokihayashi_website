@@ -1587,13 +1587,13 @@ vec3 dCorner(DP d){
 vec3 dCentre(DP d){ return (d.c + d.e) * 0.5; }
 vec2 dShape(DP d){ return d.seg < 0.5 ? d.hs : vec2(max(length(d.e.xy - d.c.xy) * 0.5, 0.3), d.hs.y); }
 // 指の通った跡に沿って流す: 跡の各点の速さを、近さと新しさで重みづけして足す(指が止まると、ゆっくり元に戻る)
-vec2 dWake(vec2 p){
+vec2 dWake(vec2 p, float r){
   vec2 d = vec2(0.0); float ws = 0.0;
   for (int i = 0; i < 10; i++) {
     float age = uTrA[i];
     if (age > 1.6) continue;
     vec2 q = p - uTr[i].xy;
-    float w = exp(-dot(q, q) / (2.0 * 60.0 * 60.0)) * exp(-age / 0.5);
+    float w = exp(-dot(q, q) / (2.0 * r * r)) * exp(-age / 0.5);
     d += uTr[i].zw * w; ws += w;
   }
   return ws > 1e-4 ? d / ws * min(ws, 1.0) * 0.085 : vec2(0.0);
@@ -1605,7 +1605,8 @@ vec2 dScr(vec3 p){
   return ctr + uCam + (p.xy - ctr - uCam) * 1500.0 / (1500.0 - zz);
 }
 // なぞった跡(新しい順の10点を線でつなぐ)。なぞった所ほど 1 に近く、離すと0.6秒ほどで消える
-float dTrace(vec2 s){
+float dTrace(vec2 s, float r){
+  float r2 = 2.0 * r * r;
   float m = 0.0;
   for (int i = 0; i < 9; i++) {
     float a0 = uTrA[i], a1 = uTrA[i + 1];
@@ -1613,9 +1614,9 @@ float dTrace(vec2 s){
     vec2 p0 = uTr[i].xy, e = uTr[i + 1].xy - p0;
     float h = clamp(dot(s - p0, e) / max(dot(e, e), 1e-3), 0.0, 1.0);
     vec2 q = s - (p0 + e * h);
-    m = max(m, exp(-dot(q, q) / 2312.0) * exp(-mix(a0, a1, h) / 0.6)); // 幅 ±34px
+    m = max(m, exp(-dot(q, q) / r2) * exp(-mix(a0, a1, h) / 0.6));
   }
-  if (uTrA[0] < 1.6) { vec2 q = s - uTr[0].xy; m = max(m, exp(-dot(q, q) / 2312.0) * exp(-uTrA[0] / 0.6)); } // 押しただけ・止めている指
+  if (uTrA[0] < 1.6) { vec2 q = s - uTr[0].xy; m = max(m, exp(-dot(q, q) / r2) * exp(-uTrA[0] / 0.6)); } // 押しただけ・止めている指
   return m;
 }
 // この面(粒)の持ちもの
@@ -1886,7 +1887,7 @@ DP d4D(float t){
   vec3 Pw = vec3(c + P.xy * S4, clamp(P.z * S4, -1400.0, 1000.0));
   DP ln = dSeg(Pw, vec3(c + Q.xy * S4, clamp(Q.z * S4, -1400.0, 1000.0)), 0.45, tint * 0.055, 0.0);
   // なぞった所: 光の線が明るく太くなる。版のある間は、そこだけ版が入れ替わる(刷りを引っかいたように、通った跡が残り、0.6秒ほどで戻る)
-  float trc = dTrace(dScr(Pw));
+  float trc = dTrace(dScr(Pw), 36.0);
   ln.col *= 1.0 + 2.2 * trc; ln.hs.y *= 1.0 + 0.8 * trc;
   if (uSlc.w < 0.01) return ln;
   // 版は、画面に出ない軸(4つめの w)で決まる。後からかける版ではなく、立体の面そのものの描き方。
@@ -1926,7 +1927,7 @@ DP dBundle(float t){
   vec3 B1 = vec3(cos((m0 + 1.0) * th + dl) * sc, sin((m0 + 1.0) * th + dl) * sc, h);
   A = dRotV(A); vec3 B = dRotV(mix(B0, B1, fm));
   vec3 Aw = vec3(c + A.xy * S, A.z * S), Bw = vec3(c + B.xy * S, B.z * S);
-  float trc = max(dTrace(dScr(Aw)), max(dTrace(dScr(Bw)), dTrace(dScr((Aw + Bw) * 0.5)))); // なぞった所を通る線が光る
+  float trc = max(dTrace(dScr(Aw), 44.0), max(dTrace(dScr(Bw), 44.0), dTrace(dScr((Aw + Bw) * 0.5), 44.0))); // なぞった所を通る線が光る
   return dSeg(Aw, Bw, 0.4 * (1.0 + 0.8 * trc), vec3(0.84, 0.82, 1.0) * 0.011 * (1.0 + 3.0 * trc), 0.0);
 }
 // ---- 4次元の先: クライン群の極限集合(Indra's Pearls の「おばあちゃんのレシピ」で作る2つの生成元 a, b と、その逆 A, B)
@@ -1966,7 +1967,10 @@ DP dKPlane(float t){
   vec2 z = kPoint();
   float Sk = min(uView.x, uView.y) * 0.3;
   vec2 p = c + vec2(z.x, -z.y) * Sk;
-  float trc = dTrace(dScr(vec3(p, 0.0)));
+  // 指の所が、虫めがねのように ふくらむ(無限の入れ子を、触った所だけ大きく見せる)。離すと しぼむ
+  vec2 fq = p - uFing.xy;
+  p = uFing.xy + fq * (1.0 + 0.9 * uFing.z * exp(-dot(fq, fq) / (2.0 * 120.0 * 120.0)));
+  float trc = dTrace(dScr(vec3(p, 0.0)), 70.0);
   DP d = dDot(vec3(p, 0.0), vec2(0.9 * (1.0 + 1.2 * trc)), 1.0, vec3(0.92, 0.94, 1.0) * 0.08 * (1.0 + 2.2 * trc));
   d.a = 0.0;
   return d;
@@ -1984,7 +1988,7 @@ DP dKSphere(float t){
   float front = 0.5 + 0.5 * P.z;
   vec3 col = mix(vec3(0.55, 0.65, 1.0) * 0.05, vec3(1.0, 0.96, 0.9) * 0.16, front) * mix(1.0, 0.6, dv);
   vec3 Pk = vec3(c + P.xy * Ss * zd, clamp(P.z * Ss * zd + dv * 600.0, -1400.0, 1100.0));
-  float trc = dTrace(dScr(Pk));
+  float trc = dTrace(dScr(Pk), 60.0);
   DP d = dDot(Pk, vec2(mix(0.8, 1.2, front) * (1.0 + 1.0 * trc)), 1.0, col * (1.0 + 2.2 * trc));
   d.a = 0.0;
   return d;
@@ -2088,7 +2092,7 @@ O sDev(){
     o.gate = mix(sc0, dvValid ? 1.0 : 0.0, b01);
     return dPush(o, 1.0);
   }
-  DP A, B; float b = 0.0; float push = 0.35; float wk = 1.0; dvHy = 0.0;
+  DP A, B; float b = 0.0; float push = 0.35; float wk = 1.0; float wr = 60.0; dvHy = 0.0;
   if (t < 2.2) { A = dLine(); B = A; }
   else if (t < 4.2) { A = dLine(); B = dDrop(0.0); b = dsm(2.2 + dvA2 * 0.7, 3.5 + dvA2 * 0.7, t); }
   else if (t < 7.5) { A = dDrop(0.0); B = A; }
@@ -2098,19 +2102,19 @@ O sDev(){
   else if (t < 21.0) { A = dChl(t, kt); B = dGrass(t, kt); b = dsm(19.5, 21.0, t); push = 0.0; wk = 0.6; } // 紙が傾いて青く焼け、白く抜けた砂が芽になる
   else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.5; }
   else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 1.0, 29.5 + dvA2 * 1.0, t); push = 0.0; wk = 0.8; }
-  else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.6 * dvHy * dvHy; } // 上ほど、なぞった向きへ しなる
+  else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.2 * dvHy * dvHy; wr = 100.0; } // 上ほど、なぞった向きへ しなる(花の頭が ちぎれないよう、広く効かせる)
   else if (dvA3 < 0.38 && t < 42.5) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影は、紙が落ちるまで残る
   else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
   else if (tt < 39.0) { if (dvA3 < 0.38) A = dPlant(t, kt); else if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.4 * b; } // 上の粒から先に、空へ
-  else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; }
-  else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.6; }
-  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.7; }
-  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.8; } // 線の束が、無限の円に凝る
-  else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 1.0; }
-  else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.9; } // 球に巻きつく
-  else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; }
+  else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
+  else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.6; wr = 90.0; }
+  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
+  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.8; wr = 130.0; } // 線の束が、無限の円に凝る
+  else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 1.0; wr = 150.0; }
+  else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.9; wr = 140.0; } // 球に巻きつく
+  else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; wr = 130.0; }
   else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.0; wk = 0.8 * (1.0 - b); } // 描いた順に、線が描き直される
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
@@ -2125,7 +2129,7 @@ O sDev(){
   o.shape = mix(dShape(A), dShape(B), b);
   o.round = mix(A.rnd, B.rnd, b);
   o.gate = 1.0;
-  vec2 wd = wk > 0.0 ? dWake(dScr(o.centre)) * wk : vec2(0.0);
+  vec2 wd = wk > 0.0 ? dWake(dScr(o.centre), wr) * wk : vec2(0.0);
   o.corner.xy += wd; o.centre.xy += wd;
   return dPush(o, push);
 }
@@ -4153,7 +4157,7 @@ export function mountMorph(root: HTMLElement) {
         }
         if (dtl >= KPATH[KPATH.length - 1][0]) { ta = KPATH[KPATH.length - 1][1]; tb = KPATH[KPATH.length - 1][2]; }
         const bend = drawing && dtl >= 75 && dtl < 84;
-        if (bend) kOff = [Math.max(-0.35, Math.min(0.35, kOff[0] + penVX * 0.0016)), Math.max(-0.35, Math.min(0.35, kOff[1] - penVY * 0.0016))];
+        if (bend) kOff = [Math.max(-0.35, Math.min(0.35, kOff[0] + penVX * 0.0028)), Math.max(-0.35, Math.min(0.35, kOff[1] - penVY * 0.0028))];
         else kOff = cK(Math.exp(-dt / 1.1), kOff);
         if (dtl < 86.5) ta = cA(ta, kOff);
         const gens = grandma(ta, tb);
