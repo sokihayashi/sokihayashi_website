@@ -4535,7 +4535,7 @@ export function mountMorph(root: HTMLElement) {
       // 4次元で半回転した後は、画面の文字も鏡になる / 無限の流れの間は、画面が自分自身を中に含む
       if (devOn) {
         const paperRule = dtl < 17.5 || dtl >= 99.5;
-        const finder = dtl >= 34.5 && dtl < 42.5;
+        const finder = false && dtl >= 34.5 && dtl < 42.5; // ファインダーの枠は隠す(2026-11-28: 3つの AI がそろって、物を真ん中に置いて見せる「ビューワー」に見せる原因と指摘。参照に無い計測のグラフィック)
         const mirror = dtl >= 41 && dtl < 100.5;
         if (paperRule !== ruleInk) { ruleInk = paperRule; for (const el of ruleEls) el.style.mixBlendMode = paperRule ? 'difference' : ''; }
         if (mirror !== ruleMirror) { ruleMirror = mirror; for (const el of ruleEls) { el.style.transition = 'transform .7s cubic-bezier(.7,0,.3,1)'; el.style.transform = mirror ? 'scaleX(-1)' : ''; } }
