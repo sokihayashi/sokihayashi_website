@@ -1523,7 +1523,7 @@ vec2 dDropC(int k, float tq, float kt){
 // しずくの大きさ: 線の墨の量から
 float dDropR(int k){
   float hk = hsh(uint(k) * 53U + 5U);
-  return clamp(sqrt(dCnt() * uDp * 7.0 / (float(DK) * 3.14159)), 14.0, uView.x * 0.1) * (0.75 + 0.55 * hk);
+  return clamp(sqrt(dCnt() * uDp * 16.0 / (float(DK) * 3.14159)), 22.0, uView.x * 0.12) * (0.75 + 0.55 * hk); // 小さいと、床と塔が細い棒にしか見えなかった
 }
 float dTowerH(int k){ return uView.y * (0.3 + 0.22 * hsh(uint(k) * 13U + 3U)); }
 // 見る位置: kt = 0 で真上から(紙そのもの)、1 で斜め上から(床)。紙の座標(画面の座標)が、そのまま床の座標になる。
@@ -1531,7 +1531,7 @@ vec3 dCam(vec3 p, float kt){
   vec2 c = uView * 0.5;
   float pit = mix(1.5707963, 0.64 - uTilt.y * 0.22, kt);
   float yaw = kt * (0.5 + 0.3 * sin(uTime * 0.06) + uTilt.x * 0.8);
-  float zm = mix(1.0, 0.6, kt);
+  float zm = mix(1.0, 0.7, kt);
   float Y0 = mix(0.0, uView.y * 0.1, kt);
   float x1 = p.x * cos(yaw) + p.z * sin(yaw), z1 = -p.x * sin(yaw) + p.z * cos(yaw);
   float y2 = p.y * cos(pit) - z1 * sin(pit), z2 = p.y * sin(pit) + z1 * cos(pit);
@@ -1569,7 +1569,7 @@ DP dDrop(float kt){
 DP dDisc(float t, float kt){
   vec2 c = uView * 0.5;
   float ang = dvTh + max(t - 8.0, 0.0) * 0.4;
-  float rd = dvRk * 1.25 * (0.3 + 0.7 * sqrt(dvA2));
+  float rd = dvRk * 1.35 * (0.3 + 0.7 * sqrt(dvA2));
   vec3 w = vec3(dvCk.x - c.x + cos(ang) * rd, 3.0 + dvA3 * 4.0, dvCk.y - c.y + sin(ang) * rd);
   return dDot(dCam(w, kt), vec2(1.5), kt, mix(D_INK, D_GRAY * (0.8 + 0.2 * dvA1), kt));
 }
@@ -1579,7 +1579,7 @@ DP dTower(float t, float kt){
   vec2 c = uView * 0.5;
   float y = dvTt * dTowerH(dvK);
   float ang = dTowerAng(t);
-  float rt = dvRk * 0.95 * (0.72 + 0.34 * sin(y * 0.05 + float(dvK) * 1.7)) * (0.8 + 0.4 * dvA3);
+  float rt = dvRk * 1.25 * (0.72 + 0.34 * sin(y * 0.05 + float(dvK) * 1.7)) * (0.8 + 0.4 * dvA3);
   vec3 w = vec3(dvCk.x - c.x + cos(ang) * rt, y, dvCk.y - c.y + sin(ang) * rt);
   vec3 col = D_GRAY * (0.42 + 0.6 * max(cos(ang - 2.4), 0.0)) * (0.9 + 0.2 * dvA1);
   return dDot(dCam(w, kt), vec2(1.5), 1.0, col);
@@ -1606,7 +1606,7 @@ DP d4D(float t){
   d.c = vec3(c + P.xy * S4 * zd, clamp(P.z * S4 * zd + dv * 500.0, -1400.0, 1000.0));
   d.e = vec3(c + Q.xy * S4 * zd, clamp(Q.z * S4 * zd + dv * 500.0, -1400.0, 1000.0));
   d.hs = vec2(0.0, 0.45); d.seg = 1.0; d.rnd = 0.0; d.a = 0.0;
-  d.col = mix(vec3(1.0, 0.88, 0.76), vec3(0.74, 0.86, 1.0), float(lvl) / 6.0) * 0.075 * mix(1.0, 0.6, dv);
+  d.col = mix(vec3(1.0, 0.88, 0.76), vec3(0.74, 0.86, 1.0), float(lvl) / 6.0) * 0.055 * mix(1.0, 0.7, dv);
   return d;
 }
 // 指で押すと、その場所の粒が よける(墨が分かれる、塔の粒が割れる、光の線が曲がる)
