@@ -2992,25 +2992,56 @@ export function mountMorph(root: HTMLElement) {
   };
   // 立体の選別(2026-11-25〜26、本人:「僕に関係ありそうなもの」「実際にある機種に近いもの」「レトロ機材も混ぜていい」)。
   // 今の機材(Sketchfab の CC BY。作者の表示は About の下)と、古い機材(Poly Haven の CC0)を交互に並べる。出どころは /lab/obj/SOURCES.md。
-  if (three) ['red', 'camera01', 'mbp', 'television02', 'vr50', 'vintagevideocamera', 'a7m4', 'classiclaptop', 'genelec', 'filmstripprojector8mm', 'panton', 'plasticmonoblocchair01', 'eames'].forEach((name, idx) => fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
-    if (dead) return;
-    const [nv, ni] = new Uint32Array(b, 0, 2), v = new Int16Array(b, 8, nv * 3), ix = new Uint16Array(b, 8 + nv * 6, ni);
-    let off = 8 + nv * 6 + ni * 2; if ((nv * 6 + ni * 2) % 4) off += 2;
-    const NPt = 40000, d = new Int16Array(b, off, NPt * 6), K = 1.25 / 32000;
-    let area = 0;
-    for (let i = 0; i < ni; i += 3) { const a = ix[i] * 3, bb = ix[i + 1] * 3, c = ix[i + 2] * 3, ux = (v[bb] - v[a]) * K, uy = (v[bb + 1] - v[a + 1]) * K, uz = (v[bb + 2] - v[a + 2]) * K, wx = (v[c] - v[a]) * K, wy = (v[c + 1] - v[a + 1]) * K, wz = (v[c + 2] - v[a + 2]) * K; area += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) * 0.5; }
+  const OBJ_NAMES = ['red', 'camera01', 'mbp', 'television02', 'vr50', 'vintagevideocamera', 'a7m4', 'classiclaptop', 'genelec', 'filmstripprojector8mm', 'panton', 'plasticmonoblocchair01', 'eames'];
+  const objBase = `${root.dataset.base ?? ''}/lab/obj/`, OBJ_NPT = 40000, OBJ_K = 1.25 / 32000;
+  // 4万点の標本(位置と向き、Int16)から、立体の情報を組む
+  const mkSubj = (d: Int16Array, area: number, idx: number): Subj => {
+    const NPt = OBJ_NPT, K = OBJ_K;
     const sb: Subj = { p: new Float32Array(NPt * 3), n: new Float32Array(NPt * 3), order: new Uint32Array(NPt), area, hx: 0, hz: 0, lo: 1e9, hi: -1e9, idx };
     const key = new Float32Array(NPt);
     for (let i = 0; i < NPt; i++) { for (let k = 0; k < 3; k++) { sb.p[i * 3 + k] = d[i * 6 + k] * K; sb.n[i * 3 + k] = d[i * 6 + 3 + k] / 32000; } const y = sb.p[i * 3 + 1]; sb.lo = Math.min(sb.lo, y); sb.hi = Math.max(sb.hi, y); sb.hx = Math.max(sb.hx, Math.abs(sb.p[i * 3])); sb.hz = Math.max(sb.hz, Math.abs(sb.p[i * 3 + 2])); sb.order[i] = i; key[i] = y + Math.atan2(sb.p[i * 3 + 2], sb.p[i * 3]) * 0.03; }
     sb.order.sort((a, bb) => key[a] - key[bb]);
-    return fetch(`${root.dataset.base ?? ''}/lab/obj/${name}.edges.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null).then((eb) => {
+    return sb;
+  };
+  const getEdges = (sb: Subj, name: string) => fetch(`${objBase}${name}.edges.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null).then((eb) => {
+    if (eb && eb.byteLength === OBJ_NPT * 12) { const ei = new Int16Array(eb), ef = new Float32Array(ei.length); for (let i = 0; i < ei.length; i++) ef[i] = ei[i] * OBJ_K; sb.e = ef; }
+    return sb;
+  });
+  // 展開の流れ(morph-3d)では、立体を1周に1つしか使わない。最初は何も読まず、最初の絵が出てから1つ目だけを読み、
+  // 見せたら次の周の1つを読む(読み込みが 約19MB → 最初は 約1MB。立体1つ = 標本 0.48MB + 稜線 0.48MB)。
+  // 標本だけのファイル(.s.bin: 面積 Float32、点の数 Uint32、標本 Int16×6×4万)は、元の .bin から作った(網目は面積を出すためだけだった)。
+  const qsObj = new URLSearchParams(location.search);
+  const devLazy = three && !(parseInt(qsObj.get('only') ?? '', 10) >= 0) && qsObj.get('flow') !== 'parts'; // = devOn(後で決まる)と同じ条件
+  const objAsked = new Set<number>();
+  const devObjLoad = (idx: number) => {
+    if (!devLazy || objAsked.has(idx) || dead) return;
+    objAsked.add(idx);
+    const name = OBJ_NAMES[idx];
+    fetch(`${objBase}${name}.s.bin`).then((r) => r.arrayBuffer()).then((b) => {
+      if (dead) return;
+      const area = new Float32Array(b, 0, 1)[0];
+      return getEdges(mkSubj(new Int16Array(b, 8, OBJ_NPT * 6), area, idx), name).then((sb) => {
+        if (dead) return;
+        subs.push(sb); subs.sort((x, y) => x.idx - y.idx);
+        if (!objReady) { applySubject(sb); objReady = true; } // 2つ目以降は、見せる時(周の33秒)に入れ替える
+      });
+    }).catch(() => { objAsked.delete(idx); }); // 届かなかったら、次の機会にもう一度
+  };
+  if (three && !devLazy) OBJ_NAMES.forEach((name, idx) => fetch(`${objBase}${name}.bin`).then((r) => r.arrayBuffer()).then((b) => {
     if (dead) return;
-    if (eb && eb.byteLength === 40000 * 12) { const ei = new Int16Array(eb), ef = new Float32Array(ei.length); for (let i = 0; i < ei.length; i++) ef[i] = ei[i] * K; sb.e = ef; }
+    const [nv, ni] = new Uint32Array(b, 0, 2), v = new Int16Array(b, 8, nv * 3), ix = new Uint16Array(b, 8 + nv * 6, ni);
+    let off = 8 + nv * 6 + ni * 2; if ((nv * 6 + ni * 2) % 4) off += 2;
+    const K = OBJ_K;
+    let area = 0;
+    for (let i = 0; i < ni; i += 3) { const a = ix[i] * 3, bb = ix[i + 1] * 3, c = ix[i + 2] * 3, ux = (v[bb] - v[a]) * K, uy = (v[bb + 1] - v[a + 1]) * K, uz = (v[bb + 2] - v[a + 2]) * K, wx = (v[c] - v[a]) * K, wy = (v[c + 1] - v[a + 1]) * K, wz = (v[c + 2] - v[a + 2]) * K; area += Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) * 0.5; }
+    return getEdges(mkSubj(new Int16Array(b, off, OBJ_NPT * 6), area, idx), name).then((sb) => {
+    if (dead) return;
     subs.push(sb);
     subs.sort((x, y) => x.idx - y.idx); // 届いた順ではなく、上の並び順で回す
     if (!objReady) { applySubject(sb); objReady = true; } else if (subs.length > 1) applySubject(subs[objI], subs[(objI + 1) % subs.length]);
     });
   }).catch(() => {})); // 届かなかった立体は、使わないだけ
+  if (devLazy) setTimeout(() => devObjLoad(6), 1500); // 最初の絵が出てから、1つ目(カメラ α7 IV)を読む
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -3608,7 +3639,8 @@ export function mountMorph(root: HTMLElement) {
   //   焼き付け・機材: 走査線 / 4次元: 面の上の版だけ(画面の版は休む) / 線の束: 縦線と重ねたモアレ / クライン群: ずれた写しと反転 / 球: 版なし(光だけ) / 紙に戻る: 1ビット
   // 先頭が その場面の「ふだんの版」(長い拍も、この刷り方で見せる。本人「まだグラフィック化できてないな」)、残りが短い拍に差し込む版。0 は版なし
   const PLATE_FAM = (d: number): number[] => (d < 9.5 ? [7, 1] : d < 17.5 ? [2, 3] : d < 34.4 ? [7, 8, 9] : d < 42.5 ? [10, 9] : d < 56.5 ? [0] : d < 61.5 ? [9] : d < 72 ? [11, 7] : d < 84 ? [0, 6, 9] : d < 99 ? [0] : [7, 1]); // 管の間(55.5〜61.5)は反転: 白い紙に、黒い管と白い管
-  let devObjI = 0, devObjN = 0;
+  let devObjN = 0;
+  const DEV_OBJ_ORDER = [6, 0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]; // α7 IV から、並びの順に
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
   const ruleEls: HTMLElement[] = [];
@@ -4314,10 +4346,10 @@ export function mountMorph(root: HTMLElement) {
       }
       // 機材の立体: 周ごとに替える(最初はカメラ α7 IV)。組み上がる少し前に入れ替える
       if (devOn && objReady && lastDevT < 33 && dtl >= 33 && subs.length) {
-        const first = subs.findIndex((x) => x.idx === 6);
-        const pickI = devObjN === 0 && first >= 0 ? first : (devObjI + 1) % subs.length;
-        devObjI = pickI; devObjN++;
-        applySubject(subs[pickI]);
+        // 決まった順(α7 IV から)に1つずつ。次の立体がまだ届いていなければ、いまの立体のまま(届いた周から替わる)
+        const want = DEV_OBJ_ORDER[devObjN % DEV_OBJ_ORDER.length], sb = subs.find((x) => x.idx === want);
+        if (sb) { applySubject(sb); devObjN++; }
+        devObjLoad(DEV_OBJ_ORDER[devObjN % DEV_OBJ_ORDER.length]); // 次の周の立体を、いまのうちに読む
       }
       gl!.uniform1f(u.objOn, devOn && objReady ? 1 : 0);
       // 画面のきまり: 紙の間は、上の文字が墨で刷られる / 立体の間は、画面がカメラのファインダーになる /
