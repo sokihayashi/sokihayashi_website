@@ -1165,6 +1165,70 @@ O sEcho(){
   return o;
 }
 
+// 41 4次元のドーナツ(クリフォードトーラス): 帯の面を、4次元の球の上の平らなドーナツへ移す。
+// 4次元で回して、立体射影で3次元へ落とすと、ドーナツが内と外を入れ替えながら裏返り続ける(3次元の物には無い動き)。
+// 面には作品の写真を貼る(長さ方向に作品が並ぶ)。面の四隅を、それぞれの位置で計算するので、すき間なく1枚の面になる。
+vec4 clifford(float u, float v){ return vec4(cos(u), sin(u), cos(v), sin(v)) * 0.70710678; }
+vec3 stereo(vec4 p){ return p.xyz / max(1.0 - p.w, 0.22); }
+O sClifford(){
+  vec2 c = uView * 0.5;
+  float S = min(uView.x, uView.y) * 0.5;
+  float t = uTime * 0.22 + uK * 0.002;
+  float a = t + uTilt.x * 1.1, b = t * 0.71 + 0.6 - uTilt.y * 0.9, g = t * 0.13;
+  float uC = (float(gIu) + 0.5 + aQ.x * 0.5) / float(${NU}) * 6.2831853;
+  float vC = (float(gIv) + 0.5 + aQ.y * 0.5) / float(NVi) * 6.2831853;
+  float uM = (float(gIu) + 0.5) / float(${NU}) * 6.2831853;
+  float vM = (float(gIv) + 0.5) / float(NVi) * 6.2831853;
+  // 立体射影だと、極に近づいた所が画面いっぱいに膨らむ。ドーナツは遠近の射影(視点を4つめの軸の 1.7 に置く)で落とす。
+  vec3 P = proj4(rot4(clifford(uC, vC), a, b, g), 1.7);
+  vec3 M = proj4(rot4(clifford(uM, vM), a, b, g), 1.7);
+  O o = base();
+  o.corner = viewRot(vec3(c + P.xy * S, P.z * S), c, 0.35);
+  o.centre = viewRot(vec3(c + M.xy * S, M.z * S), c, 0.35);
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  float fu = uC / 6.2831853 * nwk;
+  o.work = mod(floor((uM / 6.2831853) * nwk), nwk);
+  o.uv = vec2(fu - floor((uM / 6.2831853) * nwk), vC / 6.2831853);
+  // 遠い所(射影で小さくなる所)ほど暗く
+  o.lit = clamp(0.55 + 0.45 * (1.0 - length(M) / 4.0), 0.35, 1.1);
+  o.gate = 1.0; // 描いた跡の長さに関わらず、面の全部を出す(この形は、跡ではなく4次元の式で決まる)
+  return o;
+}
+// 42 ホップ・ファイブレーション: 4次元の球を、互いにくぐり合う円(ファイバー)の束としてほどく。
+// 円の1本1本は、2次元の球の上の1点に対応する(ここでは緯度4段 × 経度16、計64本。帯の幅の64枚が、そのまま64本の円になる)。
+// 4次元で回すと、円の束が流れて、入れ子のドーナツが ほどけたり締まったりする。線は光として足し、色は作品の写真から取る。
+vec4 hopf(vec3 n, float t){
+  float k = inversesqrt(max(2.0 * (1.0 + n.z), 1e-4));
+  return k * vec4((1.0 + n.z) * cos(t), n.x * sin(t) - n.y * cos(t), n.x * cos(t) + n.y * sin(t), (1.0 + n.z) * sin(t));
+}
+O sHopf(){
+  vec2 c = uView * 0.5;
+  float S = min(uView.x, uView.y) * 0.16;
+  float tm = uTime * 0.2 + uK * 0.002;
+  float a = tm + uTilt.x * 1.1, b = tm * 0.67 + 0.4 - uTilt.y * 0.9, g = tm * 0.11;
+  int ring = gIv / 16, lon = gIv - ring * 16;
+  float lat = mix(-0.75, 0.95, (float(ring) + 0.5) / 4.0) + sin(uTime * 0.17 + float(ring)) * 0.08;
+  float ph = (float(lon) + 0.5) / 16.0 * 6.2831853 + float(ring) * 0.4;
+  vec3 n = vec3(cos(lat) * cos(ph), cos(lat) * sin(ph), sin(lat));
+  float t0 = float(gIu) / float(${NU}) * 6.2831853;
+  float t1 = float(gIu + 1) / float(${NU}) * 6.2831853;
+  vec4 h0 = rot4(hopf(n, t0).yzwx, a, b, g), h1 = rot4(hopf(n, t1).yzwx, a, b, g);
+  vec3 A3 = stereo(h0), B3 = stereo(h1);
+  vec3 A = viewRot(vec3(c + A3.xy * S, A3.z * S), c, 0.35);
+  vec3 B = viewRot(vec3(c + B3.xy * S, B3.z * S), c, 0.35);
+  vec3 P = mix(A, B, aQ.x * 0.5 + 0.5);
+  vec2 d = B.xy - A.xy; float L = length(d); d = L > 1e-3 ? d / L : vec2(1.0, 0.0);
+  O o = base();
+  o.centre = (A + B) * 0.5;
+  o.corner = P + vec3(vec2(-d.y, d.x) * 0.6 * aQ.y, 0.0);
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  vec3 pc = photo(mod(float(gIv) * 5.0, nwk), vec2(t0 / 6.2831853, (float(ring) + 0.5) / 4.0));
+  o.col = (pc * 0.55 + 0.03) * smoothstep(0.0, 1.8, uPartT);
+  o.tex = 0.0; o.alpha = 0.0; o.shape = vec2(L * 0.5, 0.6);
+  o.gate = 1.0;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1206,6 +1270,8 @@ O stateOf(int id){
   if (id == 38) return sObjMorph();
   if (id == 39) return sMapLine();
   if (id == 40) return sEcho();
+  if (id == 41) return sClifford();
+  if (id == 42) return sHopf();
   return sFrame();
 }
 
@@ -2066,7 +2132,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -2074,7 +2140,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2179,7 +2245,8 @@ export function mountMorph(root: HTMLElement) {
       const list = [...others.slice(0, at), ...core, ...others.slice(at)];
       for (const c of list) push1(c, 'B3', c === 34 ? 4.4 : c >= 31 ? 1.6 : 0.95, c === 34 ? 1 : pick([1, 3]));
     } else {
-      push1(39, 'D4', 3.4, 0);
+      // 4D: 写真の帯にこだわらない(本人 2026-11-27:「不必要でもっと違う表現があったら、写真入りの帯を途中から捨ててもいい」)
+      for (const c of shuffle([39, 41, 42])) push1(c, 'D4', 3.0, c === 39 ? 0 : 1);
     }
   };
   const grow = () => {
