@@ -1447,6 +1447,58 @@ O sTwister(){
   return o;
 }
 
+// 47 生まれる形(帯ではない、2D): 紙の白の上に、黒い塊が生まれ、ふくらみ、くっつき、分かれ、消える。
+// 塊のふちは縦の筋になってにじみ、ところどころ粗い升目に崩れる(1ビットの刷り)。塊は、描いた線の上から生まれる。
+// 元: Soy Nando「Spontaneous Generation」(2026-11-27)。
+O sSpawn(){
+  const int GX = 160, GY = 512;
+  int gy = gI / GX, gx = gI - gy * GX;
+  vec2 cell = uView / vec2(float(GX), float(GY));
+  vec2 p = (vec2(float(gx), float(gy)) + 0.5) * cell;
+  float tq = floor(uTime * 12.0) / 12.0; // 12コマ/秒で進む(刷りもののコマ送り)
+  float cnt = min(uK, Mf);
+  float f = 0.0;
+  for (int b = 0; b < 8; b++) {
+    float hb = hsh(uint(b) * 977U + 13U), hc = hsh(uint(b) * 331U + 7U);
+    float an = (float(b / 2) + 0.5) / 4.0;
+    int j = int(mod(uK - 1.0 - floor(an * max(cnt - 1.0, 0.0)), Mf));
+    vec4 r0 = texelFetch(uPath, ivec2(j, 0), 0);
+    bool ok = texelFetch(uPath, ivec2(j, 1), 0).w > 0.5 && cnt > 2.0;
+    vec2 base = ok ? r0.xy : uView * vec2(0.25 + 0.5 * hb, 0.2 + 0.6 * hc);
+    // 2つずつ組: 同じ所から生まれて、離れたり くっついたりする
+    float sgn = (b % 2 == 0) ? 1.0 : -1.0;
+    float life = fract(tq / 7.0 + hb);
+    float grow = smoothstep(0.0, 0.25, life) * (1.0 - smoothstep(0.8, 1.0, life));
+    vec2 drift = vec2(sin(tq * (0.3 + hb * 0.4) + hc * 6.0), cos(tq * (0.25 + hc * 0.35) + hb * 6.0)) * uView.x * 0.12;
+    vec2 split = vec2(cos(hb * 6.28), sin(hb * 6.28)) * sgn * uView.x * 0.07 * (0.5 + 0.5 * sin(tq * 0.6 + hc * 5.0));
+    vec2 c = base + drift + split;
+    float R = uView.x * (0.07 + 0.07 * hc) * grow;
+    vec2 d = (p - c) * vec2(1.0, 1.15);
+    f += R * R / (dot(d, d) + 1.0);
+  }
+  float colH = hsh(uint(gx) * 2654U + uint(tq * 12.0) * 7U);          // 列ごとのゆらぎ(縦の筋)
+  float run = hsh(uint(gx) * 131U + uint(gy / 6) * 977U + uint(tq * 12.0));  // 縦に長い ひと続き
+  float ink = 0.0;
+  if (f > 1.0) {
+    ink = 1.0;
+    // 塊の中の、ふちに沿った白い輪(縦の筋で描く)
+    float ring = abs(fract(f * 1.6) - 0.5);
+    if (f < 2.6 && ring < 0.08 && colH > 0.35) ink = 0.0;
+  } else if (f > 0.42) {
+    // にじみ: 縦の筋。塊に近いほど濃い
+    float k = (f - 0.42) / 0.58;
+    ink = run < k * k * 0.95 ? 1.0 : 0.0;
+  }
+  // 粗い升目に崩れる所(1ビットの欠け)
+  ivec2 blk = ivec2(gx / 5, gy / 8);
+  float bh = hsh(uint(blk.x) * 7919U + uint(blk.y) * 104729U + uint(tq * 4.0) * 31U);
+  if (f > 0.3 && f < 1.4 && bh < 0.05) ink = 1.0 - ink;
+  vec3 paper = vec3(0.925, 0.918, 0.895), black = vec3(0.06, 0.06, 0.065);
+  O o = dotAt(vec3(p, 0.0), cell * 0.5 + 0.05, mix(paper, black, ink), 0.0, 1.0);
+  o.gate = 1.0;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1494,6 +1546,7 @@ O stateOf(int id){
   if (id == 44) return sTess();
   if (id == 45) return sCity();
   if (id == 46) return sTwister();
+  if (id == 47) return sSpawn();
   return sFrame();
 }
 
@@ -2424,7 +2477,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3, 0.6, 0.7]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3, 0.6, 0.7, 0.6]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -2432,7 +2485,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess', 45: 'city', 46: 'twister',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess', 45: 'city', 46: 'twister', 47: 'spawn',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2524,13 +2577,13 @@ export function mountMorph(root: HTMLElement) {
   // 似すぎている表現は外す(本人 2026-11-27:「あまりにも似すぎてる表現は落とそう。重なった写真と、写真が連なるやつとか」)。
   // 外したもの(?only=N では見られる): 10 札の蛇・11 置いていく写真(写真の札が並ぶ。互いに同じ)、3 浮き彫り・26 立体写真(帯とほぼ同じに見える)、
   // 12 画素の落下(7 ピクセルと同じ)、17 奥行きの点(8 の縞のねじれと同じ)、24 積もる(25 波紋と同じ波)、31 虹の立体・37 線の立体(32・38 と同じ形)。
-  const P2D = [2, 7, 9, 13, 14, 16, 19, 22, 29];
+  const P2D = [2, 7, 9, 13, 14, 16, 19, 22, 29, 47];
   const P3D = [8, 15, 20, 23, 25, 45, 46];
   // 表現ごとの長さ(1 = BEAT 秒)。その表現が見えて読めるまでにかかる時間で決めた。
   const LEN: Record<number, number> = {
     0: 1.0, 2: 1.2, 3: 1.2, 7: 0.8, 9: 0.7, 10: 1.2, 11: 1.0, 12: 0.9, 13: 1.1, 14: 1.0, 16: 1.2, 19: 1.3, 22: 1.1, 26: 1.1, 29: 0.8,
     40: 2.6, 1: 1.4, 8: 1.6, 15: 1.1, 17: 1.3, 20: 1.3, 21: 1.4, 23: 1.4, 24: 1.4, 25: 1.3, 34: 4.4, 31: 1.8, 32: 1.8, 33: 1.8, 37: 1.8, 38: 2.4,
-    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4, 45: 2.4, 46: 4.2,
+    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4, 45: 2.4, 46: 4.2, 47: 3.0,
   };
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
