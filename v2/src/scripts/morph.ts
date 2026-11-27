@@ -1969,9 +1969,9 @@ DP dKPlane(float t){
   vec2 p = c + vec2(z.x, -z.y) * Sk;
   // 指の所が、虫めがねのように ふくらむ(無限の入れ子を、触った所だけ大きく見せる)。離すと しぼむ
   vec2 fq = p - uFing.xy;
-  p = uFing.xy + fq * (1.0 + 0.9 * uFing.z * exp(-dot(fq, fq) / (2.0 * 120.0 * 120.0)));
+  p = uFing.xy + fq * (1.0 + 1.6 * uFing.z * exp(-dot(fq, fq) / (2.0 * 150.0 * 150.0)));
   float trc = dTrace(dScr(vec3(p, 0.0)), 70.0);
-  DP d = dDot(vec3(p, 0.0), vec2(0.9 * (1.0 + 1.2 * trc)), 1.0, vec3(0.92, 0.94, 1.0) * 0.08 * (1.0 + 2.2 * trc));
+  DP d = dDot(vec3(p, 0.0), vec2(0.9 * (1.0 + 1.4 * trc)), 1.0, vec3(0.92, 0.94, 1.0) * 0.08 * (1.0 + 3.5 * trc));
   d.a = 0.0;
   return d;
 }
@@ -2115,7 +2115,7 @@ O sDev(){
   else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 1.0; wr = 150.0; }
   else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.9; wr = 140.0; } // 球に巻きつく
   else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; wr = 130.0; }
-  else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.0; wk = 0.8 * (1.0 - b); } // 描いた順に、線が描き直される
+  else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.35 * b; wk = 0.8 * (1.0 - b) + b; } // 描いた順に、線が描き直される(描き直された墨の線は、はじめと同じく指で押し分けられる)
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
   o.centre = mix(dCentre(A), dCentre(B), b);
