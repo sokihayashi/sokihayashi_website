@@ -3355,7 +3355,8 @@ export function mountMorph(root: HTMLElement) {
       hold4();
       onPhase();
     }
-    if (devOn && (sTo === 48 || sFrom === 48) && !frozen && !devHold && !panelOpen && !openOn) devT += dt;
+    // 展開の時刻は、帯から展開へ移りはじめた所(帯の区間の後半)から数える。それまでは帯を描いている(ひとりでに描くのも、ここまで)。
+    if (devOn && (sFrom === 48 || (sTo === 48 && phase - Math.floor(phase) > HOLD)) && !frozen && !devHold && !panelOpen && !openOn) devT += dt;
     if (drawing) {
       const k = 1 - Math.exp(-dt / 0.03);
       penX += (ptX - penX) * k;
