@@ -2153,7 +2153,31 @@ export function mountMorph(root: HTMLElement) {
   const lenOf: number[] = [];
   const styOf: number[] = [];
   const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+  // 立体の版: パートごとに、そのパートの表現を「1回ずつ」並べる(本人 2026-11-27:「1表現が複数回出てきてしまってる？」)。
+  //   2D: 帯から入り、平らな表現を1回ずつ / 3D: 4本の帯が起き上がって入り、立体の表現を1回ずつ(ガラスは、立体の紙と筒の間)/ 4D: 光の線
+  // 周を重ねるたびに、パートの中の順番を入れ替える。
+  let partI = 0;
+  const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
+  const growParts = () => {
+    const P = partI % 3;
+    partI++;
+    if (P === 0) {
+      push1(0, 'A2D', partI === 1 ? 1.4 : 1.0, 0);
+      for (const c of shuffle([29, 20, 19, 8])) push1(c, 'A2D', 0.95, pick([0, 1, 3]));
+    } else if (P === 1) {
+      push1(40, 'up', 2.6, 0);
+      const others = shuffle([17, 14, ...(objReady ? [31, 32, 33, 37, 38] : [])]);
+      const core = Math.random() < 0.5 ? [1, 34, 21] : [21, 34, 1];
+      const at = Math.floor(Math.random() * (others.length + 1));
+      const list = [...others.slice(0, at), ...core, ...others.slice(at)];
+      for (const c of list) push1(c, 'B3', c === 34 ? 4.4 : c >= 31 ? 1.6 : 0.95, c === 34 ? 1 : pick([1, 3]));
+    } else {
+      push1(39, 'D4', 3.4, 0);
+    }
+  };
   const grow = () => {
+    if (three && !onlyOn) return growParts();
     const name = FORM[formI];
     formI = formI + 1 < FORM.length ? formI + 1 : LOOP;
     const S0 = SECS[name];
