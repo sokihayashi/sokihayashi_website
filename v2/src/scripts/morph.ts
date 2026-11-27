@@ -1303,6 +1303,49 @@ O sTess(){
   return o;
 }
 
+// 45 箱の街(帯ではない): 画面いっぱいの床に、写真を升目に分けた箱が立ち並ぶ。箱の高さは写真の明るさ。
+// 本人(2026-11-27):「入りが帯なのは固定。そこから先は全部違ってもいい」。指で押した所は、箱が沈んで波が広がる。
+O sCity(){
+  const int GX = 40, GY = 86, NB = GX * GY;
+  int b = gI / 5, f = gI - b * 5;
+  if (b >= NB) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 1.0);
+  int by = b / GX, bx = b - by * GX;
+  vec2 cell = uView / vec2(float(GX), float(GY));
+  vec2 cen = (vec2(float(bx), float(by)) + 0.5) * cell;
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  float wk = mod(floor(uK / 120.0), nwk);
+  vec2 uvC = cen / uView;
+  // 写真は縦長の画面に合わせて、真ん中を切り出す
+  vec3 pc = photo(wk, uvC);
+  float l = dot(pc, vec3(0.2126, 0.7152, 0.0722));
+  float H = min(uView.x, uView.y) * 0.32;
+  float dpen = distance(cen, uPen.xy);
+  float press = uPen.z * exp(-dpen * dpen / (uW * uW * 30.0));
+  float wave = sin(dpen * 0.045 - uTime * 3.0) * uPen.z * exp(-dpen / (uW * 14.0)) * 0.25;
+  float h = H * (0.06 + 0.94 * pow(l, 1.4)) * (1.0 - 0.8 * press + wave) * smoothstep(0.0, 1.6, uPartT);
+  vec2 hs = cell * 0.5 * 0.86;
+  vec3 P, M; float lit;
+  if (f == 0) { P = vec3(cen + aQ * hs, h); M = vec3(cen, h); lit = 1.0; }
+  else {
+    // 横の面: f = 1..4 は、右・左・下・上
+    vec2 nd = f == 1 ? vec2(1.0, 0.0) : f == 2 ? vec2(-1.0, 0.0) : f == 3 ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
+    vec2 td = vec2(-nd.y, nd.x);
+    vec2 e = cen + nd * hs;
+    P = vec3(e + td * hs * aQ.x, (aQ.y * 0.5 + 0.5) * h);
+    M = vec3(e, h * 0.5);
+    lit = f == 1 ? 0.62 : f == 2 ? 0.42 : f == 3 ? 0.78 : 0.5;
+  }
+  vec2 c = uView * 0.5;
+  O o = base();
+  o.corner = viewRot(P, c, 1.0);
+  o.centre = viewRot(M, c, 1.0);
+  o.work = wk;
+  o.uv = f == 0 ? (P.xy / uView) : uvC;
+  o.lit = lit * (0.85 + 0.25 * smoothstep(0.0, H, h));
+  o.gate = 1.0;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1348,6 +1391,7 @@ O stateOf(int id){
   if (id == 42) return sHopf();
   if (id == 43) return sCone();
   if (id == 44) return sTess();
+  if (id == 45) return sCity();
   return sFrame();
 }
 
@@ -2278,7 +2322,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3, 0.6]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -2286,7 +2330,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess', 45: 'city',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2375,13 +2419,16 @@ export function mountMorph(root: HTMLElement) {
   // 2D: 平らな帯の上で起きる表現 / 3D: 面が立ち、奥行きで見せる表現(帯が4本に増えて起き上がる 40 から入る。ガラス 34 と立体は別に入れる)
   // 分け方は技術ではなく見え方(本人 2026-11-27:「3Dの技術を使っているかより、実際に3Dに見えるか平面に見えるかで分類」)。
   // 画面で1つずつ見て、平らに見えるもの / 立体に見えるもの に分けた。
-  const P2D = [2, 3, 7, 9, 10, 11, 12, 13, 14, 16, 19, 22, 26, 29];
-  const P3D = [8, 15, 17, 20, 23, 24, 25];
+  // 似すぎている表現は外す(本人 2026-11-27:「あまりにも似すぎてる表現は落とそう。重なった写真と、写真が連なるやつとか」)。
+  // 外したもの(?only=N では見られる): 10 札の蛇・11 置いていく写真(写真の札が並ぶ。互いに同じ)、3 浮き彫り・26 立体写真(帯とほぼ同じに見える)、
+  // 12 画素の落下(7 ピクセルと同じ)、17 奥行きの点(8 の縞のねじれと同じ)、24 積もる(25 波紋と同じ波)、31 虹の立体・37 線の立体(32・38 と同じ形)。
+  const P2D = [2, 7, 9, 13, 14, 16, 19, 22, 29];
+  const P3D = [8, 15, 20, 23, 25, 45];
   // 表現ごとの長さ(1 = BEAT 秒)。その表現が見えて読めるまでにかかる時間で決めた。
   const LEN: Record<number, number> = {
     0: 1.0, 2: 1.2, 3: 1.2, 7: 0.8, 9: 0.7, 10: 1.2, 11: 1.0, 12: 0.9, 13: 1.1, 14: 1.0, 16: 1.2, 19: 1.3, 22: 1.1, 26: 1.1, 29: 0.8,
     40: 2.6, 1: 1.4, 8: 1.6, 15: 1.1, 17: 1.3, 20: 1.3, 21: 1.4, 23: 1.4, 24: 1.4, 25: 1.3, 34: 4.4, 31: 1.8, 32: 1.8, 33: 1.8, 37: 1.8, 38: 2.4,
-    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4,
+    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4, 45: 2.4,
   };
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
@@ -2393,7 +2440,7 @@ export function mountMorph(root: HTMLElement) {
       for (const c of shuffle(P2D)) push1(c, 'A2D', LEN[c] ?? 1, pick([0, 1, 3]));
     } else if (P === 1) {
       push1(40, 'up', LEN[40], 0);
-      const others = shuffle([...P3D, ...(objReady ? [31, 32, 33, 37, 38] : [])]);
+      const others = shuffle([...P3D, ...(objReady ? [32, 33, 38] : [])]);
       const core = Math.random() < 0.5 ? [1, 34, 21] : [21, 34, 1];
       const at = Math.floor(Math.random() * (others.length + 1));
       const list = [...others.slice(0, at), ...core, ...others.slice(at)];
