@@ -1702,13 +1702,17 @@ precision highp float;
 uniform sampler2D uImg;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
+uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
 in vec2 vUv;
 out vec4 o;
 float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 void main(){
   float an = uAnalog; float dg = 1.0 - an;
   vec2 px = 1.0 / uRes;
-  vec3 c = texture(uImg, vUv).rgb;
+  float g2 = uGrade.x, g3 = uGrade.y, g4 = uGrade.z;
+  // 3D(35mm): フィルムのゲートの揺れ。1画素に満たない、ゆっくりした縦横の揺れ。
+  vec2 uv = vUv + vec2(sin(uTime * 1.7) * 0.35, sin(uTime * 2.3 + 1.0) * 0.55 + sin(uTime * 13.0) * 0.12) * px * g3;
+  vec3 c = texture(uImg, uv).rgb;
   // デジタル: 色が少し割れ、細い走査線が入る
   float sh = dg * 1.2;
   c.r = mix(c.r, texture(uImg, vUv + vec2(px.x * sh, 0.0)).r, dg);
@@ -1720,6 +1724,40 @@ void main(){
   vec2 q = vUv - 0.5;
   c *= mix(1.0, 1.0 - 0.45 * dot(q, q) * 2.0, an);
   c = mix(c, c * vec3(1.03, 1.0, 0.93) + 0.012, an);
+
+  // ---- パートごとのグレーディング(A24 の作品の、色の応答・粒子・ハレーション・ゲートの揺れ を参考に)
+  // 写真の色相は変えない。変えるのは、明暗の応答・光のにじみ・粒の質感だけ。
+  if (g2 + g3 + g4 > 0.001) {
+    float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    // 光のにじみ: 明るい所のまわりを、黄金角で12点拾う
+    float th = mix(0.6, 0.22, g4);
+    float R = uRes.y * mix(0.010, 0.016, g4);
+    vec3 bl = vec3(0.0);
+    for (int i = 0; i < 12; i++) {
+      float a = float(i) * 2.39996 + uTime * 0.0;
+      float r = (float(i) + 1.0) / 12.0 * R;
+      vec3 s = texture(uImg, uv + vec2(cos(a), sin(a)) * r * px).rgb;
+      float sl = dot(s, vec3(0.2126, 0.7152, 0.0722));
+      bl += s * smoothstep(th, th + 0.25, sl);
+    }
+    bl /= 12.0;
+    // 2D(刷り): 黒が紙の上の墨のように少し浮き、ハイライトは紙の白で止まる。彩度をわずかに落とす。
+    vec3 c2 = mix(c, vec3(lum), 0.07);
+    c2 = 0.03 + c2 * 0.93;
+    c2 = c2 / (1.0 + 0.12 * c2) * 1.1;
+    // 3D(35mm): 肩と足のあるフィルムの応答、中間調をわずかに暖かく、赤いハレーション、粗めの粒子
+    vec3 c3 = c * 0.72 + c * c * (3.0 - 2.0 * c) * 0.28;
+    c3 = c3 / (1.0 + 0.18 * max(c3 - 0.6, 0.0));
+    float mid = smoothstep(0.15, 0.45, lum) * (1.0 - smoothstep(0.55, 0.9, lum));
+    c3 *= mix(vec3(1.0), vec3(1.035, 1.0, 0.965), mid);
+    c3 += bl * vec3(1.0, 0.32, 0.1) * 0.55;
+    float n2 = h(floor(gl_FragCoord.xy / 2.5) + fract(uTime * 11.0) * 57.0) - 0.5;
+    c3 += n2 * 0.045 * (0.4 + 0.6 * smoothstep(0.0, 0.5, lum)) * (1.0 - smoothstep(0.6, 1.0, lum));
+    // 4D(光): 黒は沈めきる。光の線は、にじんで空気に溶ける。
+    vec3 c4 = max(c - 0.012, 0.0) * 1.03;
+    c4 += bl * vec3(0.85, 0.9, 1.0) * 1.1;
+    c = c * (1.0 - g2 - g3 - g4) + c2 * g2 + c3 * g3 + c4 * g4;
+  }
   o = vec4(max(c, 0.0), 1.0);
 }`;
 
@@ -1760,7 +1798,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -2375,6 +2413,8 @@ export function mountMorph(root: HTMLElement) {
   // パート: 2D(描く)→ 3D(帯が増えて奥行きになる)→ 4D(作品の軸を足して、4次元で回す)。立体の版だけ。それ以外の版は、ずっと 2D のまま(奥行きは今までどおり)。
   const PART: Record<string, number> = three ? { intro: 0, A2D: 0, B2D: 0, drop2D: 0, up: 1, chorus: 1, B3: 1, drop3: 1, D4: 2 } : {};
   let curPart = three ? 0 : 1;
+  const grade = three ? [1, 0, 0] : [0, 0, 0]; // パートごとのグレーディング(移り変わりは、ゆっくり混ぜる)
+  let gDt = 0.016;
   let partAt = 0;
   let numEl: HTMLElement | null = null;
   if (three && new URLSearchParams(location.search).get('num')) {
@@ -2842,6 +2882,7 @@ export function mountMorph(root: HTMLElement) {
   function tick(t: number) {
     raf = requestAnimationFrame(tick);
     const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
+    gDt = dt;
     last = t;
     now = (t - t0) / 1000;
     // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
@@ -3001,6 +3042,8 @@ export function mountMorph(root: HTMLElement) {
     gl!.useProgram(post);
     gl!.activeTexture(gl!.TEXTURE2);
     gl!.bindTexture(gl!.TEXTURE_2D, keepTex);
+    if (three) { const tg = [curPart === 0 ? 1 : 0, curPart === 1 ? 1 : 0, curPart === 2 ? 1 : 0]; for (let i = 0; i < 3; i++) grade[i] += (tg[i] - grade[i]) * Math.min(1, gDt * 1.4); }
+    gl!.uniform3f(pu.grade, grade[0], grade[1], grade[2]);
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.time, now);
     gl!.uniform2f(pu.res, cv.width, cv.height);
