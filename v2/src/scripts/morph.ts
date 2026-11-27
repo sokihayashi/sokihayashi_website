@@ -1721,7 +1721,7 @@ DP d4D(float t){
 // 下の円の点 θ と、上の円の点 kθ + δ を、まっすぐ結ぶ。k・上の円の大きさ・高さ を回すだけで、星・球・扇・錐・ウニになる。
 // 横に払うと上の円が回って束が ねじれ(惰性で回り続ける)、縦に払うと上の円が広がる・すぼまる(裏返ると砂時計やウニ)
 vec3 dRotV(vec3 p){
-  float ax = 1.0 + 0.3 * sin(uRot4.y * 0.5), ay = uRot4.x * 0.5;
+  float ax = 1.0 + 0.3 * sin(uRot4.y * 0.5), ay = uRot4.x * 0.5 + uBun.x * 0.35; // 払った向きへ、束ごと回る(ねじれだけでは、形によって動きが見えにくかった)
   p = vec3(p.x, p.y * cos(ax) - p.z * sin(ax), p.y * sin(ax) + p.z * cos(ax));
   return vec3(p.x * cos(ay) + p.z * sin(ay), p.y, -p.x * sin(ay) + p.z * cos(ay));
 }
