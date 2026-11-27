@@ -1627,8 +1627,7 @@ float dExpo(vec2 fp, float t){
   if (t >= 42.5) return 0.0;
   vec2 sf = dFloorAt(uSun.xy, 1.0);
   float de = clamp(length(fp - sf) / length(uView), 0.0, 1.0);
-  float dj = hsh(uint(floor(fp.x * 0.07) * 131.0 + floor(fp.y * 0.07) * 977.0 + 50000.0)) - 0.5; // 焼けむら(格子の段を見せない)
-  return dsm(17.4 + de * 1.8 + dj * 0.45, 18.7 + de * 1.8 + dj * 0.45, t); // 太陽の真下から、外へ焼けていく
+  return dsm(17.4 + de * 1.8, 18.7 + de * 1.8, t); // 太陽の真下から、外へ焼けていく(焼けむらを足すと、モザイクに見えた)
 }
 // 光のほうから、床へ影を投げる
 vec3 dCast(vec3 P, vec3 L){ float dy = max(L.y - P.y, L.y * 0.12); vec3 S = L + (P - L) * (L.y / dy); S.y = 0.6; return S; }
