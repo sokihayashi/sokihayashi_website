@@ -1672,7 +1672,7 @@ DP dTower(float t, float kt){
   float rt = dvRk * 1.25 * (0.72 + 0.34 * sin(y * 0.05 + float(dvK) * 1.7)) * (0.8 + 0.4 * dvA3);
   vec3 w = vec3(dvCk.x - c.x + cos(ang) * rt, y, dvCk.y - c.y + sin(ang) * rt);
   vec2 ff = dFloorAt(uPen.xy, kt), away = (dvCk - c) - ff; float dd = length(away);
-  w.xz += (dd > 1.0 ? away / dd : vec2(0.0)) * uPen.z * 80.0 * exp(-dd / 240.0) * dvTt * dvTt;
+  w.xz += (dd > 1.0 ? away / dd : vec2(0.0)) * uPen.z * 130.0 * exp(-dd / 260.0) * dvTt * dvTt;
   vec3 col = D_GRAY * (0.42 + 0.6 * max(cos(ang - 2.4), 0.0)) * (0.9 + 0.2 * dvA1);
   return dDot(dCam(w, kt), vec2(1.5), 1.0, col);
 }
@@ -1720,7 +1720,7 @@ DP dBundle(float t){
 // ---- 柔らかい光の花びら(zach lieberman): 真ん中から放射状に並ぶ、光の円錐。奥の層ほど ぼける。息をするように伸び縮みし、色が 青 ⇄ 橙 と回る。
 // 花びらの付け根は、指の所へ寄る。なぞると回る。70秒から、その中へ飛び込む。
 DP dPetal(float t){
-  vec2 c = uView * 0.5 + (uPen.xy - uView * 0.5) * 0.35 * uPen.z;
+  vec2 c = uView * 0.5 + (uPen.xy - uView * 0.5) * 0.6 * uPen.z;
   float S = min(uView.x, uView.y) * 0.5;
   int j = gI % 14; int ly = (gI / 14) % 3;
   float r = sqrt(dvA2), ph = dvA1 * 6.2831853;
