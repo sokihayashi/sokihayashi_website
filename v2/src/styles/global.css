@@ -281,3 +281,99 @@ html.lenis body {
 .prose + .prose {
   margin-top: 1.5rem;
 }
+
+/* ===== 共有: タグのボタン ===== */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chip {
+  appearance: none;
+  border: 1px solid #33322e;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: rgba(244, 241, 234, 0.72);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+.chip:hover {
+  color: var(--fg);
+  border-color: #6b6860;
+}
+.chip:focus-visible {
+  outline: 1px solid var(--fg);
+  outline-offset: 2px;
+}
+.chip[aria-pressed='true'] {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: #000;
+}
+
+/* ===== ページの移り変わり: 帯がひらく =====
+   動きは src/scripts/band.ts。ここは面の見た目だけ。 */
+.band-wipe {
+  /* ページが替わる一瞬も、いちばん上に描かれるようにする(下のページがちらつかない)。 */
+  view-transition-name: band-wipe;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  overflow: hidden;
+}
+.band-wipe i {
+  position: absolute;
+  inset: 0;
+  background: var(--fg);
+  will-change: transform, clip-path;
+}
+.band-wipe .band-half {
+  display: none;
+}
+.band-wipe .band-stroke {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.band-wipe .band-stroke path {
+  stroke: var(--fg);
+}
+/* 帯で覆っているあいだは、下で起きるフェードを止める(待ち時間を増やさない)。 */
+/* 粒で移るあいだ(src/scripts/gsplat.ts): 上のメニューは粒にせず、その場に残して、粒の面より上に置く。
+   トップで傾いて散っていたメニューは、まっすぐな位置に戻す。 */
+html.gs-on .site-bar {
+  z-index: 1001;
+  view-transition-name: site-bar;
+}
+html.gs-on .site-bar .mainnav a,
+html.gs-on .site-bar .logo {
+  transform: none !important;
+}
+
+html.band-wiping::view-transition-group(*),
+html.band-wiping::view-transition-old(*),
+html.band-wiping::view-transition-new(*) {
+  animation: none !important;
+}
+
+/* ===== 帯の切れ端(出口や行き先に使う部品) =====
+   枠のボタンの代わり。白い帯に黒い文字。 */
+.tape {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 1.2rem;
+  background: var(--fg);
+  color: #000;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+}

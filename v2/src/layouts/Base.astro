@@ -9,7 +9,7 @@ interface Props {
 
 const {
   title = 'Soki Hayashi — Designer',
-  description = 'グラフィック / ブランディング / 3DCG を横断するデザイナー、林 創生のポートフォリオ。',
+  description = 'ブランディング、グラフィック、写真、映像、3D、UI/UXを横断するデザイナー、林 宋其(Soki Hayashi)のポートフォリオ。',
 } = Astro.props;
 
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
@@ -27,7 +27,7 @@ const personLd = {
   '@context': 'https://schema.org',
   '@type': 'Person',
   name: 'Soki Hayashi',
-  alternateName: '林 創生',
+  alternateName: '林 宋其',
   jobTitle: 'Designer',
   url: Astro.site?.href,
 };
@@ -89,10 +89,15 @@ const personLd = {
     <footer class="site-foot" transition:persist="foot">
       <span>© {new Date().getFullYear()} Soki Hayashi</span>
       <address>
-        Graphic / Branding / 3DCG<br />
-        Based in Japan
+        Branding / Graphic / Photo / Movie / 3D / UIUX<br />
+        Based in Tokyo
       </address>
     </footer>
+
+    <!-- ページの移り変わり: 押した場所から28°の帯がひらく(全ページ共通)。 -->
+    <script>
+      import '../scripts/band';
+    </script>
 
     <script>
       import Lenis from 'lenis';
@@ -103,15 +108,30 @@ const personLd = {
         '(prefers-reduced-motion: reduce)'
       ).matches;
 
-      // Lenis は一度だけ初期化(遷移をまたいで使い回す)
-      function initLenisOnce() {
-        if (reduce || (window as any).__lenis) return;
+      // Lenis はふつうのページでだけ使う。
+      // トップ(斜めスクロールのステージ)は自前でスクロールを握るので、そこでは止める。
+      let tickerBound = false;
+      function syncLenis() {
+        const onStage = !!document.querySelector('[data-stage-root]');
+        const w = window as any;
+        if (reduce || onStage) {
+          if (w.__lenis) {
+            w.__lenis.destroy();
+            w.__lenis = undefined;
+          }
+          return;
+        }
         gsap.registerPlugin(ScrollTrigger);
-        const lenis = new Lenis({ lerp: 0.1 });
-        (window as any).__lenis = lenis;
-        lenis.on('scroll', ScrollTrigger.update);
-        gsap.ticker.add((t) => lenis.raf(t * 1000));
-        gsap.ticker.lagSmoothing(0);
+        if (!w.__lenis) {
+          const lenis = new Lenis({ lerp: 0.1 });
+          w.__lenis = lenis;
+          lenis.on('scroll', ScrollTrigger.update);
+        }
+        if (!tickerBound) {
+          tickerBound = true;
+          gsap.ticker.add((t) => (window as any).__lenis?.raf(t * 1000));
+          gsap.ticker.lagSmoothing(0);
+        }
       }
 
       // reveal は遷移のたびに作り直す
@@ -153,7 +173,7 @@ const personLd = {
       }
 
       function onLoad() {
-        initLenisOnce();
+        syncLenis();
         setupReveals();
         startClock();
         const l = (window as any).__lenis;

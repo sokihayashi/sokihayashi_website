@@ -1,0 +1,196 @@
+---
+// 試作: 連なり(Works の一覧)。写真の面が線を共有して縦に連なる。題名は文字と線だけ。
+import { getCollection } from 'astro:content';
+import { DOMAINS } from '../content.config';
+import { wallSrc } from '../data/wall';
+
+interface Props {
+  mode?: 'sway' | 'drum' | 'still'; // うねる / 巻く(3D) / 動かさない
+  // 題名の側の形。指定すると、題名も「枠で区切られた面」になる(トップの帯と同じ決まり)。
+  //   dark  … 写真の面の右に、暗い面。白い文字
+  //   paper … 写真の面の右に、紙色の面。黒い文字
+  //   chain … 1本の連なり。写真の面の下に、題名の短い面が続く
+  cell?: 'dark' | 'paper' | 'chain';
+}
+const { mode = 'sway', cell } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<section class="strip-page">
+  <h1 class="strip-h">Works</h1>
+  <ol
+    class:list={['strip', `strip-${mode}`, cell && 'strip-cells', cell && `strip-cell-${cell}`]}
+    data-strip-root={mode === 'still' ? undefined : ''}
+    data-strip={mode}
+  >
+    {
+      works.map((w) => (
+        <li class="strip-row" data-row>
+          <a class="strip-face" data-face href={`${base}/works/${w.id}/`} tabindex="-1" aria-hidden="true">
+            <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
+          </a>
+          <a class="strip-text" href={`${base}/works/${w.id}/`}>
+            <span class="strip-title">{w.data.title}</span>
+            <span class="strip-meta">
+              {w.data.domain.map((k) => DOMAINS[k]).join(' / ')}
+              {w.data.year ? ` — ${w.data.year}` : ''}
+            </span>
+          </a>
+        </li>
+      ))
+    }
+  </ol>
+</section>
+
+<script>
+  import { mountStrip } from '../scripts/strip';
+
+  let dispose: (() => void) | null = null;
+  const start = () => {
+    dispose?.();
+    dispose = null;
+    const root = document.querySelector<HTMLElement>('[data-strip-root]');
+    if (!root) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    dispose = mountStrip(root);
+  };
+  document.addEventListener('astro:page-load', start);
+  document.addEventListener('astro:before-swap', () => {
+    dispose?.();
+    dispose = null;
+  });
+</script>
+
+<style is:global>
+  .strip-page {
+    padding: 6.5rem 0 6rem;
+  }
+  .strip-h {
+    margin: 0 var(--pad) 2.2rem;
+    font-size: 1rem;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+  }
+  .strip {
+    --sw: 46vw; /* 面の幅 */
+    --m: 28px; /* しなりの余地(横) */
+    --vm: 24px; /* 切れ目が傾くための余地(縦) */
+    --rh: calc(var(--sw) * 1.5); /* 面の長さ */
+    list-style: none;
+    margin: 0;
+    padding: 0 var(--pad);
+  }
+  @media (min-width: 800px) {
+    .strip {
+      --sw: min(30vw, 380px);
+      --m: 44px;
+      --vm: 40px;
+    }
+  }
+  /* 面と面は、1本の線(黒い2px)を共有して連なる。すき間や角丸は作らない。 */
+  .strip-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--sw) minmax(0, 1fr);
+    grid-template-rows: var(--rh);
+    height: var(--rh);
+  }
+  .strip-face {
+    display: block;
+    position: relative;
+    width: calc(var(--sw) + var(--m) * 2);
+    /* 高さは数字で決める(Safari では 100% が効かず、写真が下の面に被っていた)。 */
+    height: calc(var(--rh) + var(--vm) * 2);
+    margin: calc(var(--vm) * -1) 0 0 calc(var(--m) * -1);
+    overflow: hidden;
+    /* 写真は余地のぶんだけ広く置いてあり、見えるのは面の形(窓)の中だけ。面と面のあいだは黒い線1本。 */
+    clip-path: inset(calc(var(--vm) + 1px) var(--m));
+  }
+  .strip-face img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* 題名は文字と線だけ。区切りの線は、面の切れ目からそのまま横へ伸びる。 */
+  .strip-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.8rem 0 0 calc(var(--m) + 14px);
+    border-top: 1px solid #3a3a37;
+    will-change: transform;
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .strip-row:first-child .strip-text {
+    border-top-color: transparent;
+  }
+  .strip-title {
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .strip-meta {
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  /* ---- 題名も面にする版 ----
+     すべての要素を、黒い線2pxで区切られた、不透明な面にする。面の中に、写真か文字が入る。 */
+  .strip-cells .strip-text {
+    margin: 1px 0 1px 2px;
+    padding: 0.85rem 0.9rem;
+    border-top: 0;
+    background: var(--line);
+  }
+  @media (min-width: 800px) {
+    /* 広い画面では、題名の面を写真の面と同じ幅にする(横いっぱいの板にしない)。 */
+    .strip-cells .strip-text {
+      max-width: var(--sw);
+      box-sizing: border-box;
+    }
+  }
+  .strip-cell-paper .strip-text {
+    background: var(--fg);
+    color: #000;
+  }
+  .strip-cell-paper .strip-meta {
+    color: #5c5952;
+  }
+  /* 1本の連なり: 写真の面の下に、題名の短い面が続く。 */
+  .strip-cell-chain {
+    --sw: 64vw;
+  }
+  @media (min-width: 800px) {
+    .strip-cell-chain {
+      --sw: min(34vw, 420px);
+    }
+  }
+  .strip-cell-chain .strip-row {
+    display: block;
+    height: auto;
+  }
+  .strip-cell-chain .strip-face {
+    margin-bottom: calc(var(--vm) * -1);
+  }
+  .strip-cell-chain .strip-text {
+    width: var(--sw);
+    margin: 1px 0;
+    box-sizing: border-box;
+  }
+  /* 巻く(3D): 連なりを、奥へ曲がる面に載せる。 */
+  .strip-drum.is-live {
+    perspective: 1100px;
+  }
+  .strip-drum.is-live .strip-row {
+    transform-origin: 50% 50%;
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+</style>

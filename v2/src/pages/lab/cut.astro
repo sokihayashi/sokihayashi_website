@@ -1,0 +1,219 @@
+---
+// 試作: 断つ。スマホを基準にしたヒーローの案。いまのトップとは別に置いてある。
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { wallSrc } from '../../data/wall';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.featured)).sort(
+  (a, b) => a.data.order - b.data.order
+);
+---
+
+<Base title="Soki Hayashi — cut (試作)">
+  <!--
+    画面は、作品の紙が重なった束。引いた線で紙が切れ、切れ端が28°で滑り落ちて次の作品が出る。
+    JS が動かない環境や「動きを減らす」設定では、縦に並んだ画像の一覧として読める。
+  -->
+  <div class="cut" data-cut-root>
+    <div class="sheet sheet-cover" data-sheet data-title="Soki Hayashi">
+      <img class="cover-logo" src={`${base}/logo.svg`} alt="Hayashi Design Works" width="72" height="72" />
+    </div>
+
+    {
+      works.map((w, i) => (
+        <a
+          class="sheet"
+          data-sheet
+          data-title={`${String(i + 1).padStart(2, '0')}  ${w.data.title}`}
+          href={`${base}/works/${w.id}/`}
+          draggable="false"
+        >
+          <img
+            src={wallSrc(w.data.images[0], 1500)}
+            alt={w.data.title}
+            loading={i < 2 ? 'eager' : 'lazy'}
+            decoding="async"
+            draggable="false"
+          />
+          <span class="sheet-title">{w.data.title}</span>
+        </a>
+      ))
+    }
+
+    <div class="sheet sheet-end" data-sheet data-title="">
+      <p class="end-links" data-keep>
+        <a href={`${base}/works/`}>Works</a>
+        <a href={`${base}/about/`}>About</a>
+        <a href={`${base}/contact/`}>Contact</a>
+      </p>
+    </div>
+
+    <svg class="cut-overlay" data-overlay aria-hidden="true" focusable="false">
+      <line class="cut-guide" data-guide></line>
+      <polyline class="cut-line" data-line fill="none"></polyline>
+    </svg>
+    <p class="cut-label" data-label aria-hidden="true"></p>
+  </div>
+
+  <script>
+    import { mountCut } from '../../scripts/cut';
+
+    let dispose: (() => void) | undefined;
+    document.addEventListener('astro:page-load', () => {
+      dispose?.();
+      dispose = undefined;
+      const root = document.querySelector<HTMLElement>('[data-cut-root]');
+      if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      dispose = mountCut(root);
+    });
+    document.addEventListener('astro:before-swap', () => {
+      dispose?.();
+      dispose = undefined;
+    });
+  </script>
+</Base>
+
+<style is:global>
+  /* ---- ふつうの縦のページ(JS なし / 動きを減らす設定) ---- */
+  .cut {
+    padding: 6rem var(--pad) 3rem;
+    display: grid;
+    gap: 2.5rem;
+  }
+  .cut .sheet {
+    display: block;
+  }
+  .cut .sheet img {
+    width: 100%;
+    height: auto;
+  }
+  .cut .sheet-title {
+    display: block;
+    margin-top: 0.7rem;
+    font-size: 1rem;
+  }
+  .cut .cover-logo {
+    width: 72px;
+  }
+  .cut-overlay,
+  .cut-label {
+    display: none;
+  }
+  .cut .end-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.6rem;
+    margin: 0;
+    font-size: clamp(1.8rem, 7vw, 3.4rem);
+    font-weight: 700;
+  }
+
+  /* ---- 断つ(.is-live) ---- */
+  html.cut-on,
+  html.cut-on body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html.cut-on .site-foot {
+    display: none;
+  }
+  .cut.is-live {
+    position: fixed;
+    inset: 0;
+    display: block;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* 紙。画面いっぱい。写真は裁ってよい(詳細で全体が見られる)。透かさない。 */
+  .cut.is-live .sheet {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    will-change: transform;
+  }
+  .cut.is-live .sheet img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+  .cut.is-live .sheet-title {
+    display: none;
+  }
+  .cut.is-live .sheet-cover,
+  .cut.is-live .sheet-end {
+    display: grid;
+    place-items: center;
+  }
+  .cut.is-live .sheet .cover-logo {
+    width: clamp(64px, 16vw, 96px);
+    height: auto;
+    object-fit: contain;
+  }
+  .cut.is-live .sheet-end .end-links {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .cut.is-live .piece {
+    pointer-events: none;
+  }
+  .cut.is-live .cut-overlay {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 60;
+    pointer-events: none;
+  }
+  /* 引いている線。どの写真の上でも見えるよう、下の色を反転させる。 */
+  .cut-line {
+    stroke: #fff;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    mix-blend-mode: difference;
+  }
+  /* 切り取り線。最初の1枚にだけ出る。 */
+  .cut-guide {
+    stroke: rgba(244, 241, 234, 0.55);
+    stroke-width: 1;
+    stroke-dasharray: 7 9;
+    opacity: 0;
+    transition: opacity 0.4s;
+    animation: cut-dash 1.6s linear infinite;
+  }
+  .cut.on-cover .cut-guide {
+    opacity: 1;
+  }
+  @keyframes cut-dash {
+    to {
+      stroke-dashoffset: -32;
+    }
+  }
+  .cut.is-live .cut-label {
+    display: block;
+    position: absolute;
+    left: max(20px, var(--pad));
+    right: max(20px, var(--pad));
+    bottom: calc(1.3rem + env(safe-area-inset-bottom));
+    z-index: 61;
+    margin: 0;
+    font-size: 0.86rem;
+    letter-spacing: 0.04em;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #fff;
+    mix-blend-mode: difference;
+    pointer-events: none;
+  }
+</style>

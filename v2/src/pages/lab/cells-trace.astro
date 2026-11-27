@@ -1,0 +1,9 @@
+---
+// 試作: Works の一覧(枠と面) — 列が1本ずつの平らな帯。指(PC ではカーソル)の横の動きで帯を引くと、波になって伝わり、ゆれながらまっすぐへ戻る。
+import Base from '../../layouts/Base.astro';
+import CellList from '../../components/CellList.astro';
+---
+
+<Base title="Soki Hayashi — cells-trace (試作)">
+  <CellList ctl="menu" keys={['d']} cols={2} live="trace" />
+</Base>

@@ -1,0 +1,9 @@
+---
+// 試作: Works の一覧(枠と面) — 列が1本ずつの平らなテープ。指(PC ではカーソル)の通った跡がテープの通り道になり、作品がそこを流れる。離すと、ばねで まっすぐへ戻る。
+import Base from '../../layouts/Base.astro';
+import CellList from '../../components/CellList.astro';
+---
+
+<Base title="Soki Hayashi — cells-tape (試作)">
+  <CellList ctl="menu" keys={['d']} cols={2} live="tape" />
+</Base>

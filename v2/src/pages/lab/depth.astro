@@ -1,0 +1,218 @@
+---
+// 試作: 表面を突破する(B 案の改善版)。/lab/morph/ ・ /lab/morph-sharp/ ・ /lab/morph-3d/ は変えていない。
+// なぞった線が「切り口」になる。切った長さがその面の張りを超えると、面が割れて落ち、次の層へ潜る。
+// 奥ほど「作る前」に戻る: 写真の紙 → 物の厚み(紙が巻いて筒になる)→ 光(ガラス)→ 設計の線(機材の線画)→ 一覧。
+// 最後の面が裏返ると、Works の一覧(/works と同じ作り)になり、そのまま送って見られる。
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { DOMAINS, STANCES } from '../../content.config';
+import { wallSrc, WALL } from '../../data/wall';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft)).sort((a, b) => a.data.order - b.data.order);
+const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k) =>
+  works.some((w) => w.data.domain.includes(k))
+);
+const ratio = (n: number) => WALL.find(([i]) => i === n)?.[1] ?? 1.5;
+// 層の写真に使う絵(作品ごとに最初の2枚まで)。
+const pics = works.flatMap((w) => w.data.images.slice(0, 2)).map((n) => ({ src: wallSrc(n, 560), r: ratio(n) }));
+---
+
+<Base title="Soki Hayashi — depth (試作)">
+  <script is:inline>document.documentElement.classList.add('depth-pre');</script>
+  <div class="depth" data-depth-root data-base={base}>
+    <canvas class="depth-canvas" data-canvas aria-hidden="true"></canvas>
+    <div class="depth-edge" data-edge aria-hidden="true"></div>
+    <ul class="depth-pics" hidden>
+      {pics.map((p) => <li data-pic={p.src} data-r={p.r}></li>)}
+    </ul>
+  </div>
+
+  <!-- 結末で現れる一覧。/works と同じ中身・同じ見た目。 -->
+  <section class="page wrap depth-land" data-land>
+    <p class="eyebrow">Works</p>
+    <h1 class="page-title">Works</h1>
+
+    <div class="list-filters" data-list-filters>
+      <div class="chips" role="group" aria-label="領域">
+        <button class="chip" type="button" data-d="all" aria-pressed="true">All</button>
+        {
+          usedDomains.map((k) => (
+            <button class="chip" type="button" data-d={k} aria-pressed="false">
+              {DOMAINS[k]}
+            </button>
+          ))
+        }
+      </div>
+      <div class="chips" role="group" aria-label="立場">
+        <button class="chip" type="button" data-s="all" aria-pressed="true">Client + Original</button>
+        {
+          (Object.keys(STANCES) as (keyof typeof STANCES)[]).map((k) => (
+            <button class="chip" type="button" data-s={k} aria-pressed="false">
+              {STANCES[k]}
+            </button>
+          ))
+        }
+      </div>
+    </div>
+
+    <ul class="grid" data-list>
+      {
+        works.map((w) => (
+          <li class="card" data-domain={w.data.domain.join(' ')} data-stance={w.data.stance}>
+            <a href={`${base}/works/${w.id}/`} class="card-link">
+              <div class="thumb" style={`--accent:${w.data.accent}`} aria-hidden="true">
+                {w.data.images[0] && <img src={wallSrc(w.data.images[0], 560)} alt="" decoding="async" />}
+              </div>
+              <div class="meta">
+                <h2 class="card-title">{w.data.title}</h2>
+                <p class="card-sub">
+                  {w.data.domain.map((k) => DOMAINS[k]).join(' / ')} — {STANCES[w.data.stance]}
+                  {w.data.year ? ` — ${w.data.year}` : ''}
+                </p>
+                <p class="card-summary">{w.data.summary}</p>
+              </div>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="list-empty" data-empty hidden>この組み合わせの作品はまだありません。</p>
+  </section>
+
+  <script>
+    import { mountDepth } from '../../scripts/depth';
+
+    let dispose: (() => void) | undefined;
+    const off = () => {
+      dispose?.();
+      dispose = undefined;
+      document.documentElement.classList.remove('depth-on');
+    };
+    const initList = () => {
+      const box = document.querySelector<HTMLElement>('[data-list-filters]');
+      const list = document.querySelector<HTMLElement>('[data-list]');
+      const empty = document.querySelector<HTMLElement>('[data-empty]');
+      if (!box || !list || box.dataset.bound) return;
+      box.dataset.bound = '1';
+      let d = 'all';
+      let s = 'all';
+      const apply = () => {
+        let n = 0;
+        list.querySelectorAll<HTMLElement>('li').forEach((li) => {
+          const ok =
+            (d === 'all' || (li.dataset.domain || '').split(' ').includes(d)) &&
+            (s === 'all' || li.dataset.stance === s);
+          li.hidden = !ok;
+          if (ok) n++;
+        });
+        if (empty) empty.hidden = n > 0;
+        box.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.d === d)));
+        box.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === s)));
+      };
+      box.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+        if (!b) return;
+        if (b.dataset.d !== undefined) d = b.dataset.d;
+        if (b.dataset.s !== undefined) s = b.dataset.s;
+        apply();
+      });
+    };
+    document.addEventListener('astro:page-load', () => {
+      off();
+      initList();
+      const root = document.querySelector<HTMLElement>('[data-depth-root]');
+      const done = () => document.documentElement.classList.remove('depth-pre', 'depth-on');
+      if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return done();
+      if (!document.createElement('canvas').getContext('webgl2')) return done();
+      document.documentElement.classList.add('depth-on');
+      root.classList.add('is-live');
+      dispose = mountDepth(root, done);
+    });
+    document.addEventListener('astro:before-swap', off);
+  </script>
+</Base>
+
+<style is:global>
+  .depth {
+    display: none;
+  }
+  .card-summary {
+    margin: 0.6rem 0 0;
+    font-size: 0.86rem;
+    line-height: 1.75;
+    color: rgba(244, 241, 234, 0.75);
+  }
+  .depth-land .list-filters {
+    display: grid;
+    gap: 0.5rem;
+    margin-bottom: clamp(2rem, 5vh, 3.5rem);
+  }
+  .depth-land .thumb {
+    overflow: hidden;
+  }
+  .depth-land .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* 動いているあいだ: 一覧は場所だけ取って見せない(結末の絵合わせのため、並びはそのまま)。 */
+  html.depth-pre .depth-land,
+  html.depth-on .depth-land {
+    visibility: hidden;
+  }
+  html.depth-on,
+  html.depth-on body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html.depth-on .site-foot {
+    display: none;
+  }
+  html.depth-pre .depth,
+  .depth.is-live {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 1;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .depth-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .depth.is-flash {
+    filter: invert(1);
+  }
+  /* 通り過ぎた層の小口(上の端に畳まれる、紙の束の断面)。 */
+  .depth-edge {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 0;
+    pointer-events: none;
+  }
+  .depth-edge i {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    transform-origin: 50% 0;
+    animation: depth-edge-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  @keyframes depth-edge-in {
+    from {
+      transform: translateY(40vh) scaleY(30);
+      opacity: 0;
+    }
+  }
+</style>

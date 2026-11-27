@@ -1,0 +1,78 @@
+---
+// 試作: 手札の見本帳。1枚の札 = 1つの見せ方。叩くと次の札へ(左端を叩くと前へ)。
+// 一覧は、プロジェクトの claude/generative-3d-hand.md。/lab/morph/ と /lab/morph-sharp/ には触れていない。
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { wallSrc } from '../../data/wall';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort((a, b) => a.data.order - b.data.order);
+const photos = works.slice(0, 12).map((w) => wallSrc(w.data.images[0], 1500));
+---
+
+<Base title="Soki Hayashi — deck (試作)">
+  <div class="deck" data-deck-root data-base={base} data-photos={JSON.stringify(photos)}>
+    <canvas class="deck-canvas" data-canvas aria-hidden="true"></canvas>
+    <p class="deck-label" data-label></p>
+  </div>
+
+  <script>
+    import { mountDeck } from '../../scripts/deck';
+
+    let dispose: (() => void) | undefined;
+    const off = () => {
+      dispose?.();
+      dispose = undefined;
+      document.documentElement.classList.remove('deck-on');
+    };
+    document.addEventListener('astro:page-load', () => {
+      off();
+      const root = document.querySelector<HTMLElement>('[data-deck-root]');
+      if (!root) return;
+      if (!document.createElement('canvas').getContext('webgl2')) return;
+      document.documentElement.classList.add('deck-on');
+      dispose = mountDeck(root);
+    });
+    document.addEventListener('astro:before-swap', off);
+  </script>
+</Base>
+
+<style is:global>
+  html.deck-on,
+  html.deck-on body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html.deck-on .site-foot {
+    display: none;
+  }
+  .deck {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: pointer;
+  }
+  .deck-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  /* 札の番号と名前(どの札の話かを伝え合うための目印。見本帳だけのもの)。 */
+  .deck-label {
+    position: absolute;
+    left: var(--pad);
+    bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+    margin: 0;
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+    color: rgba(244, 241, 233, 0.75);
+    mix-blend-mode: difference;
+    pointer-events: none;
+  }
+</style>
