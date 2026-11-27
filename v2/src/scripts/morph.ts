@@ -74,6 +74,7 @@ uniform vec3 uKl;            // 48: a の倍率の対数(大きさ, 角度)と�
 uniform float uObjOn;        // 48: 機材の立体のデータが届いているか
 uniform vec3 uPrint;         // 48: 綿毛が飛ぶ瞬間の太陽の位置と時刻(影が紙に焼きつく)
 uniform vec3 uSun;           // 48: 太陽の位置(画面の座標。触っている間は指、離すと空をめぐる)と、指で動かしている度合い
+uniform vec4 uSlc;           // 48: 4次元の切り口(切る位置, 切る向き, 拍で版を入れ替える, 効き)。版は、画面に出ない軸(w)で決まる
 uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
@@ -1857,11 +1858,27 @@ DP d4D(float t){
   float lon = mix(6.2831853 * float(dvK * 7 + lvl) / 63.0, 6.2831853 * float(dvK) / 9.0 + float(lvl) * 0.45, sp);
   vec3 nb = vec3(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat));
   float ang = dTowerAng(t);
-  float S4 = min(uView.x, uView.y) * 0.17;
-  vec3 P = stereo(rot4(hopf(nb, ang).yzwx, uRot4.x, uRot4.y, uRot4.z));
+  float S4 = min(uView.x, uView.y) * mix(0.17, 0.23, dsm(39.0, 50.0, t) * uSlc.w); // 版が乗る間は、少し寄る(面の上の版が読める大きさ)
+  vec4 H = rot4(hopf(nb, ang).yzwx, uRot4.x, uRot4.y, uRot4.z);
+  vec3 P = stereo(H);
   vec3 Q = stereo(rot4(hopf(nb, ang + 0.06).yzwx, uRot4.x, uRot4.y, uRot4.z));
   vec3 tint = mix(vec3(1.0, 0.88, 0.76), vec3(0.74, 0.86, 1.0), float(lvl) / 6.0);
-  return dSeg(vec3(c + P.xy * S4, clamp(P.z * S4, -1400.0, 1000.0)), vec3(c + Q.xy * S4, clamp(Q.z * S4, -1400.0, 1000.0)), 0.45, tint * 0.055, 0.0);
+  vec3 Pw = vec3(c + P.xy * S4, clamp(P.z * S4, -1400.0, 1000.0));
+  DP ln = dSeg(Pw, vec3(c + Q.xy * S4, clamp(Q.z * S4, -1400.0, 1000.0)), 0.45, tint * 0.055, 0.0);
+  if (uSlc.w < 0.01) return ln;
+  // 版は、画面に出ない軸(4つめの w)で決まる。後からかける版ではなく、立体の面そのものの描き方。
+  // w を一定にした切り口(= 3次元の断面)は、太い光の線。その片側は線のまま、反対側は 面に沿った点の格子(格子は面に貼りつき、4次元で回すと一緒に歪む)。
+  // 拍ごとに、両側の版が入れ替わる。なぞって4次元で回すと、立体が切り口を くぐり、境目が面の上を すべる。
+  float sl = H.w * cos(uSlc.y) + H.x * sin(uSlc.y) - uSlc.x;
+  float cut = 1.0 - smoothstep(0.018, 0.04, abs(sl));
+  if (cut > 0.5) { ln.hs.y = mix(0.45, 1.0, uSlc.w); ln.col *= mix(1.0, 5.5, uSlc.w); return ln; }
+  bool dots = (sl < 0.0) != (uSlc.z > 0.5);
+  if (!dots || uSlc.w < 0.05 + 0.9 * dvA1) return ln; // 入り・抜けは、粒ごとに少しずつ版が替わる(一度に切り替えない)
+  float dq = 6.2831853 / 64.0, aq = (floor(ang / dq) + 0.5) * dq;
+  vec3 R = stereo(rot4(hopf(nb, aq).yzwx, uRot4.x, uRot4.y, uRot4.z));
+  DP d = dDot(vec3(c + R.xy * S4, clamp(R.z * S4, -1400.0, 1000.0)), vec2(1.5), 1.0, tint * 0.02);
+  d.a = 0.0; // 光として足す(線と同じ)
+  return d;
 }
 // ---- 線の束(Ayumu Nagamatsu「円と、座標変換した円の写像の頂点同士を結ぶ」)
 // 下の円の点 θ と、上の円の点 kθ + δ を、まっすぐ結ぶ。k・上の円の大きさ・高さ を回すだけで、星・球・扇・錐・ウニになる。
@@ -2772,7 +2789,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), slc: U('uSlc'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -4162,6 +4179,14 @@ export function mountMorph(root: HTMLElement) {
           beatK = cyc * BEATS.length + i; beatPh = r;
           let nq = 0; for (let j = 0; j < i; j++) if (BEATS[j] < 2.4) nq++;
           beatQ = BEATS[i] >= 2.4 ? 0 : TPL[(cyc * 5 + nq) % TPL.length];
+        }
+        // 4次元の切り口: 版は、画面に出ない軸(w)で立体の面の上に決まる。拍ごとに両側の版が入れ替わる。
+        // その間、後からかける版(画面の区画)は休む(同じ拍を、立体の上の入れ替えが受け持つ)
+        {
+          const k4 = devOn ? Math.min(1, Math.max(0, (dtl - 44.5) / 2.5)) * Math.min(1, Math.max(0, (61.5 - dtl) / 2.5)) : 0;
+          const ph = Math.max(0, dtl - 44.5);
+          gl!.uniform4f(u.slc, 0.16 * Math.sin(ph * 0.55), 0.5 + ph * 0.21, beatK >= 0 ? beatK % 2 : 0, k4);
+          if (k4 > 0.5) beatQ = 0;
         }
         darkV = devOn && dtl >= 19.0 && dtl < 99.5 ? 1 : 0;
         glareV += ((devOn && dtl >= 19.5 && dtl < 99.0 ? 1 : 0) - glareV) * (1 - Math.exp(-dt / 0.6));
