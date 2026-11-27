@@ -1346,6 +1346,107 @@ O sCity(){
   return o;
 }
 
+// 46 粒の竜巻(帯ではない): 傾いた床の上に、粒の円盤が並ぶ。粒が渦を巻いて立ち上がり、ふくらんだ塔になり、また円盤に崩れる。
+// 塔の中には、粒どうしを結ぶ細い線が走る。床には、塔の影が伸びる。
+// 元: Dan (@_nadiaru_) の TouchDesigner のパーティクル(2026-11-27)。本人:「クールでカッコよくて圧倒的な驚きがあれば、作品はあまり見えなくていい」。
+const int TK = 9;
+vec2 towerXZ(int k, float S){
+  int gx = k % 3, gz = k / 3;
+  vec2 j = vec2(hsh(uint(k) * 31U + 5U), hsh(uint(k) * 17U + 11U)) - 0.5;
+  return (vec2(float(gx), float(gz)) - 1.0) * S * 0.62 + j * S * 0.16;
+}
+float towerH(int k, float Hb){ return Hb * (0.62 + 0.38 * hsh(uint(k) * 13U + 3U)); }
+float riseOf(int k){
+  float ph = fract(uTime / 8.0 + hsh(uint(k) * 7U + 1U) * 0.12);
+  return smoothstep(0.06, 0.42, ph) * (1.0 - smoothstep(0.72, 0.97, ph));
+}
+vec3 grainW(int i, float S, float R, float Hb, out float tt, out float lift, out float side){
+  int k = i % TK;
+  float a1 = hsh(uint(i) * 2U + 101U), a2 = hsh(uint(i) * 5U + 7U), a3 = hsh(uint(i) * 11U + 3U);
+  vec2 cp = towerXZ(k, S);
+  float th = a1 * 6.2831853;
+  // 床の円盤(真ん中に穴のあるドーナツ)
+  float rd = R * (0.3 + 0.7 * sqrt(a2));
+  vec3 pd = vec3(cp.x + cos(th) * rd, a3 * 3.0, cp.y + sin(th) * rd);
+  // 塔: 高さ t、ふくらみが段になって重なる。上ほど速く回る
+  tt = a2;
+  float Hk = towerH(k, Hb);
+  float y = tt * Hk;
+  float ang = th + uTime * (0.5 + 1.1 * tt) + float(k);
+  float rt = R * 0.5 * (0.72 + 0.34 * sin(y * 0.055 + float(k) * 1.7)) * (0.8 + 0.4 * a3);
+  vec3 pt = vec3(cp.x + cos(ang) * rt, y, cp.y + sin(ang) * rt);
+  float rise = riseOf(k);
+  lift = smoothstep(tt * 0.45, tt * 0.45 + 0.55, rise);
+  // 立ち上がる途中は、渦の外へ少し ふくらむ
+  vec3 p = mix(pd, pt, lift);
+  float mid = lift * (1.0 - lift) * 4.0;
+  p.xz += vec2(cos(ang + 1.3), sin(ang + 1.3)) * R * 0.25 * mid;
+  side = cos(ang - 2.4); // 光の来る向きとの角度(塔の側面の明暗)
+  return p;
+}
+vec3 camW(vec3 p, vec2 c, float Y0){
+  float ya = 0.55 + sin(uTime * 0.07) * 0.35 + uTilt.x * 0.9;
+  float pi = 0.62 - uTilt.y * 0.35;
+  float x1 = p.x * cos(ya) + p.z * sin(ya), z1 = -p.x * sin(ya) + p.z * cos(ya);
+  float y2 = p.y * cos(pi) - z1 * sin(pi), z2 = p.y * sin(pi) + z1 * cos(pi);
+  return vec3(c.x + x1, c.y + Y0 - y2, z2);
+}
+O sTwister(){
+  const int NF = 64;
+  int NG = ${NU} * NVi - NF * NF;
+  vec2 c = uView * 0.5;
+  float S = uView.x * 0.82, R = S * 0.2, Hb = uView.y * 0.42, Y0 = uView.y * 0.12;
+  float appear = smoothstep(0.0, 1.0, uPartT);
+  vec3 gray = vec3(0.80, 0.81, 0.84);
+  if (gI >= NG) {
+    // 床: 傾いた灰色の板。塔の影が、光と反対へ伸びる
+    int q = gI - NG; int fz = q / NF, fx = q - fz * NF;
+    vec2 cell = vec2(float(fx), float(fz)) / float(NF) - 0.5;
+    vec2 cc = (vec2(float(fx), float(fz)) + 0.5) / float(NF) - 0.5;
+    vec3 P = vec3((cell + (aQ * 0.5 + 0.5) / float(NF)) * S * 2.0, 0.0).xzy;
+    vec3 M = vec3(cc * S * 2.0, 0.0).xzy;
+    float sh = 0.0;
+    vec2 Ld = normalize(vec2(0.75, 0.55));
+    for (int k = 0; k < TK; k++) {
+      vec2 b0 = towerXZ(k, S);
+      float L = towerH(k, Hb) * 1.1 * riseOf(k) + R * 0.2;
+      vec2 b1 = b0 + Ld * L;
+      vec2 pa = M.xz - b0, ba = b1 - b0;
+      float hh = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-3), 0.0, 1.0);
+      float d = length(pa - ba * hh);
+      sh = max(sh, (1.0 - smoothstep(R * 0.25, R * 0.75, d)) * (0.35 + 0.65 * riseOf(k)));
+    }
+    O o = base();
+    o.corner = camW(P, c, Y0); o.centre = camW(M, c, Y0);
+    o.col = vec3(0.30, 0.31, 0.34) * (1.0 - 0.72 * sh) * appear; o.tex = 0.0;
+    o.gate = 1.0;
+    return o;
+  }
+  float tt, lift, side;
+  vec3 w = grainW(gI, S, R, Hb, tt, lift, side);
+  vec3 sp = camW(w, c, Y0);
+  float lit = mix(0.85, 0.42 + 0.6 * max(side, 0.0), lift) * (0.9 + 0.2 * h2);
+  vec3 col = gray * lit * appear;
+  // 粒どうしを結ぶ細い線(塔になっている間だけ)。12粒に1本
+  if ((gI % 12) == 5 && lift > 0.3) {
+    int j = gI + TK * (37 + int(h3 * 40.0));
+    if (j < NG) {
+      float t2, l2, s2;
+      vec3 w2 = grainW(j, S, R, Hb, t2, l2, s2);
+      vec3 sp2 = camW(w2, c, Y0);
+      vec2 d = sp2.xy - sp.xy; float Ld = length(d);
+      if (Ld > 2.0 && Ld < uView.x * 0.22) {
+        O o = ori((sp + sp2) * 0.5, d / Ld, Ld * 0.5, 0.35, gray * 0.16 * lift * appear);
+        o.alpha = 0.0; o.gate = 1.0;
+        return o;
+      }
+    }
+  }
+  O o = dotAt(sp, vec2(1.55), col, 1.0, 1.0);
+  o.gate = 1.0;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1392,6 +1493,7 @@ O stateOf(int id){
   if (id == 43) return sCone();
   if (id == 44) return sTess();
   if (id == 45) return sCity();
+  if (id == 46) return sTwister();
   return sFrame();
 }
 
@@ -2322,7 +2424,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3, 0.6]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3, 0.6, 0.7]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -2330,7 +2432,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess', 45: 'city',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess', 45: 'city', 46: 'twister',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2423,12 +2525,12 @@ export function mountMorph(root: HTMLElement) {
   // 外したもの(?only=N では見られる): 10 札の蛇・11 置いていく写真(写真の札が並ぶ。互いに同じ)、3 浮き彫り・26 立体写真(帯とほぼ同じに見える)、
   // 12 画素の落下(7 ピクセルと同じ)、17 奥行きの点(8 の縞のねじれと同じ)、24 積もる(25 波紋と同じ波)、31 虹の立体・37 線の立体(32・38 と同じ形)。
   const P2D = [2, 7, 9, 13, 14, 16, 19, 22, 29];
-  const P3D = [8, 15, 20, 23, 25, 45];
+  const P3D = [8, 15, 20, 23, 25, 45, 46];
   // 表現ごとの長さ(1 = BEAT 秒)。その表現が見えて読めるまでにかかる時間で決めた。
   const LEN: Record<number, number> = {
     0: 1.0, 2: 1.2, 3: 1.2, 7: 0.8, 9: 0.7, 10: 1.2, 11: 1.0, 12: 0.9, 13: 1.1, 14: 1.0, 16: 1.2, 19: 1.3, 22: 1.1, 26: 1.1, 29: 0.8,
     40: 2.6, 1: 1.4, 8: 1.6, 15: 1.1, 17: 1.3, 20: 1.3, 21: 1.4, 23: 1.4, 24: 1.4, 25: 1.3, 34: 4.4, 31: 1.8, 32: 1.8, 33: 1.8, 37: 1.8, 38: 2.4,
-    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4, 45: 2.4,
+    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4, 45: 2.4, 46: 4.2,
   };
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
