@@ -2493,6 +2493,9 @@ uniform vec3 uSunG;          // 光源(指)の位置(画面の画素)と、触�
 uniform float uDroste;       // 画面のきまり(無限): 画面が、自分自身を中に含む(入れ子が渦を巻いて奥へ続く)
 uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
+uniform vec3 uBeat;  // 48: 拍(何拍目か、拍に入ってからの秒、割り付けの型。0 は静かな拍)。拍ごとに、画面の割り付けと版の重ね方が変わる
+uniform float uDark;  // 48: いまの絵の地が黒か(立体・4次元)、白か(紙)
+uniform float uGlare; // 48: いちばん明るい所の、星形のきらめき(紙の白が出ている間は 0)
 uniform float uCine; // 48: 映画の見え方(本人の言葉: グレインの入ったモーショングラフィック的なシネマ表現、A24 の π のような)。最初の1カットの写真の色は残す
 in vec2 vUv;
 out vec4 o;
@@ -2506,6 +2509,67 @@ float vn(vec2 p, int f){
 }
 float grain(vec2 p, int f){ return ((vn(p, f) - 0.5) * 0.68 + (vn(p * 2.07 + 13.1, f + 7) - 0.5) * 0.32) * 2.6; }
 // 粒の出方は明るさで変わる: 中間調でいちばん見え、深い黒と飛んだ白では消える(ネガの濃度の性質)。
+// ---- 版の重ね(グラフィックの文法)。同じ絵を、いくつかの刷り方で同時に見せる(参考: 本人が集めた静止画のグラフィック)
+float toneL(vec3 s){ float Y = dot(s, vec3(0.2126, 0.7152, 0.0722)); float Yc = max(Y - 0.006, 0.0); return clamp(Yc < 0.5 ? Yc * 0.96 : 0.48 + (Yc - 0.5) * 1.55, 0.0, 1.0); }
+float toneAt(vec2 u){ return toneL(texture(uImg, u).rgb); }
+float hk(float k, int s){ return hu(ivec2(int(k) * 7 + s, int(k) * 13 + s * 3), 4242 + s); }
+float hot(vec2 u, float th){ return smoothstep(th, th + 0.08, dot(texture(uImg, u).rgb, vec3(0.2126, 0.7152, 0.0722))); }
+// 刷り方: 1 反転 / 2 1ビット(縁がざらつく) / 3 画素の段のある輪郭線 / 4 縦の細線で埋める / 5 点の格子(LED・網点) / 6 市松(抜けたデータ)
+vec3 gfxT(int tr, vec3 m, float Yc, vec2 cq, float dark, float alt){
+  vec3 INK = vec3(0.03), PAP = vec3(0.94, 0.935, 0.92);
+  if (tr == 1) return vec3(1.0) - m;
+  if (tr == 2) { float th = 0.42 + (vn(cq * 0.9, 5) - 0.5) * 0.18; return Yc > th ? PAP : INK; }
+  if (tr == 3) {
+    float B = 3.0;
+    vec2 g = (floor(cq / B) + 0.5) * B;
+    vec2 ug = g * uDpr / uRes;
+    float q0 = floor(toneAt(ug) * 3.0 + 0.5), qx = floor(toneAt(ug + vec2(B * uDpr / uRes.x, 0.0)) * 3.0 + 0.5), qy = floor(toneAt(ug + vec2(0.0, B * uDpr / uRes.y)) * 3.0 + 0.5);
+    vec2 f = fract(cq / B);
+    bool ln = (q0 != qx && f.x > 0.6) || (q0 != qy && f.y > 0.6);
+    return alt > 0.5 ? (ln ? INK : PAP) : (ln ? PAP : INK);
+  }
+  if (tr == 4) {
+    float line = step(fract(cq.x / 2.6), 0.34);
+    bool subj = dark > 0.5 ? Yc > 0.42 : Yc < 0.42;
+    return dark > 0.5 ? (subj ? mix(PAP, INK, line) : INK) : (subj ? mix(INK, PAP * 0.92, line) : PAP);
+  }
+  if (tr == 5) {
+    float B = 6.0;
+    vec2 g = (floor(cq / B) + 0.5) * B;
+    float Lc = toneAt(g * uDpr / uRes);
+    float r = B * 0.5 * sqrt(dark > 0.5 ? Lc : 1.0 - Lc) * 0.98;
+    bool on = length(cq - g) < r;
+    return dark > 0.5 ? (on ? PAP : INK) : (on ? INK : PAP);
+  }
+  if (tr == 6) { vec2 g = floor(cq / 7.0); return mod(g.x + g.y, 2.0) < 1.0 ? vec3(0.78) : vec3(0.93); }
+  return m;
+}
+// 割り付け: 拍ごとに型を選び、型の中の位置は拍ごとに変える。静かな拍は、何もしない(余白)
+int gfxPick(vec2 cq, vec2 S, out float rule, out float alt){
+  rule = 0.0; alt = 0.0;
+  int tpl = int(uBeat.z + 0.5);
+  if (uBeat.x < 0.0 || tpl == 0) return 0;
+  float k = uBeat.x;
+  float h2 = hk(k, 2), h3 = hk(k, 3), dr = uBeat.y * 6.0; // 拍の中で、わずかに滑る
+  alt = step(0.5, hk(k, 4));
+  if (tpl == 1) { float sx = S.x * (0.28 + 0.44 * h2) + dr; rule = step(abs(cq.x - sx), 0.6); return cq.x < sx ? 1 : 0; }
+  if (tpl == 2) { float y0 = S.y * (0.14 + 0.5 * h2) + dr, bh = S.y * (0.16 + 0.14 * h3); rule = step(abs(cq.y - y0), 0.6) + step(abs(cq.y - y0 - bh), 0.6); return cq.y > y0 && cq.y < y0 + bh ? 5 : 0; }
+  if (tpl == 3) { float sx = S.x * (0.3 + 0.4 * h2) - dr; rule = step(abs(cq.x - sx), 0.6); return cq.x < sx ? 3 : 4; }
+  if (tpl == 4) {
+    vec2 r0 = vec2(S.x * (0.06 + 0.42 * h2), S.y * (0.06 + 0.56 * h3)), r1 = r0 + vec2(S.x * 0.46, S.y * 0.2);
+    bool inR = all(greaterThan(cq, r0)) && all(lessThan(cq, r1));
+    vec2 e = min(abs(cq - r0), abs(cq - r1));
+    rule = (inR || (cq.x > r0.x - 1.0 && cq.x < r1.x + 1.0 && cq.y > r0.y - 1.0 && cq.y < r1.y + 1.0)) ? step(min(e.x, e.y), 0.6) : 0.0;
+    return inR ? 5 : 2;
+  }
+  if (tpl == 5) {
+    vec2 r0 = vec2(S.x * (0.1 + 0.6 * h2), S.y * (0.1 + 0.75 * h3)), r1 = r0 + vec2(S.x * 0.22, S.y * 0.07);
+    bool inR = all(greaterThan(cq, r0)) && all(lessThan(cq, r1));
+    return inR ? 6 : 3;
+  }
+  float sy = S.y * (0.3 + 0.4 * h2) + dr; rule = step(abs(cq.y - sy), 0.6);
+  return cq.y < sy ? 1 : 5;
+}
 float grainAmt(float l, float shadow){ return smoothstep(0.0, 0.18, l + shadow) * (1.0 - smoothstep(0.7, 1.0, l)) * (0.55 + 0.45 * (1.0 - abs(l * 2.0 - 0.9))); }
 void main(){
   float an = uAnalog; float dg = 1.0 - an;
@@ -2568,10 +2632,10 @@ void main(){
     c3 = c3 / (1.0 + 0.18 * max(c3 - 0.6, 0.0));
     float mid = smoothstep(0.15, 0.45, lum) * (1.0 - smoothstep(0.55, 0.9, lum));
     c3 *= mix(vec3(1.0), vec3(1.035, 1.0, 0.965), mid);
-    c3 += mix(bl, blr, 0.65) * 0.42; // にじみは、少し虹がかる(本人: グレアや虹っぽい光のにじみの色はあっていい)
+    c3 += mix(bl, blr, 0.65) * 0.55; // にじみは、少し虹がかる(本人: グレアや虹っぽい光のにじみの色はあっていい)
     // 4D(光): 黒は沈めきる。光の線は、にじんで空気に溶ける。
     vec3 c4 = max(c - 0.012, 0.0) * 1.03;
-    c4 += mix(bl * vec3(0.85, 0.9, 1.0), blr, 0.3) * 0.6;
+    c4 += mix(bl * vec3(0.85, 0.9, 1.0), blr, 0.3) * 0.78;
     c = c * (1.0 - g2 - g3 - g4) + c2 * g2 + c3 * g3 + c4 * g4;
 
     // ---- 粒(グレイン)。パートごとに、粒の大きさ・動き方・色の混ざり方を変える。
@@ -2620,6 +2684,7 @@ void main(){
     Yc = Yc < 0.5 ? Yc * 0.96 : 0.48 + (Yc - 0.5) * 1.55;
     Yc *= 1.0 + (hu(ivec2(7, 3), fq) - 0.5) * 0.07; // コマごとの明滅
     vec3 m = vec3(clamp(Yc, 0.0, 1.0)) + ch * 0.3 * smoothstep(0.15, 0.6, Y); // 色は、光のふちにだけ少し残す
+    { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), rule, alt); if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); if (rule > 0.0) m = vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94); }
     vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
     m *= 1.0 - 0.5 * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03)));
     // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
@@ -2634,6 +2699,17 @@ void main(){
       m = mix(m, vec3(hh < 0.0022 ? 0.95 : 0.0), (1.0 - smoothstep(0.6, 1.7, length(cq - sp))) * 0.8);
     }
     c = mix(c, m, uCine);
+  }
+  // グレア: いちばん明るい所(重なって飽和した光、照らされた面)にだけ、十字の細いきらめき(本人が見せた、クロームのきらめき)
+  if (uGlare > 0.001) {
+    float gs = 0.0, hth = mix(0.94, 0.8, uGrade.z); // 4次元(光の線)では、重なった所がきらめく
+    for (int k = 1; k <= 6; k++) {
+      float d = float(k) * 2.1 * max(uDpr, 1.0);
+      float w = 1.0 - float(k) / 7.0;
+      vec2 ox = vec2(d * px.x, 0.0), oy = vec2(0.0, d * px.y);
+      gs += w * w * (hot(uv + ox, hth) + hot(uv - ox, hth) + hot(uv + oy, hth) + hot(uv - oy, hth));
+    }
+    c += vec3(0.95, 0.97, 1.0) * gs * 0.16 * uGlare;
   }
   // 場面の変わり目: 明るさの山(Marterium「Swirl」: 形が変わる所で光が強くなる)と、色を反転した1コマ(mnowakdesign)
   c *= 1.0 + uBoost;
@@ -2678,7 +2754,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { cine: gl.getUniformLocation(post, 'uCine'), sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { beat: gl.getUniformLocation(post, 'uBeat'), dark: gl.getUniformLocation(post, 'uDark'), glare: gl.getUniformLocation(post, 'uGlare'), cine: gl.getUniformLocation(post, 'uCine'), sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -3356,7 +3432,11 @@ export function mountMorph(root: HTMLElement) {
   const KPATH: [number, Cx, Cx][] = [[75, [2, 0], [2, 0]], [78.5, [1.87, 0.1], [1.87, -0.1]], [81, [1.91, 0.05], [1.91, 0.05]], [83.5, [1.61, 0.76], [2, 0]], [86.5, [1.87, 0.1], [1.87, -0.1]]];
   const kmArr = new Float32Array(32);
   let kOff: Cx = [0, 0], kFlowS = 0, kFlowV = 0.16;
-  let lastDevT = 0, inv = 0, boost = 0, droste = 0, cine = 0;
+  let lastDevT = 0, inv = 0, boost = 0, droste = 0, cine = 0, glareV = 0, darkV = 0, beatK = -1, beatPh = 0, beatQ = 0;
+  // 拍の並び(秒): 長い拍は静か(余白)、短い拍に版の重ねを差し込む。12秒で一巡
+  const BEATS = [2.4, 1.2, 1.2, 2.4, 0.6, 0.6, 1.2, 2.4];
+  // 短い拍の割り付けの型の順(同じ型が続かないように): 1 左右で反転 / 2 点の帯 / 3 輪郭と細線 / 4 1ビットと点の窓 / 5 輪郭と市松 / 6 上下で点と反転
+  const TPL = [1, 5, 3, 2, 6, 4, 3, 1, 2, 5, 6, 4];
   let devObjI = 0, devObjN = 0;
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
@@ -4066,6 +4146,19 @@ export function mountMorph(root: HTMLElement) {
       // 場面の変わり目
       if (devOn && dtl > lastDevT) for (const cT of DEV_CUTS) if (lastDevT < cT && dtl >= cT) { inv = 2; boost = 1.5; } // π のような、焼き切れる白のカット
       { const ct = devOn ? Math.min(1, Math.max(0, (dtl - 0.2) / 1.2)) : 0; cine = Math.max(devOn ? cine : 0, ct); } // 帯の写真が墨になるのと一緒に、白黒の映画になる
+      {
+        const tb = dtl - 1.2;
+        if (!devOn || tb < 0) { beatK = -1; beatPh = 0; beatQ = 0; }
+        else {
+          const cyc = Math.floor(tb / 12); let r = tb - cyc * 12, i = 0;
+          while (i < BEATS.length - 1 && r >= BEATS[i]) { r -= BEATS[i]; i++; }
+          beatK = cyc * BEATS.length + i; beatPh = r;
+          let nq = 0; for (let j = 0; j < i; j++) if (BEATS[j] < 2.4) nq++;
+          beatQ = BEATS[i] >= 2.4 ? 0 : TPL[(cyc * 5 + nq) % TPL.length];
+        }
+        darkV = devOn && dtl >= 19.0 && dtl < 99.5 ? 1 : 0;
+        glareV += ((devOn && dtl >= 19.5 && dtl < 99.0 ? 1 : 0) - glareV) * (1 - Math.exp(-dt / 0.6));
+      }
       lastDevT = dtl;
     }
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
@@ -4142,6 +4235,9 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.droste, droste);
     gl!.uniform1f(pu.cine, cine);
+    gl!.uniform3f(pu.beat, beatK, beatPh, beatQ);
+    gl!.uniform1f(pu.dark, darkV);
+    gl!.uniform1f(pu.glare, glareV);
     { const dpv = cv.width / Math.max(1, vw); gl!.uniform3f(pu.sunG, sunX * dpv, (vh - sunY) * dpv, glareK); }
     gl!.uniform1f(pu.inv, inv > 0 ? 1 : 0);
     if (inv > 0) inv--;
