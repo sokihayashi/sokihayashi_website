@@ -65,6 +65,8 @@ uniform vec2 uDev;           // 48 展開: その中の時刻(秒)と、何周�
 uniform vec4 uChl; uniform vec3 uChl2; // 48: 紙の鳴り方(前の n, m / 次の n, m)と(前の符号, 次の符号, 移り具合)
 uniform vec3 uRot4;          // 48: 4次元の回り(なぞると回り、慣性で回り続ける)
 uniform vec4 uBun;           // 48: 線の束のつまみ(k, 上の円の大きさ, 高さ, 指で触っている度合い)
+uniform sampler2D uGlyph;    // 48: 筆文字「林」の点(塗りの点 NF 個のあとに、輪郭の点 NE 個)。生成した書を点にしたもの
+uniform vec4 uGlyphN;        // (NF, NE, 縦横比 = 幅/高さ, 届いたか)
 uniform float uPenV;         // 48: 指の速さ
 uniform vec4 uTr[10]; uniform float uTrA[10]; // 48: 指の通った跡(位置と速さ、何秒前か)。跡に沿って、粒が流される
 uniform vec3 uFing;          // 48: 指の位置と、触っている度合い(なめらかに出入りする)
@@ -1624,26 +1626,55 @@ float dTrace(vec2 s, float r){
 // この面(粒)の持ちもの
 float dvA1, dvA2, dvA3, dvTh, dvRk, dvTt, dvHy;
 // 見る角度の道のり: 芽は斜め上から → 植物が伸びる間は低く(闇の中の野) → 綿毛が飛ぶと真上へ(焼きついた日光写真を見せる)
-float dCamPath(float t){ return uFlat > 0.5 && t < 42.5 ? 1.5707963 : t < 42.5 ? 1.2 - 0.44 * dsm(27.0, 30.5, t) + 0.6 * dsm(34.3, 36.6, t) : 1.2; } int dvK; vec2 dvCk; vec2 dvLine; bool dvValid;
+float dCamPath(float t){ return uFlat > 0.5 && t < 42.5 ? 1.5707963 : t < 42.5 ? 1.2 - 0.44 * dsm(27.0, 30.5, t) + 0.6 * dsm(34.3, 36.6, t) : 1.2; } int dvK; vec2 dvCk; vec2 dvLine; bool dvValid; float dvS;
 DP dLine(){
   vec2 c = uView * 0.5;
-  return dDot(dCam(vec3(dvLine.x - c.x, 5.0, dvLine.y - c.y), 0.0), vec2(dvValid ? 1.35 : 0.0), 0.0, D_INK);
+  float rh = fract(sin(floor(gV * 24.0) * 12.9898 + 4.1) * 43758.5453);
+  bool dry = abs(gV) > 0.5 && rh > 0.45 && sin(dvS * 9.0 + rh * 6.2831853) > 0.2; // 筆のかすれ: 縁の近くの何本かの筋が、ところどころ切れる
+  return dDot(dCam(vec3(dvLine.x - c.x, 5.0, dvLine.y - c.y), 0.0), vec2(dvValid && !dry ? 1.35 : 0.0), 0.0, D_INK);
 }
 // 描いた線に、直線の網をかける(本人の参照: 書の線の点どうしを、まっすぐ結ぶ網)。
 // 結ぶ相手は、描いた線を画面の縦の中心で折り返した線の、逆の端から数えた点(糸かけ。直線の重なりから、曲線の包絡が浮かぶ)。
 // 「線と、写した線の点どうしを結ぶ」は、後の 線の束(円と、写した円)と同じ規則。冒頭で、その文法を先に見せる。
 bool dvWeb;
 float dvTu; // 管の上での位置(0〜1)。管が輪に沿って伸びる順番に使う
+// ---- 筆文字「林」と、輪郭の点どうしを結ぶ直線の網(REF 11: 書の筆画と、その輪郭の点を結ぶ網)
+// 描いた線が、そのまま筆文字に組み変わり、輪郭の点どうしを まっすぐ結ぶ網が伸びる。網の一部は、指で描いた線にも結ぶ。
+vec2 dGlyphPt(int i){ vec2 p = texelFetch(uGlyph, ivec2(i % 1024, i / 1024), 0).xy; float h = uView.y * 0.97; return uView * 0.5 + (p - 0.5) * vec2(h * uGlyphN.z, h); }
+DP dGlyph(float t){
+  vec2 c = uView * 0.5;
+  int NF = int(uGlyphN.x), NE = int(uGlyphN.y);
+  if (dvA1 >= 0.065) { vec2 p = dGlyphPt(gI % NF); return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), 0.0), vec2(1.3), 0.0, D_INK); } // 筆画の塗り
+  // 網は約5千本(多いと、網が真っ黒な塊になった。参照は、線が数えられる所と、重なって灰色になる所がある)
+  float h = hsh(uint(gI) * 7U + 5U), h2 = hsh(uint(gI) * 13U + 9U), h3 = hsh(uint(gI) * 17U + 3U);
+  vec2 a = dGlyphPt(NF + int(h2 * float(NE)) % NE), e;
+  if (h < 0.5) e = dGlyphPt(NF + int(h3 * float(NE)) % NE);    // 輪郭の点どうし(遠くまで)
+  else if (h < 0.85) { // 近く: 6つ選んだうち いちばん近い輪郭の点(扇が筆画のまわりに寄る)
+    float bd = 1e9;
+    for (int j = 0; j < 6; j++) { vec2 q = dGlyphPt(NF + int(hsh(uint(gI) * 31U + uint(j) * 7U + 11U) * float(NE)) % NE); float d = dot(q - a, q - a); if (d > 4.0 && d < bd) { bd = d; e = q; } }
+    if (bd > 1e8) e = a;
+  }
+  else e = dPath(floor(h3 * (dCnt() - 1.0)));                   // 描いた線にも結ぶ
+  float g = dsm(1.6 + h * 0.9, 2.3 + h * 0.9, t);             // 1本ずつ、輪郭から伸びて結ぶ
+  vec2 m = mix(a, e, g);
+  return dSeg(dCam(vec3(a.x - c.x, 5.0, a.y - c.y), 0.0), dCam(vec3(m.x - c.x, 5.0, m.y - c.y), 0.0), 0.16, D_INK, 1.0);
+}
+vec2 dAnchor(int k){ // 画面のふちの近くの7点(左右非対称)。網の外形は、描いた線ではなく、この多角形が決める(四隅に、大きさの違う白い三角が残る)
+  vec2 a = k == 0 ? vec2(0.04, 0.07) : k == 1 ? vec2(0.52, 0.012) : k == 2 ? vec2(0.965, 0.13) : k == 3 ? vec2(0.988, 0.6) : k == 4 ? vec2(0.76, 0.978) : k == 5 ? vec2(0.2, 0.948) : vec2(0.015, 0.46);
+  return a * uView;
+}
 DP dWeb(float t){
   vec2 c = uView * 0.5;
   float cnt = dCnt();
-  vec2 a = dPath(floor(dvA2 * (cnt - 1.0)));
-  vec2 e0 = dPath(floor((1.0 - dvA2) * (cnt - 1.0)));
-  vec2 e = vec2(uView.x - e0.x, e0.y);
-  float h = hsh(uint(gI) * 7U + 5U);
-  float g = dsm(1.2 + h * 1.1, 1.75 + h * 1.1, t); // 1本ずつ、線から伸びて結ぶ
+  float h = hsh(uint(gI) * 7U + 5U), h2 = hsh(uint(gI) * 13U + 9U);
+  vec2 a = dPath(floor(dvA2 * (cnt - 1.0))), e;
+  if (h < 0.56) e = dPath(floor(h2 * (cnt - 1.0)));                                            // 線の中どうし(中・長距離)
+  else if (h < 0.76) e = dAnchor(min(6, int(h2 * 7.0)));                                        // 線から、ふちの点へ(扇)
+  else if (h < 0.96) e = dPath(floor(clamp(dvA2 + (h2 - 0.5) * 0.16, 0.0, 1.0) * (cnt - 1.0)));  // 近く(筆画に沿う細かい網)
+  else { a = dAnchor(min(6, int(h2 * 7.0))); e = dAnchor(min(6, int(fract(h2 * 7.0 + 0.37) * 7.0))); } // ふちの点どうし
+  float g = dsm(1.1 + h * 0.9, 1.7 + h * 0.9, t); // 1本ずつ、線から伸びて結ぶ
   vec2 m = mix(a, e, g);
-  return dSeg(dCam(vec3(a.x - c.x, 5.0, a.y - c.y), 0.0), dCam(vec3(m.x - c.x, 5.0, m.y - c.y), 0.0), 0.32, D_INK, 1.0);
+  return dSeg(dCam(vec3(a.x - c.x, 5.0, a.y - c.y), 0.0), dCam(vec3(m.x - c.x, 5.0, m.y - c.y), 0.0), 0.17, D_INK, 1.0);
 }
 // しずく(1ビットの刷り): ふちは縦の筋ににじむ。3つに1つのしずくには、目のような白い輪
 DP dDrop(float kt){
@@ -1944,44 +1975,49 @@ vec3 dTubeX(int i, float u, float v, float r, float S4){
 DP dTubes(float t){
   vec2 c = uView * 0.5;
   vec3 c3 = vec3(c, 0.0), eye = vec3(c + uCam, 1500.0);
-  float S4 = min(uView.x, uView.y) * 0.215;
+  float S4 = min(uView.x, uView.y) * 0.40; // 結び目の全体を見せない。寄って、管で画面を四辺まで割る(REF 9)
   int i = gI % 7, k = gI / 7;
-  float r = S4 * 0.11;
-  dvTu = 0.0;
+  float r = S4 * 0.16;
   const float TAU = 6.2831853;
-  bool dark = i % 2 == 0, pat = i == 3; // 黒い管(白い格子) / 白い管(黒い格子) / 縞の管。版で反転するので、ここでは逆の色で描く
-  vec3 fill = dark ? D_INK : D_PAPER, ln = dark ? D_PAPER : D_INK;
-  if (k < 6000) { // 面の帯 150×20(前半)と、輪郭の殻 150×20(後半: 少し太い管の、裏を向いた帯だけ。手前の面に隠れず、ふちだけが線として残る)
-    // 面は、管に沿った短い帯でしきつめる(丸い小片では、ふちが波打って、硬貨を積んだように見えた。帯は端どうしがつながるので、ふちが滑らか)
-    bool shell = k >= 3000;
-    int q = shell ? k - 3000 : k, iu = q / 20, iv = q - iu * 20;
-    float du = TAU / 150.0, u = du * (float(iu) + 0.5), v = TAU * (float(iv) + 0.5) / 20.0;
+  bool blk = i == 1 || i == 4 || i == 6, pat = i == 3; // 版で反転したあとに: 黒い管(白い格子)3本 / 白い管(黒い格子)3本 / 白に有機的な波線の管1本
+  vec3 fill = blk ? D_PAPER : D_INK, ln = blk ? D_INK : D_PAPER; // 反転する前の色で描く
+  dvTu = 0.0;
+  const int NUu = 170, NVv = 24;
+  if (k < 2 * NUu * NVv) { // 面の帯(前半)と、輪郭の殻(後半: 少し太い管の、裏を向いた帯だけ)
+    bool shell = k >= NUu * NVv;
+    int q = shell ? k - NUu * NVv : k, iu = q / NVv, iv = q - iu * NVv;
+    float du = TAU / float(NUu), u = du * (float(iu) + 0.5), v = TAU * (float(iv) + 0.5) / float(NVv);
     dvTu = u / TAU;
-    float rr = shell ? r + 1.1 : r;
+    float rr = shell ? r + 1.2 : r;
     vec3 C = dTubeC(i, u, S4), Xw = c3 + dTubeX(i, u, v, rr, S4);
-    vec3 Pa = c3 + dTubeX(i, u - du * 0.6, v, rr, S4), Pb = c3 + dTubeX(i, u + du * 0.6, v, rr, S4);
+    vec3 Pa = c3 + dTubeX(i, u - du * 0.62, v, rr, S4), Pb = c3 + dTubeX(i, u + du * 0.62, v, rr, S4);
     float hw = 0.2 * rr;
-    float trc = dTrace(dScr(Xw), 60.0);
+    float trc = dTrace(dScr(Xw), 70.0);
     bool sw = trc > 0.35 + 0.2 * dvA2; // なぞった所だけ、白黒が入れ替わる(刷りを引っかいた跡。0.6秒ほどで戻る)
     if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dSeg(Pa, Pb, back ? hw : 0.0, sw ? fill : ln, 1.0); }
-    vec3 fc = pat ? ((iv / 5) % 2 == 0 ? D_INK : D_PAPER) : fill; // 管に沿った4本の縞(帯の向きと揃うので、ふちが段にならない。管のねじれで、縞も自然に巻く)
-    return dSeg(Pa, Pb, hw, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc, 1.0);
+    return dSeg(Pa, Pb, hw, sw ? ln : fill, 1.0);
   }
-  if (pat || k >= 8152) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill); // 縞の管には格子を引かない。余りの粒は使わない
+  int k2 = k - 2 * NUu * NVv;
   vec3 a, b;
-  if (k < 7152) { // 輪の線(管をぐるりと回る) 48本
-    int q = k - 6000, j = q / 24, w = q - j * 24;
-    float u = TAU * (float(j) + 0.25) / 48.0; dvTu = u / TAU;
+  if (pat) { // 波打つ線 18本(REF 9 の、格子でない有機的な模様の管)
+    if (k2 >= 18 * 150) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill);
+    int l = k2 / 150, w = k2 - l * 150;
+    float u0 = TAU * float(w) / 150.0, u1 = TAU * float(w + 1) / 150.0, vb = TAU * (float(l) + 0.5) / 18.0;
+    dvTu = float(w) / 150.0;
+    a = dTubeX(i, u0, vb + 0.28 * sin(u0 * 9.0 + float(l) * 1.7), r, S4); b = dTubeX(i, u1, vb + 0.28 * sin(u1 * 9.0 + float(l) * 1.7), r, S4);
+  } else if (k2 < 56 * 24) { // 輪の線 56本
+    int j = k2 / 24, w = k2 - j * 24;
+    float u = TAU * (float(j) + 0.25) / 56.0; dvTu = u / TAU;
     a = dTubeX(i, u, TAU * float(w) / 24.0, r, S4); b = dTubeX(i, u, TAU * float(w + 1) / 24.0, r, S4);
-  } else { // 縦の線(管に沿う) 10本(16本だと、黒い管が白い縞で灰色に見えた)
-    int q = k - 7152, l = q / 100, w = q - l * 100;
-    float v = TAU * (float(l) + 0.5) / 10.0; dvTu = float(w) / 100.0;
-    a = dTubeX(i, TAU * float(w) / 100.0, v, r, S4); b = dTubeX(i, TAU * float(w + 1) / 100.0, v, r, S4);
-  }
+  } else if (k2 < 56 * 24 + 10 * 140) { // 縦の線 10本
+    int q = k2 - 56 * 24, l = q / 140, w = q - l * 140;
+    float v = TAU * (float(l) + 0.5) / 10.0; dvTu = float(w) / 140.0;
+    a = dTubeX(i, TAU * float(w) / 140.0, v, r, S4); b = dTubeX(i, TAU * float(w + 1) / 140.0, v, r, S4);
+  } else return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill);
   a += c3; b += c3;
-  a += normalize(eye - a) * 5.0; b += normalize(eye - b) * 5.0; // 面より少し手前へ(斜めの面では、隣の小片が線を隠していた)。裏側の線は、管の太さ(約18px)の分だけ奥なので隠れる
-  float trc = dTrace(dScr(a), 60.0);
-  return dSeg(a, b, 0.38, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
+  a += normalize(eye - a) * 6.0; b += normalize(eye - b) * 6.0; // 面より少し手前へ(裏側の線は、管の太さの分だけ奥なので隠れる)
+  float trc = dTrace(dScr(a), 70.0);
+  return dSeg(a, b, 0.42, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
 }
 // ---- 線の束(Ayumu Nagamatsu「円と、座標変換した円の写像の頂点同士を結ぶ」)
 // 下の円の点 θ と、上の円の点 kθ + δ を、まっすぐ結ぶ。k・上の円の大きさ・高さ を回すだけで、星・球・扇・錐・ウニになる。
@@ -2008,6 +2044,52 @@ DP dBundle(float t){
   vec3 Aw = vec3(c + A.xy * S, A.z * S), Bw = vec3(c + B.xy * S, B.z * S);
   float trc = max(dTrace(dScr(Aw), 44.0), max(dTrace(dScr(Bw), 44.0), dTrace(dScr((Aw + Bw) * 0.5), 44.0))); // なぞった所を通る線が光る
   return dSeg(Aw, Bw, 0.4 * (1.0 + 0.8 * trc), vec3(0.84, 0.82, 1.0) * 0.011 * (1.0 + 3.0 * trc), 0.0);
+}
+// ---- 線の束を、REF 13(Balance)の構図に置く。
+// 上下2枚の円盤(短い流れの筋の渦)を、目の高さから見上げ・見下ろす。円盤の奥のふちは、遠近で筋が詰まって白い帯になり、
+// その間が黒い切れ目になる。切れ目に、線の束(円と、写した円の点を結ぶ = 一葉双曲面など)。縦の軸と3つの点が、中心を貫く。
+// 手前の筋は、画面の上下左右の外まで続く(四辺にはみ出す)。横に払うと、渦と束が一緒にねじれる。
+vec2 dBalP(vec3 P, out float ok){ // 目は原点。+Z を見る。画面の y は下向き
+  vec2 c = uView * 0.5;
+  ok = step(0.12, P.z);
+  return c + vec2(P.x, -P.y) * uView.x * 0.95 / max(P.z, 0.12);
+}
+DP dBalance(float t){
+  float tb = max(t - 52.0, 0.0);
+  int role = gI % 4, idx = gI / 4;
+  const float D = 1.9, R = 1.65;
+  float o1, o2;
+  if (role == 0) { // 線の束(縦の軸のまわり。円と、k 倍に写した円の点を結ぶ)
+    float kk = 1.0 + 4.0 * (0.5 - 0.5 * cos(tb * 0.42));
+    float sc = mix(cos(tb * 0.31) * 1.1, uBun.y, uBun.w);
+    float h = mix(0.35 + 0.45 * sin(tb * 0.23 + 0.8), uBun.z, uBun.w);
+    float m0 = floor(kk), fm = smoothstep(0.0, 1.0, fract(kk));
+    float th = dvTh, dl = tb * 0.35 + uBun.x, rho = 0.55;
+    vec2 bq = mix(vec2(cos(m0 * th + dl), sin(m0 * th + dl)), vec2(cos((m0 + 1.0) * th + dl), sin((m0 + 1.0) * th + dl)), fm) * sc * rho;
+    vec2 a = dBalP(vec3(cos(th) * rho, -h * 1.25, D + sin(th) * rho), o1), b = dBalP(vec3(bq.x, h * 1.25, D + bq.y), o2);
+    float trc = max(dTrace(a, 44.0), max(dTrace(b, 44.0), dTrace((a + b) * 0.5, 44.0))); // なぞった所を通る線が光る
+    return dSeg(vec3(a, 0.0), vec3(b, 0.0), 0.26 * (1.0 + 0.8 * trc) * o1 * o2, vec3(0.84, 0.82, 1.0) * 0.0055 * (1.0 + 4.0 * trc), 0.0); // 束は幽霊のように淡く(白い塊にしない)
+  }
+  if (role == 1 && idx < 900) { // 縦の軸と、3つの点(上の円盤の中心・真ん中・下の円盤の中心)
+    if (idx < 780) {
+      float s = float(idx) / 780.0;
+      vec2 a = dBalP(vec3(0.0, mix(1.32, -1.32, s), D), o1), b = dBalP(vec3(0.0, mix(1.32, -1.32, s + 1.0 / 780.0), D), o2);
+      return dSeg(vec3(a, 0.0), vec3(b, 0.0), 0.55, vec3(0.45), 0.0);
+    }
+    int nd = (idx - 780) / 40;
+    vec2 p = dBalP(vec3(0.0, nd == 0 ? 1.0 : nd == 1 ? 0.0 : -1.0, D), o1);
+    DP d = dDot(vec3(p, 0.0), vec2(mix(1.0, nd == 1 ? 2.2 : 4.2, float(idx - 780 - nd * 40) / 40.0)), 1.0, vec3(0.08));
+    d.a = 0.0; return d;
+  }
+  // 円盤の流れの筋(上と下)。内側ほど速く回る
+  bool top = (idx % 2) == 0;
+  float ra = R * sqrt(dvA2);
+  float th0 = dvTh + tb * (0.22 / (0.35 + ra) + 0.05) + uBun.x * 0.8 + (top ? 0.0 : 1.3);
+  float dth = (0.012 + 0.022 * dvA3) * (D + ra);
+  float yy = top ? 1.0 : -1.0;
+  vec2 a = dBalP(vec3(cos(th0) * ra, yy, D + sin(th0) * ra), o1), b = dBalP(vec3(cos(th0 - dth) * ra, yy, D + sin(th0 - dth) * ra), o2);
+  float trc = dTrace(a, 60.0);
+  return dSeg(vec3(a, 0.0), vec3(b, 0.0), (0.32 + 0.2 * dvA1) * o1 * o2, vec3((0.07 + 0.08 * dvA1) * (1.0 + 2.5 * trc)), 0.0);
 }
 // ---- 4次元の先: クライン群の極限集合(Indra's Pearls の「おばあちゃんのレシピ」で作る2つの生成元 a, b と、その逆 A, B)
 // 粒の1つ1つが、自分だけの でたらめな語(a b A b B …)を持ち、それを順に当てていくと、極限集合の上に落ちる。
@@ -2160,7 +2242,9 @@ O sDev(){
   float kt = dsm(17.5, 20.0, t);
   dvCk = dDropC(dvK, floor(uTime * 12.0) / 12.0, kt);
   dvRk = dDropR(dvK);
-  dvLine = gP + gT * (gFr - 0.5) * uDp + gN * gV * 5.2;
+  dvS = dvValid ? gAge / cnt : 0.5;
+  float dvW = 0.3 + 3.3 * pow(sin(3.14159 * dvS), 0.6) * (0.72 + 0.28 * sin(dvS * 11.0 + 1.3)); // 筆の太さ: 端は細く、途中で太さが揺れる(最も太い所で約37px。REF 11 の筆画)
+  dvLine = gP + gT * (gFr - 0.5) * uDp + gN * gV * 5.2 * dvW;
   if (t < 1.2) {
     // 帯 → 墨の線: 帯の面のまま細くなり、写真が墨になる
     float b01 = dsm(0.0, 1.2, t);
@@ -2173,8 +2257,14 @@ O sDev(){
     return dPush(o, 1.0);
   }
   DP A, B; float b = 0.0; float push = 0.35; float wk = 1.0; float wr = 60.0; dvHy = 0.0;
-  dvWeb = dvA1 < 0.02;
-  if (dvWeb && t < 5.2) { A = dWeb(t); if (t < 3.0) B = A; else B = dDrop(0.0); b = dsm(3.0 + dvA2 * 0.9, 4.3 + dvA2 * 0.9, t); push = 0.0; wk = 0.6; } // 網は、少し遅れて しずくへ縮む
+  dvWeb = dvA1 < 0.35; // 粒の35%が網の直線(約2.7万本)
+  if (uGlyphN.w > 0.5 && t < 5.0) { // 描いた線 → 筆文字「林」(1.2〜2.1秒)→ 輪郭を結ぶ網(〜3.6秒)→ しずくへ
+    if (t < 2.1) { A = dLine(); B = dGlyph(t); b = dsm(1.2 + dvA2 * 0.5, 1.6 + dvA2 * 0.5, t); }
+    else if (t < 3.6) { A = dGlyph(t); B = A; }
+    else { A = dGlyph(t); B = dDrop(0.0); b = dsm(3.6 + dvA2 * 0.8, 4.3 + dvA2 * 0.6, t); }
+    push = 0.0; wk = 0.6;
+  }
+  else if (dvWeb && t < 5.0) { A = dWeb(t); if (t < 3.6) B = A; else B = dDrop(0.0); b = dsm(3.6 + dvA2 * 0.8, 4.3 + dvA2 * 0.6, t); push = 0.0; wk = 0.6; } // 網は、少し遅れて しずくへ縮む
   else if (t < 2.2) { A = dLine(); B = A; }
   else if (t < 4.2) { A = dLine(); B = dDrop(0.0); b = dsm(2.2 + dvA2 * 0.7, 3.5 + dvA2 * 0.7, t); }
   else if (t < 7.5) { A = dDrop(0.0); B = A; }
@@ -2194,9 +2284,9 @@ O sDev(){
   else if (tt < 45.5) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
   else if (tt < 49.0) { A = d4D(tt); B = dTubes(tt); float gr = dsm(45.5, 48.4, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.5; wr = 80.0; } // 光の輪の粒が、輪に沿って順に、格子の管へ組み上がる(管が伸びていく)
   else if (tt < 52.0) { A = dTubes(tt); B = A; push = 0.0; wk = 0.5; wr = 80.0; }
-  else if (tt < 55.0) { A = dTubes(tt); B = dBundle(tt); float gr = dsm(52.0, 54.6, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.6; wr = 90.0; } // 管は、伸びた順に ほどけて、線の束になる
-  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
-  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.8; wr = 130.0; } // 線の束が、無限の円に凝る
+  else if (tt < 55.0) { A = dTubes(tt); B = dBalance(tt); float gr = dsm(52.0, 54.6, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.6; wr = 90.0; } // 管は、伸びた順に ほどけて、線の束になる
+  else if (tt < 64.0) { A = dBalance(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
+  else if (tt < 67.0) { A = dBalance(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.8; wr = 130.0; } // 線の束が、無限の円に凝る
   else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 1.0; wr = 150.0; }
   else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.9; wr = 140.0; } // 球に巻きつく
   else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; wr = 130.0; }
@@ -3042,6 +3132,23 @@ export function mountMorph(root: HTMLElement) {
     });
   }).catch(() => {})); // 届かなかった立体は、使わないだけ
   if (devLazy) setTimeout(() => devObjLoad(6), 1500); // 最初の絵が出てから、1つ目(カメラ α7 IV)を読む
+  // 筆文字「林」の点(Magnific で生成した書を、塗りの点 4.4万と輪郭の点 4096 にしたもの。0.19MB)。届くまでは、前の網(線どうしを結ぶ)
+  const glyphTex = gl.createTexture(), uGlyphN = U('uGlyphN');
+  let glyphN = [1, 1, 0.5655, 0];
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, glyphTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array(2));
+  gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(U('uGlyph'), 4);
+  if (devLazy) fetch(`${root.dataset.base ?? ''}/lab/glyph/hayashi.bin`).then((r) => r.arrayBuffer()).then((b) => {
+    if (dead) return;
+    const [nf, ne] = new Uint32Array(b, 0, 2), asp = new Float32Array(b, 8, 1)[0], n = nf + ne, q = new Int16Array(b, 12, n * 2), W = 1024, H = Math.ceil(n / W), f = new Float32Array(W * H * 2);
+    for (let i = 0; i < n * 2; i++) f[i] = q[i] / 32767;
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, glyphTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, W, H, 0, gl.RG, gl.FLOAT, f);
+    gl.activeTexture(gl.TEXTURE0);
+    glyphN = [nf, ne, asp, 1];
+  }).catch(() => {});
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -3638,7 +3745,7 @@ export function mountMorph(root: HTMLElement) {
   //   線・しずく: 墨の刷り(島の反転・1ビット) / クラドニ: 砂は網点、節は輪郭と縦線 / 印画紙・植物: 写真の現象(ソラリゼーション・ネガ)
   //   焼き付け・機材: 走査線 / 4次元: 面の上の版だけ(画面の版は休む) / 線の束: 縦線と重ねたモアレ / クライン群: ずれた写しと反転 / 球: 版なし(光だけ) / 紙に戻る: 1ビット
   // 先頭が その場面の「ふだんの版」(長い拍も、この刷り方で見せる。本人「まだグラフィック化できてないな」)、残りが短い拍に差し込む版。0 は版なし
-  const PLATE_FAM = (d: number): number[] => (d < 9.5 ? [7, 1] : d < 17.5 ? [2, 3] : d < 34.4 ? [7, 8, 9] : d < 42.5 ? [10, 9] : d < 56.5 ? [0] : d < 61.5 ? [9] : d < 72 ? [11, 7] : d < 84 ? [0, 6, 9] : d < 99 ? [0] : [7, 1]); // 管の間(55.5〜61.5)は反転: 白い紙に、黒い管と白い管
+  const PLATE_FAM = (d: number): number[] => (d < 4.8 ? [0] : d < 9.5 ? [7, 1] : d < 17.5 ? [2, 3] : d < 34.4 ? [7, 8, 9] : d < 42.5 ? [10, 9] : d < 56.5 ? [0] : d < 61.5 ? [9] : d < 72 ? [0] : d < 84 ? [0, 6, 9] : d < 99 ? [0] : [7, 1]); // 管の間(55.5〜61.5)は反転: 白い紙に、黒い管と白い管
   let devObjN = 0;
   const DEV_OBJ_ORDER = [6, 0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]; // α7 IV から、並びの順に
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
@@ -4279,6 +4386,7 @@ export function mountMorph(root: HTMLElement) {
       bun[0] += bunTwV * dt;
       bun[3] += ((knob ? 1 : 0) - bun[3]) * (1 - Math.exp(-dt / (knob ? 0.2 : 1.2)));
       gl!.uniform4f(u.bun, bun[0], bun[1], bun[2], bun[3]);
+      gl!.uniform4f(uGlyphN, glyphN[0], glyphN[1], glyphN[2], devOn ? glyphN[3] : 0);
       // 指の通った跡
       const tracking = drawing || (ptrMouse && over > 0);
       if (tracking && now - trLast >= 0.04) {
