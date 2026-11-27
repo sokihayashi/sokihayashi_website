@@ -1229,6 +1229,79 @@ O sHopf(){
   return o;
 }
 
+// 43 光の円錐(時空の光円錐): 描いた跡の点を「いつ・どこで起きた出来事」とみなし、そこから広がる光を、時間を奥行きにして描く。
+// 時間を1つの軸にすると、広がる円は円錐になる(相対論の時空図と同じ作り)。点は描いた順に生まれ続け、円錐は育ちながら薄れて消える。
+// 柔らかい光の円錐(zach lieberman)を元にした。色は、その点の作品の写真から取る。
+O sCone(){
+  const int NC = 40, NR = 32;
+  int k = gIu / NR, ir = gIu - k * NR;
+  float cnt = min(uK, Mf);
+  float an = (float(k) + 0.5) / float(NC);
+  int j = int(mod(uK - 1.0 - floor(an * max(cnt - 1.0, 0.0)), Mf));
+  vec4 r0 = texelFetch(uPath, ivec2(j, 0), 0);
+  float ok = texelFetch(uPath, ivec2(j, 1), 0).w;
+  float wk = texelFetch(uPath, ivec2(j, 2), 0).w;
+  if (ok < 0.5 || cnt < 2.0) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 0.0);
+  float S = min(uView.x, uView.y);
+  // 円錐の育ち(0 = 生まれた瞬間、1 = 消える)。描いた順に、ずれて生まれる。
+  float g = fract(uTime * 0.07 + an * 1.0 + h1 * 0.0);
+  float R = S * 0.62 * g, H = S * 0.9 * g;
+  vec2 c = uView * 0.5;
+  float rho = (float(ir) + 0.5 + aQ.x * 0.5) / float(NR);
+  float rhoC = (float(ir) + 0.5) / float(NR);
+  float ph = (float(gIv) + 0.5 + aQ.y * 0.5) / float(NVi) * 6.2831853;
+  float phC = (float(gIv) + 0.5) / float(NVi) * 6.2831853;
+  // 頂点(出来事)は奥(過去)、縁(いま)は手前の面
+  vec3 P = vec3(r0.xy + vec2(cos(ph), sin(ph)) * R * rho, -H * (1.0 - rho));
+  vec3 M = vec3(r0.xy + vec2(cos(phC), sin(phC)) * R * rhoC, -H * (1.0 - rhoC));
+  float amt = 0.9;
+  O o = base();
+  o.corner = viewRot(P, c, amt);
+  o.centre = viewRot(M, c, amt);
+  vec3 pc = photo(wk, vec2(phC / 6.2831853, rhoC));
+  // 柔らかさ: 縁ほど明るく、育つほど薄れる。頂点のまわりは淡く。
+  float soft = smoothstep(0.0, 0.12, g) * pow(1.0 - g, 1.6) * (0.25 + 0.75 * rhoC * rhoC);
+  o.col = (pc * 0.16 + 0.006) * soft * smoothstep(0.0, 1.8, uPartT);
+  o.tex = 0.0; o.alpha = 0.0;
+  o.gate = 1.0;
+  return o;
+}
+// 44 4次元の立方体(超立方体): 24枚の正方形の面に、作品の写真を細かい升目で貼る。
+// 4次元で回すと、内側の立方体が外へ裏返って出てくる。升目の すき間から、奥の面が透けて見える。
+O sTess(){
+  const int G = 58;
+  int f = gI / (G * G), q = gI - f * G * G;
+  if (f >= 24) return dotAt(gC0, vec2(0.0), vec3(0.0), 0.0, 0.0);
+  int iu = q / G, iv = q - iu * G;
+  int pr = f / 4, sg = f - pr * 4;
+  // 自由に動く2軸(6通り)と、固定する2軸の符号(4通り)
+  ivec2 ax = pr == 0 ? ivec2(0, 1) : pr == 1 ? ivec2(0, 2) : pr == 2 ? ivec2(0, 3) : pr == 3 ? ivec2(1, 2) : pr == 4 ? ivec2(1, 3) : ivec2(2, 3);
+  ivec2 fx = pr == 0 ? ivec2(2, 3) : pr == 1 ? ivec2(1, 3) : pr == 2 ? ivec2(1, 2) : pr == 3 ? ivec2(0, 3) : pr == 4 ? ivec2(0, 2) : ivec2(0, 1);
+  float shrink = 0.62;
+  float s0 = ((float(iu) + 0.5) / float(G)) * 2.0 - 1.0, t0 = ((float(iv) + 0.5) / float(G)) * 2.0 - 1.0;
+  float sv = s0 + aQ.x * shrink / float(G), tv = t0 + aQ.y * shrink / float(G);
+  vec4 pv = vec4(0.0), pm = vec4(0.0);
+  pv[ax.x] = sv; pv[ax.y] = tv; pm[ax.x] = s0; pm[ax.y] = t0;
+  float fa = (sg & 1) == 1 ? 1.0 : -1.0, fb = (sg & 2) == 2 ? 1.0 : -1.0;
+  pv[fx.x] = fa; pv[fx.y] = fb; pm[fx.x] = fa; pm[fx.y] = fb;
+  pv *= 0.5; pm *= 0.5;
+  float tm = uTime * 0.24 + uK * 0.002;
+  float a = tm + uTilt.x * 1.1, b = tm * 0.69 + 0.5 - uTilt.y * 0.9, g = tm * 0.17;
+  vec3 P = proj4(rot4(pv, a, b, g), 2.2);
+  vec3 M = proj4(rot4(pm, a, b, g), 2.2);
+  vec2 c = uView * 0.5;
+  float S = min(uView.x, uView.y) * 0.34;
+  O o = base();
+  o.corner = viewRot(vec3(c + P.xy * S, P.z * S), c, 0.45);
+  o.centre = viewRot(vec3(c + M.xy * S, M.z * S), c, 0.45);
+  float nwk = uNWk > 0.5 ? uNWk : 27.0;
+  o.work = mod(float(f) * 5.0 + 3.0, nwk);
+  o.uv = vec2(s0 * 0.5 + 0.5, t0 * 0.5 + 0.5);
+  o.lit = clamp(0.5 + 0.5 * (1.0 - length(M) / 3.0), 0.4, 1.1);
+  o.gate = 1.0;
+  return o;
+}
+
 O stateOf(int id){
   if (id == 0) return sBand();
   if (id == 1) return sSolid();
@@ -1272,6 +1345,8 @@ O stateOf(int id){
   if (id == 40) return sEcho();
   if (id == 41) return sClifford();
   if (id == 42) return sHopf();
+  if (id == 43) return sCone();
+  if (id == 44) return sTess();
   return sFrame();
 }
 
@@ -2132,7 +2207,7 @@ export function mountMorph(root: HTMLElement) {
   // 表現の並び: 毎回ランダム(直前の2つは避ける)。最初は帯から。
   // 0 帯 / 1 立体の紙 / 2 光の粒 / 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const KINDS = 31;
-  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
+  const ANALOG = [1, 0.85, 0, 0.5, 1, 1, 1, 0, 0, 0, 0.4, 0.7, 0.1, 0.3, 0.9, 0, 0.8, 0.1, 0, 0.8, 0.5, 0.7, 0.4, 0.6, 0.8, 0.5, 0.6, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.3, 0.3, 0.2, 0.8, 0.6, 0.2, 0.4, 0.3]; // アナログらしさ(29 粒 と 30 割れる は、色の割れを掛けない)(画面全体の質感に使う)
   // 見た目が似ているものは入れない(技術が違っても、見た目が近ければ同じ)。表面だけの違い、写真が並ぶだけの札、帯と見分けのつかない変形(垂れる・流れ・波紋・立体写真)、点の重複(画素の落下・奥行きの点)、白い線の重複(糸)、紙の立体の重複(筒)も外した: 3 浮き彫り / 4 リソグラフ / 5 フィルム / 6 刺繍 / 7 ピクセル / 8 点群 / 9 グリッチ
   const ACTIVE = [0, 1, 2, 12, 13, 14, 15, 16, 19, 22, 23, 24, 25, 27];
   // 系統: 近い表現が続かないように、直前2つと同じ系統は選ばない。
@@ -2140,7 +2215,7 @@ export function mountMorph(root: HTMLElement) {
     0: 'band', 14: 'fold', 1: 'ribbon', 23: 'ribbon', 2: 'lines', 13: 'scatter', 22: 'scatter', 15: 'bars', 24: 'pile', 27: 'big',
     12: 'pixel', 16: 'fringe', 19: 'drip', 25: 'liquid',
     8: 'lines', 18: 'wire', 20: 'flow', 17: 'points', 29: 'grain', 30: 'scatter', 21: 'tube',
-    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf',
+    31: 'iri', 32: 'stick', 33: 'wrap', 34: 'glass', 35: 'glassline', 36: 'glassclear', 37: 'line3d', 38: 'morph3d', 39: 'mapline', 40: 'echo', 41: 'clifford', 42: 'hopf', 43: 'cone', 44: 'tess',
   };
   // 曲のように組む: 区間(イントロ / Aメロ / Bメロ / サビ / ドロップ / Cメロ)ごとに、使う表現・長さ・つなぎ方を変える。
   // 長さは「描く長さ」の倍率。ドロップは短く刻み、Cメロは長く伸ばす。区間の中では1つの表現が画面を占める。
@@ -2235,7 +2310,7 @@ export function mountMorph(root: HTMLElement) {
   const LEN: Record<number, number> = {
     0: 1.0, 2: 1.2, 3: 1.2, 7: 0.8, 9: 0.7, 10: 1.2, 11: 1.0, 12: 0.9, 13: 1.1, 14: 1.0, 16: 1.2, 19: 1.3, 22: 1.1, 26: 1.1, 29: 0.8,
     40: 2.6, 1: 1.4, 8: 1.6, 15: 1.1, 17: 1.3, 20: 1.3, 21: 1.4, 23: 1.4, 24: 1.4, 25: 1.3, 34: 4.4, 31: 1.8, 32: 1.8, 33: 1.8, 37: 1.8, 38: 2.4,
-    39: 2.6, 41: 3.6, 42: 3.0,
+    39: 2.6, 41: 3.6, 42: 3.0, 43: 3.4, 44: 3.4,
   };
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
@@ -2254,7 +2329,7 @@ export function mountMorph(root: HTMLElement) {
       for (const c of list) push1(c, 'B3', LEN[c] ?? 1.2, c === 34 ? 1 : pick([1, 3]));
     } else {
       // 4D: 写真の帯にこだわらない(本人 2026-11-27:「不必要でもっと違う表現があったら、写真入りの帯を途中から捨ててもいい」)
-      for (const c of shuffle([39, 41, 42])) push1(c, 'D4', LEN[c] ?? 3, c === 39 ? 0 : 1);
+      for (const c of shuffle([39, 41, 42, 43, 44])) push1(c, 'D4', LEN[c] ?? 3, c === 39 ? 0 : 1);
     }
   };
   const grow = () => {
