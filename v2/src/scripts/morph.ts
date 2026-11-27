@@ -2493,6 +2493,7 @@ uniform vec3 uSunG;          // 光源(指)の位置(画面の画素)と、触�
 uniform float uDroste;       // 画面のきまり(無限): 画面が、自分自身を中に含む(入れ子が渦を巻いて奥へ続く)
 uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
+uniform float uCine; // 48: 映画の見え方(本人の言葉: グレインの入ったモーショングラフィック的なシネマ表現、A24 の π のような)。最初の1カットの写真の色は残す
 in vec2 vUv;
 out vec4 o;
 float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -2511,7 +2512,7 @@ void main(){
   vec2 px = 1.0 / uRes;
   float g2 = uGrade.x, g3 = uGrade.y, g4 = uGrade.z;
   // 3D(35mm): フィルムのゲートの揺れ。1画素に満たない、ゆっくりした縦横の揺れ。
-  vec2 uv = vUv + vec2(sin(uTime * 1.7) * 0.35, sin(uTime * 2.3 + 1.0) * 0.55 + sin(uTime * 13.0) * 0.12) * px * g3;
+  vec2 uv = vUv + vec2(sin(uTime * 1.7) * 0.35, sin(uTime * 2.3 + 1.0) * 0.55 + sin(uTime * 13.0) * 0.12) * px * max(g3, uCine * 1.4);
   vec3 c = texture(uImg, uv).rgb;
   // 光の分散(3D・4D): 白い光のふちが、わずかに虹に分かれる(レンズのフレアではなく、光そのものの分散)。
   // 光源(触っている間は指、ふだんは画面の中央)から外へ、赤は外側・青は内側にずれる。中心ほど弱く、遠いほど強い。
@@ -2592,7 +2593,7 @@ void main(){
       float cg = grain(cp / 2.7 + 41.3, fr + 409);
       gr += (vec3(m) + vec3(cg, -cg * 0.4, -cg * 0.6) * 0.18) * (0.075 * grainAmt(lc, 0.0) + 0.011) * g4;
     }
-    c += gr;
+    c += gr * (1.0 - uCine);
   }
   // 画面のきまり(無限): 画面の中心に、画面そのものを 小さく・回して 何重にも重ねる。光は足し合わせる(黒地なので、奥へ続く入れ子に見える)
   if (uDroste > 0.001) {
@@ -2607,6 +2608,32 @@ void main(){
       if (su.x > 0.0 && su.x < 1.0 && su.y > 0.0 && su.y < 1.0) acc += texture(uImg, su).rgb * pow(0.78, float(k));
     }
     c += acc * uDroste;
+  }
+  // ---- 映画の見え方(π: 増感した白黒の反転フィルム)。白は飛ばし、黒は沈める。粗い粒、コマごとの明滅、いびつな周辺の落ち、ときどき ごみ
+  if (uCine > 0.001) {
+    int fq = int(floor(uTime * 24.0));
+    vec2 cq = gl_FragCoord.xy / max(uDpr, 1.0);
+    float Y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    vec3 ch = c - vec3(Y);
+    // 調子: 暗い側はほぼそのまま(細い光の線を消さない)、明るい側は急に飛ぶ
+    float Yc = max(Y - 0.006, 0.0);
+    Yc = Yc < 0.5 ? Yc * 0.96 : 0.48 + (Yc - 0.5) * 1.55;
+    Yc *= 1.0 + (hu(ivec2(7, 3), fq) - 0.5) * 0.07; // コマごとの明滅
+    vec3 m = vec3(clamp(Yc, 0.0, 1.0)) + ch * 0.3 * smoothstep(0.15, 0.6, Y); // 色は、光のふちにだけ少し残す
+    vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
+    m *= 1.0 - 0.5 * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03)));
+    // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
+    float gq = grain(cq / 2.3, fq + 900) * 0.8 + grain(cq / 1.05, fq + 1700) * 0.3;
+    float lm = dot(m, vec3(0.3333));
+    m += gq * (0.018 + 0.12 * smoothstep(0.02, 0.35, lm) * (1.0 - 0.4 * smoothstep(0.85, 1.0, lm)));
+    // ごみ: コマごとに、ときどき小さな点
+    vec2 cell = floor(cq / 48.0);
+    float hh = hu(ivec2(cell), fq + 333);
+    if (hh < 0.004) {
+      vec2 sp = (cell + vec2(hu(ivec2(cell) + 11, fq), hu(ivec2(cell) + 29, fq))) * 48.0;
+      m = mix(m, vec3(hh < 0.0022 ? 0.95 : 0.0), (1.0 - smoothstep(0.6, 1.7, length(cq - sp))) * 0.8);
+    }
+    c = mix(c, m, uCine);
   }
   // 場面の変わり目: 明るさの山(Marterium「Swirl」: 形が変わる所で光が強くなる)と、色を反転した1コマ(mnowakdesign)
   c *= 1.0 + uBoost;
@@ -2651,7 +2678,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { cine: gl.getUniformLocation(post, 'uCine'), sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -3329,7 +3356,7 @@ export function mountMorph(root: HTMLElement) {
   const KPATH: [number, Cx, Cx][] = [[75, [2, 0], [2, 0]], [78.5, [1.87, 0.1], [1.87, -0.1]], [81, [1.91, 0.05], [1.91, 0.05]], [83.5, [1.61, 0.76], [2, 0]], [86.5, [1.87, 0.1], [1.87, -0.1]]];
   const kmArr = new Float32Array(32);
   let kOff: Cx = [0, 0], kFlowS = 0, kFlowV = 0.16;
-  let lastDevT = 0, inv = 0, boost = 0, droste = 0;
+  let lastDevT = 0, inv = 0, boost = 0, droste = 0, cine = 0;
   let devObjI = 0, devObjN = 0;
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
@@ -4037,7 +4064,8 @@ export function mountMorph(root: HTMLElement) {
         if (dtl >= 97.5 || dtl < 80) droste = 0; // 紙が戻る前に消す(紙の白が入れ子になって、白い四角が出ていた)
       } else droste = 0;
       // 場面の変わり目
-      if (devOn && dtl > lastDevT) for (const cT of DEV_CUTS) if (lastDevT < cT && dtl >= cT) { inv = 2; boost = 0.6; }
+      if (devOn && dtl > lastDevT) for (const cT of DEV_CUTS) if (lastDevT < cT && dtl >= cT) { inv = 2; boost = 1.5; } // π のような、焼き切れる白のカット
+      { const ct = devOn ? Math.min(1, Math.max(0, (dtl - 0.2) / 1.2)) : 0; cine = Math.max(devOn ? cine : 0, ct); } // 帯の写真が墨になるのと一緒に、白黒の映画になる
       lastDevT = dtl;
     }
     gl!.uniform3f(u.light, lightX, lightY, W * 2.6);
@@ -4113,11 +4141,12 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(pu.dpr, cv.width / Math.max(1, vw));
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.droste, droste);
+    gl!.uniform1f(pu.cine, cine);
     { const dpv = cv.width / Math.max(1, vw); gl!.uniform3f(pu.sunG, sunX * dpv, (vh - sunY) * dpv, glareK); }
     gl!.uniform1f(pu.inv, inv > 0 ? 1 : 0);
     if (inv > 0) inv--;
     gl!.uniform1f(pu.boost, boost);
-    boost *= Math.exp(-gDt / 0.25);
+    boost *= Math.exp(-gDt / (cine > 0.5 ? 0.11 : 0.25));
     gl!.uniform1f(pu.time, now);
     gl!.uniform2f(pu.res, cv.width, cv.height);
     gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
