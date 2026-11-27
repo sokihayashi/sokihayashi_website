@@ -1536,8 +1536,8 @@ const int DK = 9;
 const vec3 D_INK = vec3(0.05, 0.05, 0.055);
 const vec3 D_PAPER = vec3(0.925, 0.918, 0.895);
 const vec3 D_GRAY = vec3(0.80, 0.81, 0.84);
-const vec3 D_CYAN = vec3(0.055, 0.19, 0.40); // 日光写真(サイアノタイプ)の青
-const vec3 D_SHADE = vec3(0.60, 0.71, 0.85);  // 影: 光の届かなかった所は、焼けずに白っぽく残る
+const vec3 D_EXPO = vec3(0.075, 0.074, 0.078); // 印画紙: 光の当たった所は黒く焼ける(白黒のフォトグラム)
+const vec3 D_SHADE = vec3(0.62, 0.62, 0.64);    // 影: 光の届かなかった所は、焼けずに白っぽく残る
 const float D_PI = 3.14159265;
 float dsm(float a, float b, float t){ return smoothstep(a, b, t); }
 vec2 dPath(float age){ int j = int(mod(uK - 1.0 - age, Mf)); return texelFetch(uPath, ivec2(j, 0), 0).xy; }
@@ -1618,7 +1618,7 @@ DP dDrop(float kt){
   vec3 col = (dvK % 3 == 0 && !halo && dvA2 > 0.33 && dvA2 < 0.43) ? D_PAPER : D_INK;
   return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), kt), hs, 0.0, col);
 }
-// ---- 太陽(指)と、日光写真。紙は光で青く焼け、光の届かなかった所(砂・影)は白く残る
+// ---- 太陽(指)と、印画紙。紙は光で黒く焼け、光の届かなかった所(砂・影)は白く残る
 vec3 dSunAt(vec2 s, float kt){ vec2 f = dFloorAt(s, kt); return vec3(f.x, uView.y * 2.0, f.y); }
 vec3 dSunP(float kt){ return dSunAt(uSun.xy, kt); }
 // カメラの方向(床の座標で)
@@ -1760,7 +1760,7 @@ DP dGrass(float t, float kt){
   float u0 = float(j) * 0.25, u1 = u0 + 0.25;
   vec3 a = vec3(R.x + lean.x * H * u0 * u0, H * u0 * (1.0 - sq * u0), R.y + lean.y * H * u0 * u0);
   vec3 b = vec3(R.x + lean.x * H * u1 * u1, H * u1 * (1.0 - sq * u1), R.y + lean.y * H * u1 * u1);
-  vec3 col = mix(D_CYAN * 1.7, D_PAPER, pow(u1, 0.8)) * (0.85 + 0.3 * dvA1); // 根もとは青に沈み、先だけ白く光る
+  vec3 col = mix(D_EXPO * 2.2, D_PAPER, pow(u1, 0.8)) * (0.85 + 0.3 * dvA1); // 根もとは黒に沈み、先だけ白く光る
   return dSeg(dCam(a, kt), dCam(b, kt), 0.5 - 0.28 * u0, col, 1.0);
 }
 // ---- 植物(塔の場面の置きかえ): 9つのしずくから伸びる。茎は光(指)のほうへ弧を描いて曲がる。
@@ -1960,7 +1960,7 @@ DP dObj(float t, float kt, float th4){
   float pr = 2.6 / (2.6 - w4);
   float S = min(uView.x, uView.y) * 0.42;
   vec3 w = vec3(p.x * pr * S, (p.y - uWrap.x) * pr * S + 3.0, p.z * pr * S);
-  // 青写真: 太陽(指)に照らされ、床に白い影を落とす。床が落ちる(39.5秒〜)と、影の粒は立体へ戻る
+  // 白い立体: 太陽(指)に照らされ、床に白い影を落とす。床が落ちる(39.5秒〜)と、影の粒は立体へ戻る
   vec3 Ls = dSunP(kt);
   float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), normalize(Ls - w)), 0.0);
   vec3 cl = D_PAPER * lit * (0.9 + 0.2 * dvA1);
@@ -1999,12 +1999,12 @@ O dPaper(float t, float first, int NG){
   vec3 paper = mix(vec3(step(0.5, sn)) * 0.85 + 0.05, D_PAPER, settle);
   float kc = t < 42.5 ? dsm(17.5, 20.0, t) : 0.0;
   float y = t < 42.5 ? -fall * uView.y * 1.5 : 0.0;
-  // 日光写真の青: 刷毛で塗ったむら
+  // 焼けた印画紙の黒: わずかな むら
   float ex = dExpo(cc, t);
   float bru = 0.5 + 0.5 * sin((cc.x * 0.8 + cc.y * 0.35) * 0.02 + sin(cc.y * 0.013 + cc.x * 0.004) * 2.2);
-  vec3 cy = D_CYAN * (0.84 + 0.22 * bru + 0.06 * (cl - 0.5));
+  vec3 cy = D_EXPO * (0.9 + 0.2 * bru + 0.06 * (cl - 0.5));
   vec2 sfl = dFloorAt(uSun.xy, kc); vec2 dsf = cc - sfl;
-  cy += vec3(0.05, 0.11, 0.18) * uSun.z * exp(-dot(dsf, dsf) / (2.0 * 150.0 * 150.0)); // 指(太陽)の下の、光だまり
+  cy += vec3(0.1, 0.098, 0.095) * uSun.z * exp(-dot(dsf, dsf) / (2.0 * 150.0 * 150.0)); // 指(太陽)の下の、光だまり
   vec3 Pc = dCam(vec3(cc.x, y, cc.y), kc);
   vec3 Pv = dCam(vec3(cv.x, y, cv.y), kc);
   O o = base();
@@ -2489,6 +2489,7 @@ uniform sampler2D uImg;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
 uniform float uInv, uBoost; // 場面の変わり目の反転と、明るさの山
+uniform vec3 uSunG;          // 太陽(指)のまぶしさ: 画面の画素での位置と、強さ
 uniform float uDroste;       // 画面のきまり(無限): 画面が、自分自身を中に含む(入れ子が渦を巻いて奥へ続く)
 uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
@@ -2531,15 +2532,19 @@ void main(){
     // 光のにじみ: 明るい所のまわりを、黄金角で12点拾う
     float th = mix(0.6, 0.22, g4);
     float R = uRes.y * mix(0.010, 0.016, g4);
-    vec3 bl = vec3(0.0);
+    vec3 bl = vec3(0.0), blr = vec3(0.0), wr = vec3(0.0);
     for (int i = 0; i < 12; i++) {
       float a = float(i) * 2.39996 + uTime * 0.0;
       float r = (float(i) + 1.0) / 12.0 * R;
       vec3 s = texture(uImg, uv + vec2(cos(a), sin(a)) * r * px).rgb;
       float sl = dot(s, vec3(0.2126, 0.7152, 0.0722));
-      bl += s * smoothstep(th, th + 0.25, sl);
+      vec3 e = s * smoothstep(th, th + 0.25, sl);
+      bl += e;
+      // 虹のにじみ: 近い光は青く、遠い光は赤くにじむ(光の輪が、虹の順に分かれる)
+      vec3 sp = clamp(abs(fract((1.0 - float(i) / 11.0) * 0.66 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+      blr += dot(e, vec3(0.3333)) * sp; wr += sp;
     }
-    bl /= 12.0;
+    bl /= 12.0; blr /= max(wr, vec3(1e-3));
     // にじみは、明るい所の「外側」にだけ出す(明るい所そのものの色、つまり写真の色は変えない)
     bl *= 1.0 - smoothstep(th - 0.1, th + 0.2, lum);
     // 2D(刷り): 黒が紙の上の墨のように少し浮き、ハイライトは紙の白で止まる。彩度をわずかに落とす。
@@ -2551,11 +2556,21 @@ void main(){
     c3 = c3 / (1.0 + 0.18 * max(c3 - 0.6, 0.0));
     float mid = smoothstep(0.15, 0.45, lum) * (1.0 - smoothstep(0.55, 0.9, lum));
     c3 *= mix(vec3(1.0), vec3(1.035, 1.0, 0.965), mid);
-    c3 += bl * vec3(1.0, 0.32, 0.1) * 0.4; // 強いと焦げた縁取りに見える(本人に見せた絵で確認)
+    c3 += mix(bl, blr, 0.65) * 0.42; // にじみは、少し虹がかる(本人: グレアや虹っぽい光のにじみの色はあっていい)
     // 4D(光): 黒は沈めきる。光の線は、にじんで空気に溶ける。
     vec3 c4 = max(c - 0.012, 0.0) * 1.03;
-    c4 += bl * vec3(0.85, 0.9, 1.0) * 0.6;
+    c4 += mix(bl * vec3(0.85, 0.9, 1.0), blr, 0.3) * 0.6;
     c = c * (1.0 - g2 - g3 - g4) + c2 * g2 + c3 * g3 + c4 * g4;
+    // 太陽(指)のまぶしさ: やわらかい芯、横に流れる光の筋、まわりに虹の輪(暈)
+    if (uSunG.z > 0.001) {
+      vec2 dd = (gl_FragCoord.xy - uSunG.xy) / max(uDpr, 1.0);
+      float d = length(dd);
+      float core = exp(-d * d / (2.0 * 24.0 * 24.0)) * 0.5 + exp(-d / 110.0) * 0.07;
+      float rr = (d - 82.0) / 15.0;
+      vec3 ring = clamp(abs(fract(clamp(0.33 - rr * 0.17, 0.0, 0.66) + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0) * exp(-rr * rr) * 0.055;
+      float streak = exp(-abs(dd.y) / 1.8) * exp(-abs(dd.x) / 150.0) * 0.14;
+      c += (vec3(core) + ring + streak * vec3(0.88, 0.93, 1.0)) * uSunG.z;
+    }
 
     // ---- 粒(グレイン)。パートごとに、粒の大きさ・動き方・色の混ざり方を変える。
     vec2 cp = gl_FragCoord.xy / max(uDpr, 1.0); // CSS の画素で
@@ -2635,7 +2650,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -3282,7 +3297,7 @@ export function mountMorph(root: HTMLElement) {
   let bunTwV = 0, knobWas = false;
   // 指の通った跡(0.04秒ごとに10点。位置・速さ・時刻)
   const TRN = 10, trX = new Float32Array(TRN * 4), trT = new Float64Array(TRN).fill(-99), trA = new Float32Array(TRN).fill(99);
-  let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0, sunX = -1, sunY = -1, prX = 0, prY = 0, prT = 0;
+  let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0, sunX = -1, sunY = -1, prX = 0, prY = 0, prT = 0, glareK = 0;
   let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0;
   // 場面の変わり目(反転と明るさの山)
   const DEV_CUTS = [17.5, 34.5, 39.5, 60, 72, 84, 96];
@@ -3962,6 +3977,8 @@ export function mountMorph(root: HTMLElement) {
         gl!.uniform3f(u.sun, sunX, sunY, devOn ? fingOn : 0);
         if (!devOn || dtl < 34.4) { prX = sunX; prY = sunY; prT = now; } // 綿毛が飛ぶ瞬間に止まる
         gl!.uniform3f(u.print, prX, prY, prT);
+        // 触っている間だけ、指の所に太陽のまぶしさを出す(紙が倒れてから、機材が組み上がるまで)
+        glareK += ((devOn && tracking && dtl >= 17.5 && dtl < 39.5 ? 1 : 0) - glareK) * (1 - Math.exp(-dt / 0.18));
       }
       // クライン群: 時刻で形の道のりをたどり、指で ta を曲げる(離すと、ゆっくり戻る)
       if (devOn && dtl >= 71) {
@@ -4095,6 +4112,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(pu.dpr, cv.width / Math.max(1, vw));
     gl!.uniform1f(pu.analog, analog);
     gl!.uniform1f(pu.droste, droste);
+    { const dpv = cv.width / Math.max(1, vw); gl!.uniform3f(pu.sunG, sunX * dpv, (vh - sunY) * dpv, glareK); }
     gl!.uniform1f(pu.inv, inv > 0 ? 1 : 0);
     if (inv > 0) inv--;
     gl!.uniform1f(pu.boost, boost);
