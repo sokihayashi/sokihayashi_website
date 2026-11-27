@@ -1871,7 +1871,7 @@ DP d4D(float t){
   // 拍ごとに、両側の版が入れ替わる。なぞって4次元で回すと、立体が切り口を くぐり、境目が面の上を すべる。
   float sl = H.w * cos(uSlc.y) + H.x * sin(uSlc.y) - uSlc.x;
   float cut = 1.0 - smoothstep(0.018, 0.04, abs(sl));
-  if (cut > 0.5) { ln.hs.y = mix(0.45, 1.0, uSlc.w); ln.col *= mix(1.0, 5.5, uSlc.w); return ln; }
+  if (cut > 0.5) { ln.hs.y = mix(0.45, mix(1.0, 0.6, sp), uSlc.w); ln.col *= mix(1.0, mix(5.5, 2.0, sp), uSlc.w); return ln; } // 輪がほどけた後は、切り口を控える(短い光の筋が散って、花火に見えた)
   bool dots = (sl < 0.0) != (uSlc.z > 0.5);
   if (!dots || uSlc.w < 0.05 + 0.9 * dvA1) return ln; // 入り・抜けは、粒ごとに少しずつ版が替わる(一度に切り替えない)
   float dq = 6.2831853 / 64.0, aq = (floor(ang / dq) + 0.5) * dq;
