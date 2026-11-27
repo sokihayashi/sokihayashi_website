@@ -1615,7 +1615,9 @@ DP dDrop(float kt){
   return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), kt), hs, 0.0, col);
 }
 // ---- 太陽(指)と、日光写真。紙は光で青く焼け、光の届かなかった所(砂・影)は白く残る
-vec3 dSunP(float kt){ vec2 f = dFloorAt(uSun.xy, kt); return vec3(f.x, uView.y * 0.85, f.y); }
+vec3 dSunP(float kt){ vec2 f = dFloorAt(uSun.xy, kt); return vec3(f.x, uView.y * 1.25, f.y); }
+// カメラの方向(床の座標で)
+vec3 dCamDir(float kt){ float pit = dPit(kt), yaw = dYaw(kt); return vec3(-sin(yaw) * cos(pit), sin(pit), cos(yaw) * cos(pit)); }
 float dExpo(vec2 fp, float t){
   if (t >= 42.5) return 0.0;
   vec2 sf = dFloorAt(uSun.xy, 1.0);
@@ -1744,7 +1746,8 @@ DP dGrass(float t, float kt){
   vec3 L = dSunP(kt);
   vec2 dL = L.xz - R;
   float fb = uSun.z * exp(-dot(dL, dL) / (2.0 * 95.0 * 95.0));
-  float H = (5.0 + 34.0 * hb * hb * hb + 78.0 * boost + 46.0 * fb) * gr;
+  float tall = step(0.66, hb);
+  float H = (mix(3.0 + 5.0 * hb, 22.0 + 60.0 * (hb - 0.66), tall) + 78.0 * boost + 56.0 * fb) * gr;
   vec2 lean = dL / L.y * 0.85;
   float ll = length(lean); if (ll > 1.1) lean *= 1.1 / ll;
   lean += vec2(sin(uTime * 1.3 + R.x * 0.02 + R.y * 0.013), cos(uTime * 1.1 + R.y * 0.017)) * 0.16; // 風
@@ -1773,12 +1776,12 @@ DP dPlant(float t, float kt){
   vec3 L = dSunP(kt);
   vec2 dL = L.xz - R.xz; float dlen = length(dL);
   vec2 lv = dlen > 1e-3 ? dL / dlen : vec2(1.0, 0.0);
-  float Phi = max(1.0 * atan(dlen, L.y) * (1.0 + 0.25 * uSun.z) + 0.06 * sin(uTime * 0.8 + float(k) * 1.9), 0.02);
+  float Phi = max(1.4 * atan(dlen, L.y) * (1.0 + 0.25 * uSun.z) + 0.06 * sin(uTime * 0.8 + float(k) * 1.9), 0.02);
   vec3 tip = dStemP(R, lv, H, Phi, gs);
   vec3 top = dStemP(R, lv, H, Phi, 1.0);
   vec3 tanT = vec3(lv.x * sin(Phi), cos(Phi), lv.y * sin(Phi));
-  bool shd = dvA3 < 0.22;
-  float r = shd ? dvA3 / 0.22 : (dvA3 - 0.22) / 0.78;
+  bool shd = dvA3 < 0.3;
+  float r = shd ? dvA3 / 0.3 : (dvA3 - 0.3) / 0.7;
   float e1 = hsh(uint(gI) * 3U + 1U), e2 = hsh(uint(gI) * 7U + 13U), e3 = hsh(uint(gI) * 17U + 5U);
   vec3 P; float sz = 1.0; vec3 col = D_PAPER;
   if (r < 0.13) {
@@ -1809,7 +1812,7 @@ DP dPlant(float t, float kt){
   } else {
     // 花: 種の渦(回り続ける)。実を結ぶと、渦の種がそのまま球に並び直し、綿毛の球になる(球の上の黄金角の並び)
     float open = dsm(0.86, 1.0, gs);
-    vec3 nh = normalize(mix(tanT, normalize(L - top), 0.8));
+    vec3 nh = normalize(mix(normalize(L - top), dCamDir(kt), 0.45)); // 光のほうを向く。ただし、こちらからも渦が見えるように
     vec3 ax = abs(nh.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     vec3 b1 = normalize(cross(nh, ax)), b2 = cross(nh, b1);
     float Rh = H * 0.15 * open;
@@ -1830,7 +1833,7 @@ DP dPlant(float t, float kt){
     P = mix(tip, q, open);
   }
   dvHy = clamp(P.y / H, 0.0, 1.0);
-  if (shd) { dvHy = 0.0; return dDot(dCam(dCast(P, L), kt), vec2(0.95), 1.0, D_SHADE); }
+  if (shd) { dvHy = 0.0; return dDot(dCam(dCast(P, L), kt), vec2(1.05), 1.0, D_SHADE); }
   return dDot(dCam(P, kt), vec2(sz), 1.0, col);
 }
 // ---- 4次元: 塔の輪の1本1本が、4次元の球の上の円(ホップ・ファイバー)になる。
@@ -2055,6 +2058,7 @@ O sDev(){
   // 重なる(不透明)⇔ 光として足す、が入れ替わる所では、明るさを いったん落としてから入れ替える
   if (A.a != B.a) o.col = b < 0.5 ? A.col * (1.0 - b * 1.6) : B.col * (0.2 + 1.6 * (b - 0.5));
   else o.col = mix(A.col, B.col, b);
+  if ((t >= 19.5 && t < 21.0) || (t >= 27.0 && t < 30.5)) o.col *= 1.0 - 0.85 * sin(3.14159 * b); // 移る途中の粒は暗く(白い雲にしない)
   o.alpha = b < 0.5 ? A.a : B.a;
   o.tex = 0.0;
   o.shape = mix(dShape(A), dShape(B), b);
