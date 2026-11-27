@@ -1969,8 +1969,9 @@ DP dKPlane(float t){
   vec2 p = c + vec2(z.x, -z.y) * Sk;
   // 指の所が、虫めがねのように ふくらむ(無限の入れ子を、触った所だけ大きく見せる)。離すと しぼむ
   vec2 fq = p - uFing.xy;
-  p = uFing.xy + fq * (1.0 + 1.6 * uFing.z * exp(-dot(fq, fq) / (2.0 * 150.0 * 150.0)));
-  float trc = dTrace(dScr(vec3(p, 0.0)), 70.0);
+  float lens = uFing.z * exp(-dot(fq, fq) / (2.0 * 150.0 * 150.0));
+  p = uFing.xy + fq * (1.0 + 1.6 * lens);
+  float trc = max(dTrace(dScr(vec3(p, 0.0)), 70.0), lens); // 虫めがねの中も、明るく大きく
   DP d = dDot(vec3(p, 0.0), vec2(0.9 * (1.0 + 1.4 * trc)), 1.0, vec3(0.92, 0.94, 1.0) * 0.08 * (1.0 + 3.5 * trc));
   d.a = 0.0;
   return d;
