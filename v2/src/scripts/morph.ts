@@ -2227,8 +2227,16 @@ export function mountMorph(root: HTMLElement) {
   // 外したのは、本人が外すと言ったものだけ: 4 リソ・5 フィルム・6 刺繍(写真の色を変える/見た目だけの違い)、18 線だけの帯(色を落とす)、
   //   30 割れる(写真が分かれているだけ)、27 全画面(平面の四角)、28 プロフィール(About へ)、35・36 帯の線から作るガラス(帯に落とし込む系ではない)。
   // 2D: 平らな帯の上で起きる表現 / 3D: 面が立ち、奥行きで見せる表現(帯が4本に増えて起き上がる 40 から入る。ガラス 34 と立体は別に入れる)
-  const P2D = [2, 3, 7, 8, 9, 10, 11, 13, 14, 16, 19, 20, 25, 29];
-  const P3D = [12, 15, 17, 22, 23, 24, 26];
+  // 分け方は技術ではなく見え方(本人 2026-11-27:「3Dの技術を使っているかより、実際に3Dに見えるか平面に見えるかで分類」)。
+  // 画面で1つずつ見て、平らに見えるもの / 立体に見えるもの に分けた。
+  const P2D = [2, 3, 7, 9, 10, 11, 12, 13, 14, 16, 19, 22, 26, 29];
+  const P3D = [8, 15, 17, 20, 23, 24, 25];
+  // 表現ごとの長さ(1 = BEAT 秒)。その表現が見えて読めるまでにかかる時間で決めた。
+  const LEN: Record<number, number> = {
+    0: 1.0, 2: 1.2, 3: 1.2, 7: 0.8, 9: 0.7, 10: 1.2, 11: 1.0, 12: 0.9, 13: 1.1, 14: 1.0, 16: 1.2, 19: 1.3, 22: 1.1, 26: 1.1, 29: 0.8,
+    40: 2.6, 1: 1.4, 8: 1.6, 15: 1.1, 17: 1.3, 20: 1.3, 21: 1.4, 23: 1.4, 24: 1.4, 25: 1.3, 34: 4.4, 31: 1.8, 32: 1.8, 33: 1.8, 37: 1.8, 38: 2.4,
+    39: 2.6, 41: 3.6, 42: 3.0,
+  };
   const shuffle = <T,>(a: T[]) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
   const push1 = (c: number, sec: string, len: number, sty: number) => { seq.push(c); secOf.push(sec); lenOf.push(len * (0.92 + Math.random() * 0.16)); styOf.push(sty); };
   const growParts = () => {
@@ -2236,17 +2244,17 @@ export function mountMorph(root: HTMLElement) {
     partI++;
     if (P === 0) {
       push1(0, 'A2D', partI === 1 ? 1.4 : 1.0, 0);
-      for (const c of shuffle(P2D)) push1(c, 'A2D', 0.95, pick([0, 1, 3]));
+      for (const c of shuffle(P2D)) push1(c, 'A2D', LEN[c] ?? 1, pick([0, 1, 3]));
     } else if (P === 1) {
-      push1(40, 'up', 2.6, 0);
+      push1(40, 'up', LEN[40], 0);
       const others = shuffle([...P3D, ...(objReady ? [31, 32, 33, 37, 38] : [])]);
       const core = Math.random() < 0.5 ? [1, 34, 21] : [21, 34, 1];
       const at = Math.floor(Math.random() * (others.length + 1));
       const list = [...others.slice(0, at), ...core, ...others.slice(at)];
-      for (const c of list) push1(c, 'B3', c === 34 ? 4.4 : c >= 31 ? 1.6 : 0.95, c === 34 ? 1 : pick([1, 3]));
+      for (const c of list) push1(c, 'B3', LEN[c] ?? 1.2, c === 34 ? 1 : pick([1, 3]));
     } else {
       // 4D: 写真の帯にこだわらない(本人 2026-11-27:「不必要でもっと違う表現があったら、写真入りの帯を途中から捨ててもいい」)
-      for (const c of shuffle([39, 41, 42])) push1(c, 'D4', 3.0, c === 39 ? 0 : 1);
+      for (const c of shuffle([39, 41, 42])) push1(c, 'D4', LEN[c] ?? 3, c === 39 ? 0 : 1);
     }
   };
   const grow = () => {
