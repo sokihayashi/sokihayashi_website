@@ -2489,7 +2489,7 @@ uniform sampler2D uImg;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
 uniform float uInv, uBoost; // 場面の変わり目の反転と、明るさの山
-uniform vec3 uSunG;          // 太陽(指)のまぶしさ: 画面の画素での位置と、強さ
+uniform vec3 uSunG;          // 光源(指)の位置(画面の画素)と、触っている度合い。光の分散の中心になる
 uniform float uDroste;       // 画面のきまり(無限): 画面が、自分自身を中に含む(入れ子が渦を巻いて奥へ続く)
 uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
@@ -2513,6 +2513,17 @@ void main(){
   // 3D(35mm): フィルムのゲートの揺れ。1画素に満たない、ゆっくりした縦横の揺れ。
   vec2 uv = vUv + vec2(sin(uTime * 1.7) * 0.35, sin(uTime * 2.3 + 1.0) * 0.55 + sin(uTime * 13.0) * 0.12) * px * g3;
   vec3 c = texture(uImg, uv).rgb;
+  // 光の分散(3D・4D): 白い光のふちが、わずかに虹に分かれる(レンズのフレアではなく、光そのものの分散)。
+  // 光源(触っている間は指、ふだんは画面の中央)から外へ、赤は外側・青は内側にずれる。中心ほど弱く、遠いほど強い。
+  float dk = 0.75 * uGrade.y + 0.7 * uGrade.z;
+  if (dk > 0.001) {
+    vec2 lc = mix(uRes * 0.5, uSunG.xy, clamp(uSunG.z, 0.0, 1.0));
+    vec2 dv = gl_FragCoord.xy - lc;
+    float dl = length(dv);
+    vec2 off = dv / max(dl, 1.0) * (0.45 + 1.9 * dl / uRes.y) * max(uDpr, 1.0) * dk / uRes;
+    c.r = texture(uImg, uv - off).r;
+    c.b = texture(uImg, uv + off).b;
+  }
   // デジタル: 色が少し割れ、細い走査線が入る
   float sh = dg * 1.2;
   c.r = mix(c.r, texture(uImg, vUv + vec2(px.x * sh, 0.0)).r, dg);
@@ -2561,16 +2572,6 @@ void main(){
     vec3 c4 = max(c - 0.012, 0.0) * 1.03;
     c4 += mix(bl * vec3(0.85, 0.9, 1.0), blr, 0.3) * 0.6;
     c = c * (1.0 - g2 - g3 - g4) + c2 * g2 + c3 * g3 + c4 * g4;
-    // 太陽(指)のまぶしさ: やわらかい芯、横に流れる光の筋、まわりに虹の輪(暈)
-    if (uSunG.z > 0.001) {
-      vec2 dd = (gl_FragCoord.xy - uSunG.xy) / max(uDpr, 1.0);
-      float d = length(dd);
-      float core = exp(-d * d / (2.0 * 24.0 * 24.0)) * 0.5 + exp(-d / 110.0) * 0.07;
-      float rr = (d - 82.0) / 15.0;
-      vec3 ring = clamp(abs(fract(clamp(0.33 - rr * 0.17, 0.0, 0.66) + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0) * exp(-rr * rr) * 0.055;
-      float streak = exp(-abs(dd.y) / 1.8) * exp(-abs(dd.x) / 150.0) * 0.14;
-      c += (vec3(core) + ring + streak * vec3(0.88, 0.93, 1.0)) * uSunG.z;
-    }
 
     // ---- 粒(グレイン)。パートごとに、粒の大きさ・動き方・色の混ざり方を変える。
     vec2 cp = gl_FragCoord.xy / max(uDpr, 1.0); // CSS の画素で
@@ -3977,7 +3978,7 @@ export function mountMorph(root: HTMLElement) {
         gl!.uniform3f(u.sun, sunX, sunY, devOn ? fingOn : 0);
         if (!devOn || dtl < 34.4) { prX = sunX; prY = sunY; prT = now; } // 綿毛が飛ぶ瞬間に止まる
         gl!.uniform3f(u.print, prX, prY, prT);
-        // 触っている間だけ、指の所に太陽のまぶしさを出す(紙が倒れてから、機材が組み上がるまで)
+        // 触っている間は、光の分散の中心が指へ移る(紙が倒れてから、機材が組み上がるまで)
         glareK += ((devOn && tracking && dtl >= 17.5 && dtl < 39.5 ? 1 : 0) - glareK) * (1 - Math.exp(-dt / 0.18));
       }
       // クライン群: 時刻で形の道のりをたどり、指で ta を曲げる(離すと、ゆっくり戻る)
