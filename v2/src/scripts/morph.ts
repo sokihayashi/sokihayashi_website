@@ -68,6 +68,10 @@ uniform vec4 uBun;           // 48: 線の束のつまみ(k, 上の円の大き�
 uniform float uPenV;         // 48: 指の速さ
 uniform vec4 uTr[10]; uniform float uTrA[10]; // 48: 指の通った跡(位置と速さ、何秒前か)。跡に沿って、粒が流される
 uniform vec3 uFing;          // 48: 指の位置と、触っている度合い(なめらかに出入りする)
+uniform vec4 uKm[8];         // 48: クライン群の4つの生成元(a, b, A, B)。2行ずつ、複素数の行列
+uniform vec4 uKf;            // 48: 生成元 a の吸い込む不動点(xy)と、湧き出す不動点(zw)
+uniform vec3 uKl;            // 48: a の倍率の対数(大きさ, 角度)と、流れの位相(0〜1で一巡)
+uniform float uObjOn;        // 48: 機材の立体のデータが届いているか
 uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
 out vec4 vMix;  // x: 丸さ / y: 不透明さ(1 = ふつうに重なる, 0 = 光として足す) / z: 線を引くか / w: 表(+) か 裏(-)
@@ -1513,8 +1517,14 @@ O sSpawn(){
 // 描いた帯(最初の1カット)から、止まらずに展開していく1本の流れ。表現を並べ替えるのではなく、同じ粒が形を変え続ける。
 //   帯 → 墨の線 → しずく(Soy Nando)→ 砂になって紙に広がる → 紙が鳴って、砂が節の線に集まる(クラドニ図形。Dan の模様)
 //   → 紙が傾いて床になる → 砂が鉄の針になり、磁石が 1→2→4→8 と増えて針が立つ(aidoga_lab「RINGING METAL」)
-//   → 針が渦の塔に集まる(Dan)→ 塔の粒が空へ上がり、4次元のドーナツ → 入れ子 → くぐり合う円の束
-//   → 円が、2つの円を結ぶ線の束になる(Ayumu Nagamatsu)→ 線の束の中へ飛び込む → 線が描き直され、砂嵐から紙が戻る(「ま」)→ また しずくへ …
+//   → 針が渦の塔に集まる(Dan)→ 塔の粒が、機材の立体(カメラなど。周ごとに替わる)に組み上がる(本人「3Dオブジェクトが消えてる。わかりやすいから組み込みたい」)
+//   → その立体が、4次元の向きへ半回転して、鏡に映した形になって戻ってくる(3次元の物を、4次元で回すと裏返る)
+//   → 立体の粒が空へ上がり、4次元のドーナツ → 入れ子 → くぐり合う円の束
+//   → 円が、2つの円を結ぶ線の束になる(Ayumu Nagamatsu)
+//   → 4次元の先(本人「4次元から先をもっと拡張して、理解の外に出るくらい見たことないものに」): 次元が整数でなくなる。
+//     線の束が、円の中に無限に円が詰まった図(アポロニウスの網)に凝る → クライン群の極限集合(フラクタル。次元はおよそ1.3〜1.8)へ形を変え続ける
+//     → それが球に巻きつき、片方の極から湧いて、渦を巻きながらもう片方の極へ吸い込まれ続ける(自分と同じ形へ戻るので、終わりが無い)
+//     → 吸い込まれる極へ飛び込む → 線が描き直され、砂嵐から紙が戻る(「ま」)→ また しずくへ …
 //   (光の花びら(zach lieberman)は、本人「これよくわからない」で外した)
 // 指(本人「指を動かすと進むだけで、動きと連動していないものも多い」を受けて、どれも指の動きそのものに ついてくるようにした):
 //   墨・しずく・砂・針・塔は、指の通った跡に沿って流される(跡は少し残って、ゆっくり消える)。紙の砂は、指の所から広がる輪に集まり、指を動かすと輪ごとついてくる。
@@ -1739,9 +1749,84 @@ DP dBundle(float t){
   vec3 B0 = vec3(cos(m0 * th + dl) * sc, sin(m0 * th + dl) * sc, h);
   vec3 B1 = vec3(cos((m0 + 1.0) * th + dl) * sc, sin((m0 + 1.0) * th + dl) * sc, h);
   A = dRotV(A); vec3 B = dRotV(mix(B0, B1, fm));
-  // 64秒から、線の束の中へ飛び込む
-  float dv = dsm(64.0, 67.5, t), zd = mix(1.0, 5.5, dv * dv);
-  return dSeg(vec3(c + A.xy * S * zd, clamp(A.z * S * zd + dv * 500.0, -1400.0, 1000.0)), vec3(c + B.xy * S * zd, clamp(B.z * S * zd + dv * 500.0, -1400.0, 1000.0)), 0.4, vec3(0.84, 0.82, 1.0) * 0.011 * mix(1.0, 0.75, dv), 0.0);
+  return dSeg(vec3(c + A.xy * S, A.z * S), vec3(c + B.xy * S, B.z * S), 0.4, vec3(0.84, 0.82, 1.0) * 0.011, 0.0);
+}
+// ---- 4次元の先: クライン群の極限集合(Indra's Pearls の「おばあちゃんのレシピ」で作る2つの生成元 a, b と、その逆 A, B)
+// 粒の1つ1つが、自分だけの でたらめな語(a b A b B …)を持ち、それを順に当てていくと、極限集合の上に落ちる。
+// 生成元(= 形)がなめらかに変わると、同じ語の粒は、なめらかに動く(形が溶けるように変わる)。
+vec2 cmul(vec2 a, vec2 b){ return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 cdiv(vec2 a, vec2 b){ float d = dot(b, b) + 1e-12; return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / d; }
+vec2 kMob(int g, vec2 z){ vec4 r0 = uKm[g * 2], r1 = uKm[g * 2 + 1]; return cdiv(cmul(r0.xy, z) + r0.zw, cmul(r1.xy, z) + r1.zw); }
+vec2 kPoint(){
+  uint h = uint(gI) * 2654435761U + 7U;
+  int prev = int((h >> 8) % 4U);
+  vec2 z = vec2(0.0);
+  for (int k = 0; k < 24; k++) {
+    h = h * 1664525U + 1013904223U;
+    int nx = (prev + 3 + int((h >> 16) % 3U)) % 4; // 直前の逆は選ばない
+    z = kMob(nx, z); prev = nx;
+    if (dot(z, z) > 1e8) z = normalize(z) * 1e4;
+  }
+  // 吸い込む不動点のまわりにも粒を置く(a を何回か当てる)。流れで拡大されても、どの大きさにも粒がある
+  h = h * 1664525U + 1013904223U;
+  int na = int((h >> 12) % 9U);
+  for (int k = 0; k < 8; k++) if (k < na) z = kMob(0, z);
+  return z;
+}
+// 終わらない流れ: 生成元 a の2つの不動点 p, q を 0 と ∞ に送る座標 w = (z − p)/(z − q) では、a は w → λw(拡大と回転)。
+// その λ を少しずつ(位相 s)かけると、極限集合は自分自身へ流れ込み、s が 1 で ぴったり元の形に戻る。
+vec2 kFlow(vec2 z, float s){
+  vec2 p = uKf.xy, q = uKf.zw;
+  vec2 w = cdiv(z - p, z - q);
+  float lr = -s * uKl.x, la = -s * uKl.y;
+  w = cmul(w, exp(lr) * vec2(cos(la), sin(la)));
+  return cdiv(p - cmul(q, w), vec2(1.0, 0.0) - w);
+}
+vec3 kSphere(vec2 z){ vec2 Z = z / 1.6; float n2 = dot(Z, Z); return vec3(2.0 * Z.x, 2.0 * Z.y, n2 - 1.0) / (n2 + 1.0); }
+DP dKPlane(float t){
+  vec2 c = uView * 0.5;
+  vec2 z = kPoint();
+  float Sk = min(uView.x, uView.y) * 0.21;
+  vec2 p = c + vec2(z.x, -z.y) * Sk;
+  DP d = dDot(vec3(p, 0.0), vec2(0.9), 1.0, vec3(0.92, 0.94, 1.0) * 0.08);
+  d.a = 0.0;
+  return d;
+}
+DP dKSphere(float t){
+  vec2 c = uView * 0.5;
+  vec2 z = kFlow(kPoint(), uKl.z);
+  vec3 P = kSphere(z);
+  float rx = 0.5 + uRot4.y * 0.6, ry = uRot4.x * 0.5;
+  P = vec3(P.x, P.y * cos(rx) - P.z * sin(rx), P.y * sin(rx) + P.z * cos(rx));
+  P = vec3(P.x * cos(ry) + P.z * sin(ry), P.y, -P.x * sin(ry) + P.z * cos(ry));
+  float Ss = min(uView.x, uView.y) * 0.42;
+  // 88秒から、吸い込まれる方へ飛び込む
+  float dv = dsm(88.0, 91.0, t), zd = mix(1.0, 7.0, dv * dv);
+  float front = 0.5 + 0.5 * P.z;
+  vec3 col = mix(vec3(0.55, 0.65, 1.0) * 0.035, vec3(1.0, 0.96, 0.9) * 0.1, front) * mix(1.0, 0.6, dv);
+  DP d = dDot(vec3(c + P.xy * Ss * zd, clamp(P.z * Ss * zd + dv * 600.0, -1400.0, 1100.0)), vec2(mix(0.8, 1.2, front)), 1.0, col);
+  d.a = 0.0;
+  return d;
+}
+// ---- 機材の立体: 粒が床から順に組み上がる。指でなぞると回る。39.5秒から、4次元の向き(xw 面)へ半回転して、鏡の形で戻ってくる。
+// 立体の面の点は、帯の面と同じ数だけ用意されている。紙の升目に使っている面の分も含めて、粒に割り当て直す(上の端が欠けないように)。
+DP dObj(float t, float kt, float th4){
+  vec2 c = uView * 0.5;
+  int NG = ${NU} * NVi - 4096;
+  int j = int(float(gI) * float(${NU} * NVi) / float(NG)); int ju = j / NVi, jv = j - ju * NVi;
+  vec3 p = texelFetch(uObjP, ivec2(ju, jv), 0).xyz, n = texelFetch(uObjN, ivec2(ju, jv), 0).xyz;
+  float ya = uRot4.x * 0.7 + max(t - 34.5, 0.0) * 0.22;
+  p = vec3(p.x * cos(ya) + p.z * sin(ya), p.y, -p.x * sin(ya) + p.z * cos(ya));
+  n = vec3(n.x * cos(ya) + n.z * sin(ya), n.y, -n.x * sin(ya) + n.z * cos(ya));
+  // 4次元の半回転: (x, w) の面で回す。w は はじめ 0。投影は 4次元の遠近(視点を w = 2.6 に置く)
+  float cx = cos(th4), sx = sin(th4);
+  float w4 = p.x * sx; p.x = p.x * cx; n.x = n.x * cx;
+  float pr = 2.6 / (2.6 - w4);
+  float S = min(uView.x, uView.y) * 0.42;
+  vec3 w = vec3(p.x * pr * S, (p.y - uWrap.x) * pr * S + 3.0, p.z * pr * S);
+  vec3 L = normalize(vec3(-0.5, 0.8, 0.45));
+  float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), L), 0.0);
+  return dDot(dCam(w, kt), vec2(1.3), 1.0, D_GRAY * lit * (0.9 + 0.2 * dvA1));
 }
 // 指で押すと、その場所の粒が よける(墨が分かれる、塔の粒が割れる、光の線が曲がる)。指が磁石・つまみになる場面では、よけさせない
 O dPush(O o, float k){
@@ -1764,16 +1849,16 @@ O dPaper(float t, float first, int NG){
   for (int i = 0; i < 16; i++) dl = min(dl, distance(dPath((float(i) + 0.5) / 16.0 * (cnt - 1.0)) - c, cc));
   float maxD = length(uView);
   float fr1 = first > 0.5 ? (t - 0.35) * 1.4 - dl / (maxD * 0.5) : 9.0;
-  float fr2 = (t - 68.1) * 1.4 - dl / (maxD * 0.5);
-  float fall = dsm(34.5, 38.5, t);
-  float fr = t < 38.5 ? fr1 : (t < 68.0 ? -1.0 : fr2);
+  float fr2 = (t - 99.6) * 1.4 - dl / (maxD * 0.5);
+  float fall = dsm(39.5, 42.5, t);
+  float fr = t < 42.5 ? fr1 : (t < 99.5 ? -1.0 : fr2);
   float vis = step(0.0, fr);
   float cl = hsh(uint(qi) * 131U + 7U) * 0.45 + 0.35 * (0.5 + 0.5 * sin(cc.x * 0.013 + cc.y * 0.009 + 1.3) * sin(cc.y * 0.017 - cc.x * 0.006));
   float settle = smoothstep(0.0, 1.0, fr * 1.6 - cl * 1.6);
   float sn = hsh(uint(qi) * 977U + uint(floor(uTime * 12.0)) * 31U);
   vec3 paper = mix(vec3(step(0.5, sn)) * 0.85 + 0.05, D_PAPER, settle);
-  float kc = t < 38.5 ? dsm(17.5, 20.0, t) : 0.0;
-  float y = t < 38.5 ? -fall * uView.y * 1.5 : 0.0;
+  float kc = t < 42.5 ? dsm(17.5, 20.0, t) : 0.0;
+  float y = t < 42.5 ? -fall * uView.y * 1.5 : 0.0;
   // 塔の影: 光と反対へ伸びる
   float sh = 0.0;
   if (kc > 0.001) {
@@ -1792,12 +1877,14 @@ O dPaper(float t, float first, int NG){
   vec3 Pv = dCam(vec3(cv.x, y, cv.y), kc);
   O o = base();
   o.centre = Pc; o.corner = Pc + (Pv - Pc) * vis;
-  o.col = mix(paper, vec3(0.30, 0.31, 0.34) * (1.0 - 0.7 * sh), kc) * (1.0 - fall * step(t, 38.5));
+  o.col = mix(paper, vec3(0.30, 0.31, 0.34) * (1.0 - 0.7 * sh), kc) * (1.0 - fall * step(t, 42.5));
   o.tex = 0.0; o.gate = 1.0; o.round = 0.0; o.shape = vec2(1.0);
   return o;
 }
 O sDev(){
   float t = uDev.x;
+  // 34.5〜42.5秒に、機材の立体の場面を差し込んだ。その先は、差し込む前の時刻(tt = t − 8)で動く。
+  float tt = t < 42.5 ? t : t - 8.0;
   float first = 1.0 - step(0.5, uDev.y);
   int NG = ${NU} * NVi - 4096;
   if (gI >= NG) return dPaper(t, first, NG);
@@ -1832,12 +1919,19 @@ O sDev(){
   else if (t < 21.0) { A = dChl(t, kt); B = dNeedle(t, kt); b = dsm(19.5, 21.0, t); push = 0.0; wk = 0.6; } // 紙が傾き、砂が針になる
   else if (t < 27.0) { A = dNeedle(t, kt); B = A; push = 0.0; wk = 0.5; }
   else if (t < 30.5) { A = dNeedle(t, kt); B = dTower(t, kt); b = dsm(27.0 + dvA3 * 1.0, 29.5 + dvA3 * 1.0, t); push = 0.0; wk = 0.8; }
-  else if (t < 34.5) { A = dTower(t, kt); B = A; push = 0.0; wk = 0.4 + 2.2 * dvTt * dvTt; } // なぞった向きへ しなる
-  else if (t < 39.0) { A = dTower(t, kt); B = d4D(t); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, t); push = 0.0; wk = 0.6; } // 上の粒から先に、空へ
-  else if (t < 52.0) { A = d4D(t); B = A; push = 0.0; wk = 0.0; }
-  else if (t < 55.0) { A = d4D(t); B = dBundle(t); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, t); push = 0.0; wk = 0.0; }
-  else if (t < 67.5) { A = dBundle(t); B = A; push = 0.0; wk = 0.0; }
-  else { A = dBundle(t); B = dLine(); b = dsm(67.5 + q * 1.8, 70.0 + q * 1.8, t); push = 0.0; wk = 0.0; } // 描いた順に、線が描き直される
+  else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dTower(t, kt); B = A; push = 0.0; wk = 0.4 + 2.2 * dvTt * dvTt; } // なぞった向きへ しなる
+  else if (t < 37.5) { A = dTower(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
+  else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
+  else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
+  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else A = dTower(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.0; } // 上の粒から先に、空へ
+  else if (tt < 52.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.0; }
+  else if (tt < 55.0) { A = d4D(tt); B = dBundle(tt); b = dsm(52.0 + dvA2 * 1.0, 54.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; }
+  else if (tt < 64.0) { A = dBundle(tt); B = A; push = 0.0; wk = 0.0; }
+  else if (tt < 67.0) { A = dBundle(tt); B = dKPlane(tt); b = dsm(64.0 + dvA2 * 1.0, 66.0 + dvA2 * 1.0, tt); push = 0.0; wk = 0.0; } // 線の束が、無限の円に凝る
+  else if (tt < 76.0) { A = dKPlane(tt); B = A; push = 0.0; wk = 0.0; }
+  else if (tt < 79.0) { A = dKPlane(tt); B = dKSphere(tt); b = dsm(76.0 + dvA3 * 0.8, 78.2 + dvA3 * 0.8, tt); push = 0.0; wk = 0.0; } // 球に巻きつく
+  else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.0; }
+  else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.0; wk = 0.0; } // 描いた順に、線が描き直される
   O o = base();
   o.corner = mix(dCorner(A), dCorner(B), b);
   o.centre = mix(dCentre(A), dCentre(B), b);
@@ -2258,6 +2352,7 @@ uniform sampler2D uImg;
 uniform float uAnalog, uTime;
 uniform vec2 uRes;
 uniform float uInv, uBoost; // 場面の変わり目の反転と、明るさの山
+uniform float uDroste;       // 画面のきまり(無限): 画面が、自分自身を中に含む(入れ子が渦を巻いて奥へ続く)
 uniform float uDpr;   // 画面の1画素(CSS)あたりの実画素。粒の大きさを、画面の細かさに関わらず揃える
 uniform vec3 uGrade; // パートごとのグレーディングの効き(2D 刷り / 3D 35mm / 4D 光)。立体の版だけ。
 in vec2 vUv;
@@ -2346,6 +2441,20 @@ void main(){
     }
     c += gr;
   }
+  // 画面のきまり(無限): 画面の中心に、画面そのものを 小さく・回して 何重にも重ねる。光は足し合わせる(黒地なので、奥へ続く入れ子に見える)
+  if (uDroste > 0.001) {
+    float asp = uRes.x / uRes.y;
+    vec2 cu = (vUv - 0.5) * vec2(asp, 1.0);
+    vec3 acc = vec3(0.0);
+    for (int k = 1; k <= 6; k++) {
+      float sc = pow(2.1, float(k));
+      float an = float(k) * 0.42 + uTime * 0.07;
+      vec2 qv = mat2(cos(an), sin(an), -sin(an), cos(an)) * (cu * sc);
+      vec2 su = qv / vec2(asp, 1.0) + 0.5;
+      if (su.x > 0.0 && su.x < 1.0 && su.y > 0.0 && su.y < 1.0) acc += texture(uImg, su).rgb * pow(0.78, float(k));
+    }
+    c += acc * uDroste;
+  }
   // 場面の変わり目: 明るさの山(Marterium「Swirl」: 形が変わる所で光が強くなる)と、色を反転した1コマ(mnowakdesign)
   c *= 1.0 + uBoost;
   c = mix(c, vec3(1.0) - c, uInv);
@@ -2389,7 +2498,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -2400,7 +2509,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -3016,11 +3125,11 @@ export function mountMorph(root: HTMLElement) {
   // パート: 2D(描く)→ 3D(帯が増えて奥行きになる)→ 4D(作品の軸を足して、4次元で回す)。立体の版だけ。それ以外の版は、ずっと 2D のまま(奥行きは今までどおり)。
   const PART: Record<string, number> = three ? { intro: 0, A2D: 0, B2D: 0, drop2D: 0, up: 1, chorus: 1, B3: 1, drop3: 1, D4: 2 } : {};
   // 展開(48)の時刻: 46.5秒で、線の所(1.2秒)へ戻って続く。パートは、その時刻で決まる(2D 紙 → 3D 床と塔 → 4D 光 → 2D 紙)。
-  const DEV_END = 72, DEV_LOOP = 1.2;
+  const DEV_END = 103.5, DEV_LOOP = 1.2;
   let devT = 0;
   let devHold = false;
   const devLoop = (t: number): [number, number] => (t <= DEV_END ? [t, 0] : [DEV_LOOP + ((t - DEV_LOOP) % (DEV_END - DEV_LOOP)), 1 + Math.floor((t - DEV_LOOP) / (DEV_END - DEV_LOOP))]);
-  const devPart = (t: number) => (t < 17.5 ? 0 : t < 36.5 ? 1 : t < 71.8 ? 2 : 0);
+  const devPart = (t: number) => (t < 17.5 ? 0 : t < 39.5 ? 1 : t < 103.3 ? 2 : 0);
   const devCanDraw = () => !devOn || devT <= 0 || devLoop(devT)[0] < 7.5; // 描けるのは、紙が始まってから しずくの間まで
   // 紙の鳴り方(クラドニ図形)。触らなければ、2.6秒ごとに次の鳴り方へ。触っている間は、指の所から輪が広がる(シェーダー側)。
   const CHL = [[1, 4, 1], [2, 5, -1], [3, 7, 1], [2, 3, 1], [4, 7, -1], [1, 6, 1], [3, 5, -1], [5, 8, 1], [2, 7, 1], [3, 4, -1]];
@@ -3039,8 +3148,47 @@ export function mountMorph(root: HTMLElement) {
   let trI = 0, trLast = 0, trPX = 0, trPY = 0, fingX = 0, fingY = 0, fingOn = 0;
   let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0;
   // 場面の変わり目(反転と明るさの山)
-  const DEV_CUTS = [17.5, 34.5, 52, 64];
-  let lastDevT = 0, inv = 0, boost = 0;
+  const DEV_CUTS = [17.5, 34.5, 39.5, 60, 72, 84, 96];
+  // ---- クライン群(4次元の先)。複素数は [実部, 虚部]
+  type Cx = [number, number];
+  const cA = (a: Cx, b: Cx): Cx => [a[0] + b[0], a[1] + b[1]];
+  const cS = (a: Cx, b: Cx): Cx => [a[0] - b[0], a[1] - b[1]];
+  const cM = (a: Cx, b: Cx): Cx => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+  const cD = (a: Cx, b: Cx): Cx => { const d = b[0] * b[0] + b[1] * b[1] || 1e-12; return [(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d]; };
+  const cQ = (a: Cx): Cx => { const r = Math.hypot(a[0], a[1]); return [Math.sqrt(Math.max(0, (r + a[0]) / 2)), (a[1] < 0 ? -1 : 1) * Math.sqrt(Math.max(0, (r - a[0]) / 2))]; };
+  const cK = (k: number, a: Cx): Cx => [a[0] * k, a[1] * k];
+  // おばあちゃんのレシピ(Mumford, Series, Wright『Indra's Pearls』): 2つのトレース ta, tb から、生成元 a, b を作る
+  const grandma = (ta: Cx, tb: Cx) => {
+    const I: Cx = [0, 1];
+    const tt = cM(ta, tb);
+    const disc = cQ(cS(cM(tt, tt), cK(4, cA(cM(ta, ta), cM(tb, tb)))));
+    const tab = cK(0.5, cS(tt, disc));
+    const z0 = cD(cM(cS(tab, [2, 0]), tb), cA(cS(cM(tb, tab), cK(2, ta)), cK(2, cM(I, tab))));
+    const a00 = cK(0.5, ta);
+    const a01 = cD(cA(cS(cM(ta, tab), cK(2, tb)), [0, 4]), cM(cA(cK(2, tab), [4, 0]), z0));
+    const a10 = cD(cM(cS(cS(cM(ta, tab), cK(2, tb)), [0, 4]), z0), cS(cK(2, tab), [4, 0]));
+    const b00 = cK(0.5, cS(tb, [0, 2])), b01 = cK(0.5, tb), b11 = cK(0.5, cA(tb, [0, 2]));
+    const a = [a00, a01, a10, a00], b = [b00, b01, b01, b11];
+    const inv = (m: Cx[]) => [m[3], cK(-1, m[1]), cK(-1, m[2]), m[0]];
+    return [a, b, inv(a), inv(b)];
+  };
+  // 形の道のり: アポロニウスの網(2, 2)→ ねじれた網 → 首飾り → 非対称の渦 → 流れの形(ここで止めて、終わらない流れにする)
+  const KPATH: [number, Cx, Cx][] = [[75, [2, 0], [2, 0]], [78.5, [1.87, 0.1], [1.87, -0.1]], [81, [1.91, 0.05], [1.91, 0.05]], [83.5, [1.61, 0.76], [2, 0]], [86.5, [1.87, 0.1], [1.87, -0.1]]];
+  const kmArr = new Float32Array(32);
+  let kOff: Cx = [0, 0], kFlowS = 0, kFlowV = 0.16;
+  let lastDevT = 0, inv = 0, boost = 0, droste = 0;
+  let devObjI = 0, devObjN = 0;
+  // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
+  let ruleInk = false, ruleMirror = false;
+  const ruleEls: HTMLElement[] = [];
+  const finderEl = document.createElement('div');
+  finderEl.setAttribute('aria-hidden', 'true');
+  finderEl.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .5s;z-index:3';
+  const br = (pos: string) => { const d = document.createElement('div'); d.style.cssText = `position:absolute;width:26px;height:26px;${pos}`; finderEl.appendChild(d); };
+  br('left:7%;top:13%;border-left:1px solid #fff;border-top:1px solid #fff'); br('right:7%;top:13%;border-right:1px solid #fff;border-top:1px solid #fff');
+  br('left:7%;bottom:11%;border-left:1px solid #fff;border-bottom:1px solid #fff'); br('right:7%;bottom:11%;border-right:1px solid #fff;border-bottom:1px solid #fff');
+  const focusEl = document.createElement('div'); focusEl.style.cssText = 'position:absolute;width:68px;height:68px;border:1px solid rgba(255,255,255,.85);transition:left .12s,top .12s'; finderEl.appendChild(focusEl);
+  const recEl = document.createElement('div'); recEl.style.cssText = 'position:absolute;left:calc(7% + 36px);top:calc(13% + 8px);width:9px;height:9px;border-radius:50%;background:#e0262a'; finderEl.appendChild(recEl);
   let curPart = three ? 0 : 1;
   const grade = three ? [1, 0, 0] : [0, 0, 0]; // パートごとのグレーディング(移り変わりは、ゆっくり混ぜる)
   let gDt = 0.016;
@@ -3317,6 +3465,7 @@ export function mountMorph(root: HTMLElement) {
   typeL.append(big);
   root.append(typeL);
   const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
+  if (three) { const bar = document.querySelector<HTMLElement>('.site-bar'); if (bar) ruleEls.push(bar); ruleEls.push(snd); root.appendChild(finderEl); }
   const html = document.documentElement;
   const rnd = (a: number, b: number) => a + Math.random() * (b - a);
   secHook = (name, cut) => {
@@ -3633,14 +3782,14 @@ export function mountMorph(root: HTMLElement) {
       gl!.uniform4f(u.chl, chlA[0], chlA[1], chlB[0], chlB[1]);
       gl!.uniform3f(u.chl2, chlA[2], chlB[2], ex);
       // 4次元の回り(4次元の間と、花びらの間は、なぞると回る)
-      const spin = devOn && drawing && dtl >= 34.5 && dtl < 52;
+      const spin = devOn && drawing && ((dtl >= 34.5 && dtl < 60) || (dtl >= 84 && dtl < 99));
       if (spin) { rv4[0] += penVX * 0.02; rv4[1] += penVY * 0.02; }
       const base4 = [0.3, 0.19, 0.08];
       for (let i = 0; i < 3; i++) { rv4[i] += (base4[i] - rv4[i]) * (1 - Math.exp(-dt / 1.6)); rv4[i] = Math.max(-6, Math.min(6, rv4[i])); rot4[i] += rv4[i] * dt; }
       gl!.uniform3f(u.rot4, rot4[0], rot4[1], rot4[2]);
       // 線の束のつまみ
-      const knob = devOn && drawing && dtl >= 52 && dtl < 64;
-      if (knob && !knobWas) { const tb = Math.max(0, dtl - 52); bun[1] = Math.cos(tb * 0.31) * 1.1; bun[2] = 0.35 + 0.45 * Math.sin(tb * 0.23 + 0.8); }
+      const knob = devOn && drawing && dtl >= 60 && dtl < 72;
+      if (knob && !knobWas) { const tb = Math.max(0, dtl - 60); bun[1] = Math.cos(tb * 0.31) * 1.1; bun[2] = 0.35 + 0.45 * Math.sin(tb * 0.23 + 0.8); }
       knobWas = knob;
       if (knob) {
         bunTwV += ((penVX * 0.012) / Math.max(dt, 1e-3) - bunTwV) * (1 - Math.exp(-dt / 0.06));
@@ -3666,6 +3815,60 @@ export function mountMorph(root: HTMLElement) {
       if (tracking) { fingX = ptX; fingY = ptY; }
       fingOn += ((tracking ? 1 : 0) - fingOn) * (1 - Math.exp(-dt / (tracking ? 0.15 : 0.7)));
       gl!.uniform3f(u.fing, fingX, fingY, devOn ? fingOn : 0);
+      // クライン群: 時刻で形の道のりをたどり、指で ta を曲げる(離すと、ゆっくり戻る)
+      if (devOn && dtl >= 71) {
+        let ta: Cx = KPATH[0][1], tb: Cx = KPATH[0][2];
+        for (let i = 0; i < KPATH.length - 1; i++) {
+          if (dtl >= KPATH[i][0] && dtl < KPATH[i + 1][0]) {
+            let uu = (dtl - KPATH[i][0]) / (KPATH[i + 1][0] - KPATH[i][0]); uu = uu * uu * (3 - 2 * uu);
+            ta = cA(KPATH[i][1], cK(uu, cS(KPATH[i + 1][1], KPATH[i][1])));
+            tb = cA(KPATH[i][2], cK(uu, cS(KPATH[i + 1][2], KPATH[i][2])));
+          }
+        }
+        if (dtl >= KPATH[KPATH.length - 1][0]) { ta = KPATH[KPATH.length - 1][1]; tb = KPATH[KPATH.length - 1][2]; }
+        const bend = drawing && dtl >= 75 && dtl < 84;
+        if (bend) kOff = [Math.max(-0.35, Math.min(0.35, kOff[0] + penVX * 0.0016)), Math.max(-0.35, Math.min(0.35, kOff[1] - penVY * 0.0016))];
+        else kOff = cK(Math.exp(-dt / 1.1), kOff);
+        if (dtl < 86.5) ta = cA(ta, kOff);
+        const gens = grandma(ta, tb);
+        for (let g = 0; g < 4; g++) for (let e = 0; e < 4; e++) { kmArr[g * 8 + e * 2] = gens[g][e][0]; kmArr[g * 8 + e * 2 + 1] = gens[g][e][1]; }
+        gl!.uniform4fv(u.km, kmArr);
+        // 生成元 a の不動点と倍率(流れの形でだけ使う)
+        const [A0, B0, C0, D0] = gens[0];
+        const dq = cQ(cA(cM(cS(A0, D0), cS(A0, D0)), cK(4, cM(B0, C0))));
+        const p1 = cD(cA(cS(A0, D0), dq), cK(2, C0)), p2 = cD(cS(cS(A0, D0), dq), cK(2, C0));
+        const m1 = cD([1, 0], cM(cA(cM(C0, p1), D0), cA(cM(C0, p1), D0))), m2 = cD([1, 0], cM(cA(cM(C0, p2), D0), cA(cM(C0, p2), D0)));
+        const at1 = Math.hypot(m1[0], m1[1]) < 1;
+        const pp = at1 ? p1 : p2, qq = at1 ? p2 : p1, lm = at1 ? m1 : m2;
+        gl!.uniform4f(u.kf, pp[0], pp[1], qq[0], qq[1]);
+        // 流れ: 87秒から。縦に払うと速さが変わる(上へ払うと速く吸い込まれ、下へ払うと逆に湧き出す)
+        if (dtl >= 87) {
+          if (drawing) kFlowV = Math.max(-1.2, Math.min(1.6, kFlowV - penVY * 0.004));
+          else kFlowV += (0.16 - kFlowV) * (1 - Math.exp(-dt / 1.5));
+          kFlowS = (kFlowS + kFlowV * dt) % 1; if (kFlowS < 0) kFlowS += 1;
+        } else { kFlowS = 0; kFlowV = 0.16; }
+        gl!.uniform3f(u.kl, Math.log(Math.max(1e-6, Math.hypot(lm[0], lm[1]))), Math.atan2(lm[1], lm[0]), kFlowS);
+      }
+      // 機材の立体: 周ごとに替える(最初はカメラ α7 IV)。組み上がる少し前に入れ替える
+      if (devOn && objReady && lastDevT < 33 && dtl >= 33 && subs.length) {
+        const first = subs.findIndex((x) => x.idx === 6);
+        const pickI = devObjN === 0 && first >= 0 ? first : (devObjI + 1) % subs.length;
+        devObjI = pickI; devObjN++;
+        applySubject(subs[pickI]);
+      }
+      gl!.uniform1f(u.objOn, devOn && objReady ? 1 : 0);
+      // 画面のきまり: 紙の間は、上の文字が墨で刷られる / 立体の間は、画面がカメラのファインダーになる /
+      // 4次元で半回転した後は、画面の文字も鏡になる / 無限の流れの間は、画面が自分自身を中に含む
+      if (devOn) {
+        const paperRule = dtl < 17.5 || dtl >= 99.5;
+        const finder = dtl >= 34.5 && dtl < 42.5;
+        const mirror = dtl >= 41 && dtl < 100.5;
+        if (paperRule !== ruleInk) { ruleInk = paperRule; for (const el of ruleEls) el.style.mixBlendMode = paperRule ? 'difference' : ''; }
+        if (mirror !== ruleMirror) { ruleMirror = mirror; for (const el of ruleEls) { el.style.transition = 'transform .7s cubic-bezier(.7,0,.3,1)'; el.style.transform = mirror ? 'scaleX(-1)' : ''; } }
+        finderEl.style.opacity = finder ? '1' : '0';
+        if (finder) { focusEl.style.left = `${(drawing ? ptX : vw * 0.5) - 34}px`; focusEl.style.top = `${(drawing ? ptY : vh * 0.52) - 34}px`; recEl.style.opacity = Math.floor(now * 1.6) % 2 ? '1' : '0.15'; }
+        droste += ((dtl >= 87 && dtl < 98.5 ? 1 : 0) - droste) * (1 - Math.exp(-dt / 1.2));
+      } else droste = 0;
       // 場面の変わり目
       if (devOn && dtl > lastDevT) for (const cT of DEV_CUTS) if (lastDevT < cT && dtl >= cT) { inv = 2; boost = 0.6; }
       lastDevT = dtl;
@@ -3742,6 +3945,7 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform3f(pu.grade, grade[0], grade[1], grade[2]);
     gl!.uniform1f(pu.dpr, cv.width / Math.max(1, vw));
     gl!.uniform1f(pu.analog, analog);
+    gl!.uniform1f(pu.droste, droste);
     gl!.uniform1f(pu.inv, inv > 0 ? 1 : 0);
     if (inv > 0) inv--;
     gl!.uniform1f(pu.boost, boost);
@@ -3822,6 +4026,8 @@ export function mountMorph(root: HTMLElement) {
   return () => {
     dead = true;
     cancelAnimationFrame(raf);
+    for (const el of ruleEls) { el.style.mixBlendMode = ''; el.style.transform = ''; el.style.transition = ''; } // 画面のきまりを、ほかのページへ持ち越さない(上の帯は、ページをまたいで残る)
+    finderEl.remove();
     root.removeEventListener('pointerdown', onDown);
     root.removeEventListener('pointermove', onMove);
     root.removeEventListener('pointerup', onUp);
