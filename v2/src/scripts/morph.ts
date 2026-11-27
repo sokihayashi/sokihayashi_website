@@ -1612,7 +1612,7 @@ vec2 chlProj(vec2 uv, float n, float m, float sg){
 }
 DP dSand(){
   vec2 c = uView * 0.5; vec2 p = dPlate(dSandUV());
-  return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), 0.0), vec2(1.0), 0.0, D_INK);
+  return dDot(dCam(vec3(p.x - c.x, 5.0, p.y - c.y), 0.0), vec2(0.62), 0.0, D_INK); // 眠った砂は、灰色の ざらつき(大きいと黒い板になった)
 }
 DP dChl(float t, float kt){
   vec2 c = uView * 0.5;
@@ -1656,8 +1656,8 @@ DP dNeedle(float t, float kt){
   float stand = smoothstep(0.12, 1.3, bm);
   vec3 dir = bm > 1e-6 ? normalize(mix(flatD, B / length(B), stand)) : flatD;
   if (dir.y < 0.0) dir = -dir; // 針は向きを持たない。立つときは上へ
-  float L = 4.0 + 8.0 * stand;
-  vec3 ctr = base + dir * stand * dvA3 * 38.0;
+  float L = 4.0 + 12.0 * stand;
+  vec3 ctr = base + dir * stand * dvA3 * 64.0;
   vec3 a = dCam(ctr - dir * L * 0.5, kt), b = dCam(ctr + dir * L * 0.5, kt);
   float lit = 0.45 + 0.55 * abs(dot(dir, normalize(vec3(-0.5, 0.8, 0.3))));
   return dSeg(a, b, 0.6, D_GRAY * lit * (0.85 + 0.3 * dvA1), 1.0);
@@ -1703,7 +1703,7 @@ vec3 dRotV(vec3 p){
 }
 DP dBundle(float t){
   vec2 c = uView * 0.5;
-  if (gI % 2 == 1) return dSeg(vec3(c, 0.0), vec3(c, 0.0), 0.0, vec3(0.0), 0.0); // 半分は引かない(重なって白く飛ぶのと、重さのため)
+  if (gI % 4 != 0) return dSeg(vec3(c, 0.0), vec3(c, 0.0), 0.0, vec3(0.0), 0.0); // 4本に1本だけ引く(全部だと重なって白い板になった。重さも)
   float S = min(uView.x, uView.y) * 0.36;
   float tb = max(t - 52.0, 0.0);
   float kk = mix(1.0 + 4.0 * (0.5 - 0.5 * cos(tb * 0.42)), uBun.x, uBun.w);
@@ -1715,7 +1715,7 @@ DP dBundle(float t){
   vec3 B0 = vec3(cos(m0 * th + dl) * sc, sin(m0 * th + dl) * sc, h);
   vec3 B1 = vec3(cos((m0 + 1.0) * th + dl) * sc, sin((m0 + 1.0) * th + dl) * sc, h);
   A = dRotV(A); vec3 B = dRotV(mix(B0, B1, fm));
-  return dSeg(vec3(c + A.xy * S, A.z * S), vec3(c + B.xy * S, B.z * S), 0.4, vec3(0.84, 0.82, 1.0) * 0.03, 0.0);
+  return dSeg(vec3(c + A.xy * S, A.z * S), vec3(c + B.xy * S, B.z * S), 0.4, vec3(0.84, 0.82, 1.0) * 0.011, 0.0);
 }
 // ---- 柔らかい光の花びら(zach lieberman): 真ん中から放射状に並ぶ、光の円錐。奥の層ほど ぼける。息をするように伸び縮みし、色が 青 ⇄ 橙 と回る。
 // 花びらの付け根は、指の所へ寄る。なぞると回る。70秒から、その中へ飛び込む。
