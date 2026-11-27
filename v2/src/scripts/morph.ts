@@ -1972,7 +1972,7 @@ vec3 dTubeX(int i, float u, float v, float r, float S4){
   vec3 N = normalize(cross(T, Ar)), B = cross(T, N);
   return C + r * (cos(v) * N + sin(v) * B);
 }
-DP dTubes(float t){
+DP dTubesHopf(float t){ // (使っていない: 7本のホップの輪をそのまま管にした版)
   vec2 c = uView * 0.5;
   vec3 c3 = vec3(c, 0.0), eye = vec3(c + uCam, 1500.0);
   float S4 = min(uView.x, uView.y) * 0.40; // 結び目の全体を見せない。寄って、管で画面を四辺まで割る(REF 9)
@@ -2016,6 +2016,77 @@ DP dTubes(float t){
   } else return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill);
   a += c3; b += c3;
   a += normalize(eye - a) * 6.0; b += normalize(eye - b) * 6.0; // 面より少し手前へ(裏側の線は、管の太さの分だけ奥なので隠れる)
+  float trc = dTrace(dScr(a), 70.0);
+  return dSeg(a, b, 0.42, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
+}
+// ---- 規則で巻いた管(REF 9 は、結び目を芯にして、3本の管を等間隔の らせんで巻いた「縄」に見える)。
+// 芯は、4次元の球面のクリフォード・トーラスの上の (2,3) トーラス結び目(= 三つ葉結び)。4次元で回してから立体に写すので、
+// なぞるたびに結び目の形が変わる。芯のまわりに、3本の管を 120° ずつずらして、芯に沿って9回巻く。
+// 巻く向きの基準は、トーラスの面の法線(4次元の向きから決まるので、ねじれが飛ばない)。
+// 管の描き方は3通り: 黒に白い格子 / 白に黒い格子(升目) / 白に波打つ線。
+vec4 dKnot4(float u){ return vec4(cos(2.0 * u), sin(2.0 * u), cos(3.0 * u), sin(3.0 * u)) * 0.70710678; }
+vec3 dKnotP(vec4 h, float S4){ vec3 P = stereo(rot4(h, uRot4.x, uRot4.y, uRot4.z)); return vec3(P.xy * S4, clamp(P.z * S4 * 0.8, -900.0, 600.0)); }
+vec3 dStrandX(int k, float u, float v, float r, float S4){
+  vec4 h = dKnot4(u);
+  vec4 n4 = vec4(cos(2.0 * u), sin(2.0 * u), -cos(3.0 * u), -sin(3.0 * u)) * 0.70710678; // トーラスの面の法線(4次元)
+  vec3 C = dKnotP(h, S4), C1 = dKnotP(dKnot4(u + 0.01), S4), C0 = dKnotP(dKnot4(u - 0.01), S4);
+  vec3 T = normalize(C1 - C0 + vec3(1e-5));
+  vec3 Nn = dKnotP(normalize(h + n4 * 0.05), S4) - C;
+  vec3 N = normalize(Nn - dot(Nn, T) * T + vec3(1e-6)), B = cross(T, N);
+  float Rw = S4 * 0.24, ph = 6.0 * u + 2.0943951 * float(k); // 芯のまわりに 6 回巻く(ゆるく。管どうしの間に白い隙間が残る)
+  vec3 S = C + Rw * (cos(ph) * N + sin(ph) * B);
+  // 管の断面: 管の向き(巻いた線の接線)に垂直な円
+  float ph1 = 6.0 * (u + 0.01) + 2.0943951 * float(k);
+  vec3 C2 = dKnotP(dKnot4(u + 0.01), S4);
+  vec3 S1 = C2 + Rw * (cos(ph1) * N + sin(ph1) * B);
+  vec3 Ts = normalize(S1 - S + vec3(1e-5));
+  vec3 Rad = normalize(S - C), Bs = normalize(cross(Ts, Rad)), Ns = cross(Bs, Ts);
+  return S + r * (cos(v) * Ns + sin(v) * Bs);
+}
+DP dTubes(float t){
+  vec2 c = uView * 0.5;
+  vec3 c3 = vec3(c, 0.0), eye = vec3(c + uCam, 1500.0);
+  float S4 = min(uView.x, uView.y) * 0.42;
+  int i = gI % 3, k = gI / 3;
+  float r = S4 * 0.24 * 0.5;
+  const float TAU = 6.2831853;
+  bool blk = i == 0, pat = i == 2; // 版で反転したあとに: 黒に白い格子 / 白に黒い升目 / 白に波打つ線
+  vec3 fill = blk ? D_PAPER : D_INK, ln = blk ? D_INK : D_PAPER; // 反転する前の色で描く
+  dvTu = 0.0;
+  const int NUu = 420, NVv = 20;
+  if (k < 2 * NUu * NVv) { // 面の帯(前半)と、輪郭の殻(後半: 少し太い管の、裏を向いた帯だけ)
+    bool shell = k >= NUu * NVv;
+    int q = shell ? k - NUu * NVv : k, iu = q / NVv, iv = q - iu * NVv;
+    float du = TAU / float(NUu), u = du * (float(iu) + 0.5), v = TAU * (float(iv) + 0.5) / float(NVv);
+    dvTu = u / TAU;
+    float rr = shell ? r + 1.2 : r;
+    vec3 Xw = c3 + dStrandX(i, u, v, rr, S4), Ax = c3 + dStrandX(i, u, v, 0.0, S4);
+    vec3 Pa = c3 + dStrandX(i, u - du * 0.62, v, rr, S4), Pb = c3 + dStrandX(i, u + du * 0.62, v, rr, S4);
+    float hw = 0.2 * rr;
+    float trc = dTrace(dScr(Xw), 70.0);
+    bool sw = trc > 0.35 + 0.2 * dvA2; // なぞった所だけ、白黒が入れ替わる
+    if (shell) { bool back = dot(Xw - Ax, eye - Xw) < 0.0; return dSeg(Pa, Pb, back ? hw : 0.0, sw ? fill : ln, 1.0); }
+    return dSeg(Pa, Pb, hw, sw ? ln : fill, 1.0);
+  }
+  int k2 = k - 2 * NUu * NVv;
+  vec3 a, b;
+  if (pat) { // 波打つ線 16本
+    if (k2 >= 16 * 360) return dDot(c3 + dKnotP(dKnot4(0.0), S4), vec2(0.0), 0.0, fill);
+    int l = k2 / 360, w = k2 - l * 360;
+    float u0 = TAU * float(w) / 360.0, u1 = TAU * float(w + 1) / 360.0, vb = TAU * (float(l) + 0.5) / 16.0;
+    dvTu = float(w) / 360.0;
+    a = dStrandX(i, u0, vb + 0.3 * sin(u0 * 40.0 + float(l) * 1.7), r, S4); b = dStrandX(i, u1, vb + 0.3 * sin(u1 * 40.0 + float(l) * 1.7), r, S4);
+  } else if (k2 < 220 * 20) { // 輪の線 220本
+    int j = k2 / 20, w = k2 - j * 20;
+    float u = TAU * (float(j) + 0.25) / 220.0; dvTu = u / TAU;
+    a = dStrandX(i, u, TAU * float(w) / 20.0, r, S4); b = dStrandX(i, u, TAU * float(w + 1) / 20.0, r, S4);
+  } else if (k2 < 220 * 20 + 10 * 300) { // 縦の線 10本
+    int q = k2 - 220 * 20, l = q / 300, w = q - l * 300;
+    float v = TAU * (float(l) + 0.5) / 10.0; dvTu = float(w) / 300.0;
+    a = dStrandX(i, TAU * float(w) / 300.0, v, r, S4); b = dStrandX(i, TAU * float(w + 1) / 300.0, v, r, S4);
+  } else return dDot(c3 + dKnotP(dKnot4(0.0), S4), vec2(0.0), 0.0, fill);
+  a += c3; b += c3;
+  a += normalize(eye - a) * 5.0; b += normalize(eye - b) * 5.0; // 面より少し手前へ
   float trc = dTrace(dScr(a), 70.0);
   return dSeg(a, b, 0.42, trc > 0.35 + 0.2 * dvA2 ? fill : ln, 1.0);
 }
