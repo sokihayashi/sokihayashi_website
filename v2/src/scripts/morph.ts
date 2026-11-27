@@ -2052,7 +2052,7 @@ DP dBundle(float t){
 vec2 dBalP(vec3 P, out float ok){ // 目は原点。+Z を見る。画面の y は下向き
   vec2 c = uView * 0.5;
   ok = step(0.12, P.z);
-  return c + vec2(P.x, -P.y) * uView.x * 0.95 / max(P.z, 0.12);
+  return c + vec2(P.x, -P.y) * min(uView.x, uView.y * 0.462) * 0.95 / max(P.z, 0.12); // 横長の画面でも、縦の割り付け(上の渦・切れ目・下の渦)を保つ
 }
 DP dBalance(float t){
   float tb = max(t - 52.0, 0.0);
@@ -2086,8 +2086,8 @@ DP dBalance(float t){
   float ra = R * sqrt(dvA2);
   float th0 = dvTh + tb * (0.22 / (0.35 + ra) + 0.05) + uBun.x * 0.8 + (top ? 0.0 : 1.3);
   float dth = (0.012 + 0.022 * dvA3) * (D + ra);
-  float yy = top ? 1.0 : -1.0;
-  vec2 a = dBalP(vec3(cos(th0) * ra, yy, D + sin(th0) * ra), o1), b = dBalP(vec3(cos(th0 - dth) * ra, yy, D + sin(th0 - dth) * ra), o2);
+  float yy = top ? 1.0 : -1.0, kx = max(1.0, uView.x / uView.y / 0.462); // 横長の画面では、渦を横に伸ばして左右の辺まで届かせる
+  vec2 a = dBalP(vec3(cos(th0) * ra * kx, yy, D + sin(th0) * ra), o1), b = dBalP(vec3(cos(th0 - dth) * ra * kx, yy, D + sin(th0 - dth) * ra), o2);
   float trc = dTrace(a, 60.0);
   return dSeg(vec3(a, 0.0), vec3(b, 0.0), (0.32 + 0.2 * dvA1) * o1 * o2, vec3((0.07 + 0.08 * dvA1) * (1.0 + 2.5 * trc)), 0.0);
 }
@@ -2939,7 +2939,7 @@ void main(){
     int trP = 0;
     { float rule, alt; int tr = gfxPick(cq, uRes / max(uDpr, 1.0), clamp(Yc, 0.0, 1.0), rule, alt); trP = tr; if (tr > 0) m = gfxT(tr, m, clamp(Yc, 0.0, 1.0), cq, uDark, alt); m = mix(m, vec3(dot(m, vec3(0.3333)) > 0.5 ? 0.03 : 0.94), clamp(rule, 0.0, 1.0)); }
     vec2 qv = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
-    m *= 1.0 - (trP == 1 ? 0.14 : 0.5) * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03))); // 反転の版(白い紙)では、周辺の落ちを弱く(白い紙が、灰色に濁って見えた)
+    m *= 1.0 - (trP == 1 ? 0.14 : 0.32) * smoothstep(0.22, 0.9, length(qv * vec2(1.2, 0.92) + vec2(0.0, 0.03))); // 周辺の落ちは控えめに(参照は平らな刷り。紙が灰色に濁って見えた) // 反転の版(白い紙)では、周辺の落ちを弱く(白い紙が、灰色に濁って見えた)
     // 粒: 16mm の反転フィルム。粗く、白にもはっきり出る。黒にも少し
     // (本人「グレインが粗い」: 粒の大きさを約半分に、強さを約6割に。細かい方は画面の画素の大きさ)
     float gq = grain(cq / 1.15, fq + 900) * 0.7 + grain(gl_FragCoord.xy / 1.3, fq + 1700) * 0.35;
