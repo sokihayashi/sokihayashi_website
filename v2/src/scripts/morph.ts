@@ -1964,7 +1964,7 @@ DP dTubes(float t){
     float trc = dTrace(dScr(Xw), 60.0);
     bool sw = trc > 0.35 + 0.2 * dvA2; // なぞった所だけ、白黒が入れ替わる(刷りを引っかいた跡。0.6秒ほどで戻る)
     if (shell) { bool back = dot(Xw - c3 - C, eye - Xw) < 0.0; return dSeg(Pa, Pb, back ? hw : 0.0, sw ? fill : ln, 1.0); }
-    vec3 fc = pat ? (fract(u * 5.0 / TAU + v * 2.0 / TAU) < 0.5 ? D_INK : D_PAPER) : fill; // 2条の らせん縞(床屋の看板)。巻きが細かいと、硬貨を積んだように見えた
+    vec3 fc = pat ? ((iv / 5) % 2 == 0 ? D_INK : D_PAPER) : fill; // 管に沿った4本の縞(帯の向きと揃うので、ふちが段にならない。管のねじれで、縞も自然に巻く)
     return dSeg(Pa, Pb, hw, sw ? (pat ? D_PAPER + D_INK - fc : ln) : fc, 1.0);
   }
   if (pat || k >= 8152) return dDot(c3 + dTubeC(i, 0.0, S4), vec2(0.0), 0.0, fill); // 縞の管には格子を引かない。余りの粒は使わない
