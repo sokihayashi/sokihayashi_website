@@ -87,7 +87,7 @@ uniform float uObjOn;        // 48: 機材の立体のデータが届いてい�
 uniform vec3 uPrint;         // 48: 綿毛が飛ぶ瞬間の太陽の位置と時刻(影が紙に焼きつく)
 uniform vec3 uSun;           // 48: 太陽の位置(画面の座標。触っている間は指、離すと空をめぐる)と、指で動かしている度合い
 uniform float uFlat;         // 確認用(?flat=1): 立体の間も真上から、寄って見る(グラフィックとしての見え方の比較)
-uniform float uChlR;         // 48: 鳴る紙(クラドニ)の向き。サイトの斜め(長辺から28°)に置き、なぞるとターンテーブルのように回る
+uniform float uChlR;         // 48: 鳴る紙(クラドニ)の向き。2026-11-28 から 0(画面にそろえる。本人「斜め28°にこだわる必要はもう全くない」)。以前は 28° で、なぞると回った
 uniform vec4 uSlc;           // 48: 4次元の切り口(切る位置, 切る向き, 拍で版を入れ替える, 効き)。版は、画面に出ない軸(w)で決まる
 uniform float uPart, uPartT; // いまのパート(0 = 2D / 1 = 3D / 2 = 4D)と、そのパートに入ってからの秒数
 out vec2 vQ; out vec2 vUV; out vec2 vCell; out vec2 vShape; out vec2 vRib;
@@ -1775,7 +1775,7 @@ float dExpo(vec2 fp, float t){
   if (t >= 42.5) return 0.0;
   vec2 sf = dFloorAt(uSun.xy, 1.0);
   float de = clamp(length(fp - sf) / length(uView), 0.0, 1.0);
-  return dsm(17.4 + de * 1.8, 18.7 + de * 1.8, t); // 太陽の真下から、外へ焼けていく(焼けむらを足すと、モザイクに見えた)
+  return dsm(17.4 + de * 0.15, 18.4 + de * 0.15, t); // 紙が焼ける。2026-11-28(監査: 焼ける前線が、紙の升目(1辺 約40px)の四角い段になって見えた)→ ほぼ一様に焼く。以前: 太陽の真下から外へ 1.8秒かけて
 }
 // 光のほうから、床へ影を投げる
 vec3 dCast(vec3 P, vec3 L){ float dy = max(L.y - P.y, L.y * 0.12); vec3 S = L + (P - L) * (L.y / dy); S.y = 0.6; return S; }
@@ -1997,7 +1997,7 @@ DP dPlant(float t, float kt){
   vec3 tanT = vec3(lv.x * sin(Phi), cos(Phi), lv.y * sin(Phi));
   float r = shd ? dvA3 / 0.38 : (dvA3 - 0.38) / 0.62;
   float e1 = hsh(uint(gI) * 3U + 1U), e2 = hsh(uint(gI) * 7U + 13U), e3 = hsh(uint(gI) * 17U + 5U);
-  vec3 P; float sz = 1.0; vec3 col = D_PAPER;
+  vec3 P; float sz = 1.0; vec3 col = D_PAPER; vec3 flyV = vec3(0.0);
   if (r < 0.13) {
     // 茎(穂は細く、しだは少し太い)
     float s = e1 * gs;
@@ -2098,12 +2098,15 @@ DP dPlant(float t, float kt){
           P += fly;
           col *= 1.0 - smoothstep(2.6, 4.2, tf);
           sz *= mix(1.0, 0.6, smoothstep(0.0, 3.0, tf));
+          vec3 vel = dir * (70.0 + 50.0 * e3) + vec3(110.0 + 70.0 * e3, 150.0 + 90.0 * e2, (e1 - 0.5) * 120.0) * (0.5 + 0.5 * tf); // 飛ぶ向き
+          flyV = vel * 0.045 * smoothstep(0.0, 0.3, tf); // 点の雲に見えないよう、飛ぶ綿毛は流れの向きの短い画にする
         } else { float rg = smoothstep(4.6, 6.0, burst); P = mix(top, P, rg); col *= rg; } // 新しい綿毛が、芯から ふくらんで戻る
       }
     }
   }
   dvHy = clamp(P.y / H, 0.0, 1.0);
   if (shd) { dvHy = 0.0; vec3 S = dCast(P, L); S.y -= fall * uView.y * 1.5; return dDot(dCam(S, kt), vec2(burn ? 1.8 : 1.05), 1.0, (burn ? D_PAPER * 0.93 : D_SHADE) * (1.0 - fall)); } // 焼きついた影は、紙の白
+  if (dot(flyV, flyV) > 1.0) return dSeg(dCam(P - flyV, kt), dCam(P, kt), 0.45 * sz, col, 1.0);
   return dDot(dCam(P, kt), vec2(sz), 1.0, col);
 }
 // ---- 4次元: 塔の輪の1本1本が、4次元の球の上の円(ホップ・ファイバー)になる。
@@ -2159,15 +2162,28 @@ DP d4DLab(float t){
   float w0 = tl * 0.33 + (tag < 4.0 ? 1.3 * exp(-tag * 2.2) * sin(tag * 7.0) : 0.0);
   vec4 e1 = Rm * vec4(1.0, 0.0, 0.0, 0.0), e2 = Rm * vec4(0.0, 1.0, 0.0, 0.0), e3 = Rm * vec4(0.0, 0.0, 1.0, 0.0), e4 = Rm * vec4(0.0, 0.0, 0.0, 1.0);
   vec4 O = e4 * w0 + vec4(0.6, 1.1, 0.3, 0.0);
-  const float A = 2.98;
+  const float A = 2.2; // 画面に入る迷路の量(以前 2.98)。壁を大きく、少なくして、面を隙間なく塗れるようにした(面が多いと粒が足りず、すき間が点に見えた)
   float asp = uView.x / uView.y;
   vec3 p = (vec3(hsh(uint(gI) * 3U + 1U), hsh(uint(gI) * 7U + 5U), hsh(uint(gI) * 11U + 9U)) - 0.5) * 2.0 * vec3(A * max(asp, 1.0), A * max(1.0 / asp, 1.0), A * 0.95);
   // 家の箱は、見せる奥行きより手前まで広げる(箱の縁の近くの面には粒が集まらず、手前の面に穴があいて、奥の面が点になって見えた)。手前に来すぎた粒は出さない
-  for (int k = 0; k < 7; k++) {
+  // 2026-11-28(監査: 等高線が点の帯・点の散らばりに見えた): 粒の3割を「線の粒」にする。線の粒は、面と、見えない座標の等しい面(h = 一定)の両方へ吸いつき、
+  // 2つの面の交わり(= 等高線)の上に並ぶ。等高線の向きに短い線を引くので、線は途切れない。残りの7割で面を塗る。
+  bool isLine = dvA1 < 0.3;
+  bool fam1 = hsh(uint(gI) * 53U + 7U) < 0.55;
+  vec4 gh = fam1 ? vec4(0.0, 0.0, 0.0, 0.95) : vec4(0.8, 0.0, -0.8, 0.0); // 見えない座標 h = gh · X(w、または x − z)
+  vec3 g2 = vec3(dot(gh, e1), dot(gh, e2), dot(gh, e3));
+  float lv = floor(dot(gh, O + p.x * e1 + p.y * e2 + p.z * e3) + 0.5);
+  for (int k = 0; k < 8; k++) {
     vec4 X = O + p.x * e1 + p.y * e2 + p.z * e3;
     vec4 G = g4g(X);
     vec3 gr = vec3(dot(G, e1), dot(G, e2), dot(G, e3));
-    vec3 st = g4(X) * gr / max(dot(gr, gr), 0.08);
+    vec3 st;
+    if (isLine) { // 2つの拘束(面の上・等高線の高さ)を同時に満たす、いちばん短い一歩
+      float f1 = g4(X), f2 = dot(gh, X) - lv;
+      float a11 = dot(gr, gr), a12 = dot(gr, g2), a22 = dot(g2, g2), det = a11 * a22 - a12 * a12;
+      if (det < 1e-5) { st = f1 * gr / max(a11, 0.08); }
+      else { float l1 = (a22 * f1 - a12 * f2) / det, l2 = (-a12 * f1 + a11 * f2) / det; st = l1 * gr + l2 * g2; }
+    } else st = g4(X) * gr / max(dot(gr, gr), 0.08);
     float L = length(st); if (L > 0.7) st *= 0.7 / L;
     p -= st;
   }
@@ -2175,24 +2191,22 @@ DP d4DLab(float t){
   vec4 G = g4g(X);
   vec3 gr3 = vec3(dot(G, e1), dot(G, e2), dot(G, e3));
   vec3 n = normalize(gr3 + 1e-5);
-  bool lost = abs(g4(X)) / max(length(gr3), 0.25) > 0.05 || p.z > A * 0.5; // 面に届かなかった粒(宙に浮いた点)と、手前に来すぎた粒は 出さない
+  bool lost = abs(g4(X)) / max(length(gr3), 0.25) > 0.05 || p.z > A * 0.5 || p.z < -A * 0.62; // 面に届かなかった粒(宙に浮いた点)と、手前・奥に寄りすぎた粒(箱の縁の面は粒がまばらで、点の散らばりに見えた)は 出さない
+  if (isLine) lost = lost || abs(dot(gh, X) - lv) / max(length(g2), 0.05) > 0.05 || dot(g2, g2) < 0.01;
   float gw = dot(G, e4);
   float Sg = min(uView.x, uView.y) / (2.0 * A) * 1.25;
   vec3 P = vec3(c + vec2(p.x, -p.y) * Sg, p.z * Sg);
   // 管の場面の決まり(本人 2026-11-28「このシーンのルールめっちゃかっこいい」)で刷る: 平らな白と黒の面 + 面に沿う線。重なりは不透明。
-  // 面の白黒は、面が見えない4つめの軸のほうへ傾くかどうか(gw の符号)。面の線は、4次元の座標(w と x − z)の等高線 = 見えない座標が、面の上に格子として出る。
+  // 面の白黒は、面が見えない4つめの軸のほうへ傾くかどうか(gw の符号)。面の線は、見えない座標の等高線(格子として面に出る)。
   float trc = dTrace(dScr(P), 50.0);
   bool wht = (gw > 0.0) != (trc > 0.35 + 0.2 * dvA2); // なぞった所は、白黒が入れ替わる
-  float q1 = fract(X.w * 0.95), q2 = fract((X.x - X.z) * 0.8);
-  bool l1 = q1 < 0.09, l2 = !l1 && q2 < 0.06;
-  if ((l1 || l2) && !lost) { // 等高線の粒は、等高線の向き(面の上で、その座標が変わらない向き)に短い線を引く。面より少し手前へ
-    vec3 gq = l1 ? vec3(e1.w, e2.w, e3.w) : vec3(e1.x - e1.z, e2.x - e2.z, e3.x - e3.z);
-    vec3 tg = cross(n, gq); tg = dot(tg, tg) > 1e-5 ? normalize(tg) : vec3(1.0, 0.0, 0.0);
-    vec3 tq = vec3(tg.x, -tg.y, tg.z) * 3.4;
-    return dSeg(P - tq + vec3(0.0, 0.0, 2.0), P + tq + vec3(0.0, 0.0, 2.0), 1.1, wht ? D_INK : D_PAPER, 1.0);
+  if (isLine) {
+    vec3 tg = cross(gr3, g2); tg = dot(tg, tg) > 1e-8 ? normalize(tg) : vec3(1.0, 0.0, 0.0);
+    vec3 tq = vec3(tg.x, -tg.y, tg.z) * 3.6;
+    return dSeg(P - tq + vec3(0.0, 0.0, 2.0), P + tq + vec3(0.0, 0.0, 2.0), lost ? 0.0 : 1.0, wht ? D_INK : D_PAPER, 1.0);
   }
-  float qs = 3.7 * max(1.0, 600.0 / min(uView.x, uView.y) * 0.62); // 面は隙間なく(隙間から奥の面が点になって見えた)
-  return dDot(P, vec2(lost ? 0.0 : qs), 0.0, wht ? D_PAPER : D_INK); // 四角(丸い点は敷きつめられず、すき間が光る点になった)
+  float qs = 4.3 * max(1.0, 600.0 / min(uView.x, uView.y) * 0.62); // 面は隙間なく(隙間から奥の面が点になって見えた)
+  return dDot(P, vec2(lost ? 0.0 : qs * (wht ? 1.0 : 1.25)), 0.0, wht ? D_PAPER : D_INK); // 四角(丸い点は敷きつめられず、すき間が光る点になった)。黒い面は大きめの四角で敷く(黒い面のすき間から、奥の白い面が点になって見えた)
 }
 DP d4D(float t){ if (uRing4 > 0.5) return d4DRing(t); return d4DLab(t); } // (構造体の三項演算子は使えない)
 // ---- 4次元の輪を、管として描く(本人の参照: 格子の線を引いた管の結び目。黒い管に白い格子、白い管に黒い格子、模様の入った管)。
@@ -2602,7 +2616,7 @@ float gkHole(vec2 s, float Z, vec2 ro, out vec2 nf, out vec2 nrm, out vec2 S0, o
 }
 DP dGaskDive(float t){
   float Z = min(uView.x, uView.y) / 0.62 * exp(GKLN * uGaskN.z);
-  float ang = 0.4887 + (uView.x > uView.y ? 1.5708 : 0.0);
+  float ang = uView.x > uView.y ? 1.5708 : 0.0; // 28°の傾きは やめた(本人 2026-11-28)。横長の画面では、網の すき間が長い辺に沿うよう 90°
   vec2 ro = vec2(cos(ang), sin(ang));
   float life = 2.4, cyc = uTime / life + hsh(uint(gI) * 13U + 5U), k = floor(cyc), a = fract(cyc);
   float grow = exp(uGaskN.w * a * life);
@@ -2714,9 +2728,10 @@ DP dObj(float t, float kt, float th4){
   vec3 a0 = E0.xyz, a1 = vec3(E0.w, E1.x, E1.y), b0 = vec3(E1.z, E1.w, E2.x), b1 = vec3(E2.y, E2.z, E2.w);
   float hs = hsh(uint(gI) * 41U + 3U);
   float span = max(uWrap.y - uWrap.x, 0.2);
-  float hnA = clamp(((a0.y + a1.y) * 0.5 - uWrap.x) / span, 0.0, 1.0);
-  float d = 0.5 * (1.0 - hnA) + 0.12 * hs; // 上の段から先に ほどける
-  float e = smoothstep(d, d + 0.38, uObjM.x);
+  // 2026-11-28(監査: 移る途中が白い雲の塊に見えた): 粒は飛ばさない。いまの機材の線を上の段から消し、次の機材の線を下の段から引く(線の順は下 → 上)
+  float key = 0.85 * float(j) / float(${NU} * NVi) + 0.1 * hs;
+  float mA = clamp(1.0 - 1.7 * uObjM.x, 0.0, 1.0), mB = clamp(1.7 * uObjM.x - 0.7, 0.0, 1.0);
+  float e = uObjM.x > 0.5 ? 1.0 : 0.0; // この粒が いま描く線: A か B か
   float sc = mix(uObjM3.x, uObjM3.y, e);
   float pr0, pr1;
   if (dvA1 < 0.26) { // 面の点: 墨の黒で、少し大きく、不透明に。機材の体になって、奥の稜線を隠す(管の場面の決まり: 重なりは不透明)。入れ替わる間は縮んで消え(透けて見える)、新しい機材で また体になる
@@ -2726,16 +2741,16 @@ DP dObj(float t, float kt, float th4){
     float key = 0.85 * float(j) / float(${NU} * NVi) + 0.1 * hsh(uint(gI) * 41U + 3U);
     return dDot(dObjS(p, pr0, uObjM3.x), vec2(2.5 * uObjM2.x * step(key + 0.05, uObjM2.w)), 1.0, D_INK); // 黒い体は、稜線が引かれた所から
   }
-  vec3 p0 = dObjMv(a0, b0, e, hs), p1 = dObjMv(a1, b1, e, hs);
+  vec3 p0 = e > 0.5 ? b0 : a0, p1 = e > 0.5 ? b1 : a1;
   float hn = clamp(((p0.y + p1.y) * 0.5 - mix(uObjM2.y, uObjM2.z, e)) / span, 0.0, 1.0);
   p0 = dObjT(p0, hn, th4, pr0); p1 = dObjT(p1, hn, th4, pr1);
-  float fly = sin(3.14159 * e);
   float fr = smoothstep(-0.55, 0.45, (p0.z + p1.z) * 0.5); // 奥の稜線は淡く・細く(隠れ線のように)。手前の稜線だけが白く立つ
-  vec3 cl = D_PAPER * (0.78 + 0.22 * dvA1) * mix(0.22, 1.0, fr) * (1.0 + 0.6 * fly);
+  vec3 cl = D_PAPER * (0.78 + 0.22 * dvA1) * mix(0.22, 1.0, fr);
   vec3 s0 = dObjS(p0, pr0, sc) + vec3(0.0, 0.0, 4.0), s1 = dObjS(p1, pr1, sc) + vec3(0.0, 0.0, 4.0); // 稜線は、体の面より少し手前へ
   // 描き上がり(2026-11-28 本人「回るだけは弱い」): 稜線は、下の段から順に、1本ずつ引かれる(引く途中の線は、先が伸びていく)
-  float key = 0.85 * float(j) / float(${NU} * NVi) + 0.1 * hs;
-  float dk = clamp((uObjM2.w - key) / 0.06, 0.0, 1.0);
+  float lim = e > 0.5 ? mB : min(mA, uObjM2.w);
+  float dk = clamp((lim - key) / 0.06, 0.0, 1.0);
+  float fly = 0.0;
   s1 = mix(s0, s1, dk);
   return dSeg(s0, s1, mix(0.35, 0.6, fr) * (1.0 - 0.3 * fly) * step(0.001, dk), cl * (1.0 + 1.2 * (1.0 - dk) * step(0.001, dk)), 1.0);
 }
@@ -2760,7 +2775,7 @@ O dPaper(float t, float first, int NG){
   float dl = 1e9;
   for (int i = 0; i < 16; i++) dl = min(dl, distance(dPath((float(i) + 0.5) / 16.0 * (cnt - 1.0)) - c, cc));
   float maxD = length(uView);
-  float fr1 = first > 0.5 ? (t - 0.25) * 2.2 - dl / (maxD * 0.5) : 9.0; // 砂嵐は、線から速く広がる(0.5秒で画面の大半)
+  float fr1 = first > 0.5 ? (t - 0.25) * 2.2 - 0.25 : 9.0; // 砂嵐は、画面全体に一度に出て、一様に落ち着く(2026-11-28 監査: 線から升目ごとに広がる前線が、四角い段に見えた。以前: − dl / (maxD × 0.5))
   float fr2 = (t - 99.6) * 1.4 - dl / (maxD * 0.5);
   float fall = dsm(39.5, 42.5, t);
   float fr = t < 42.5 ? fr1 : (t < 99.5 ? -1.0 : fr2);
@@ -2843,14 +2858,23 @@ O sDev(){
   else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.0; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
   else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else if (dvA3 < 0.38) A = dPlant(t, kt); else A = dPlant(tt, kt); B = d4D(tt); b = step(35.0, tt); push = 0.0; wk = 0.0; } // 2026-11-28: 鏡になった機材を ひと息見せて、4次元の迷路へ切る(以前は、粒が飛んで移った)
-  else if (tt < 45.5) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
-  else if (tt < 49.0) { A = d4D(tt); B = dTubes(tt); float gr = dsm(45.5, 48.4, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.5; wr = 80.0; } // 光の輪の粒が、輪に沿って順に、格子の管へ組み上がる(管が伸びていく)
+  else if (tt < 46.0) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
+  else if (tt < 49.0) { // 2026-11-28(監査: 迷路の粒が管へ飛ぶ途中が、点の散らばりに見えた): 迷路から管へは切り、管は 何もない所から 伸びていく(まだ伸びていない所の粒は出さない)
+    A = dTubes(tt); B = A; float gr = dsm(45.5, 48.4, tt) * 1.15;
+    if (gr < dvTu) { A.hs = vec2(0.0); B.hs = vec2(0.0); }
+    push = 0.0; wk = 0.5; wr = 80.0;
+  }
   else if (tt < 52.0) { A = dTubes(tt); B = A; push = 0.0; wk = 0.5; wr = 80.0; }
   else if (tt < 55.0) { A = dTubes(tt); B = dBalance(tt); b = step(53.5, tt); push = 0.0; wk = 0.6 * b; wr = 90.0; } // 2026-11-28 本人「縄から宇宙につながる所が無理やり」: 管 → 銀河は、拍で切る(刷りの反転が戻る 61.5秒と同時)
   else if (tt < 64.0) { A = dBalance(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
-  else if (tt < 67.0) { A = dBalance(tt); B = dGask(tt); float rk = sqrt(gkRank); b = dsm(64.0 + rk * 2.2 + dvA2 * 0.25, 64.55 + rk * 2.2 + dvA2 * 0.25, tt); push = 0.0; wk = 0.6 * (1.0 - b); wr = 130.0; } // 線の束が、無限の円に凝る(アポロニウスの網)。大きな円の帯から先に、小さな円へ、順に結晶する
+  else if (tt < 64.0) { A = dBalance(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
+  else if (tt < 67.0) { // 2026-11-28(監査: 束の線が円へ飛ぶ途中が、乱れた線の交差に見えた): 銀河 → 網は、刷りの反転(72秒)で切る。網は、大きな円から先に、その場に現れる(飛ばない)
+    A = dGask(tt); B = A; float rk = sqrt(gkRank);
+    if (tt < 64.0 + rk * 2.2 + dvA2 * 0.25) { A.hs = vec2(0.0); B.hs = vec2(0.0); }
+    push = 0.0; wk = 0.0; wr = 130.0;
+  }
   else if (tt < 76.0) { A = dGask(tt); B = A; push = 0.0; wk = 0.35; wr = 150.0; } // 指の跡では、輪が ゆるく曲がる(切れない程度)
-  else if (tt < 79.0) { A = dGask(tt); B = dKSphere(tt); b = dvA1 < 0.5 ? dsm(76.0 + dvA3 * 0.35, 77.1 + dvA3 * 0.35, tt) : dsm(76.6 + dvA3 * 0.8, 78.4 + dvA3 * 0.6, tt); push = 0.0; wk = 0.9 * b; wr = 140.0; } // 球に巻きつく(球の面の点が先に、極限集合の点が後から)
+  else if (tt < 79.0) { A = dGask(tt); B = dKSphere(tt); b = step(76.0, tt); push = 0.0; wk = 0.9 * b; wr = 140.0; } // 2026-11-28(監査: 網の帯と球の流れが重なって乱れた): 網 → 球は、刷りが黒へ戻る 84秒で切る
   else if (tt < 91.0) { A = dKSphere(tt); B = A; push = 0.0; wk = 0.8; wr = 130.0; }
   else { A = dKSphere(tt); B = dLine(); b = dsm(91.0 + q * 1.8, 93.5 + q * 1.8, tt); push = 0.35 * b; wk = 0.8 * (1.0 - b) + b; } // 描いた順に、線が描き直される(描き直された墨の線は、はじめと同じく指で押し分けられる)
   O o = base();
@@ -5200,7 +5224,7 @@ export function mountMorph(root: HTMLElement) {
         }
       }
       chlX = Math.min(1, chlX + dt / 0.9);
-      // 鳴る紙の向きは、サイトの斜め(長辺から28°)のまま。
+      // 鳴る紙の向きは、画面にそろえる(本人 2026-11-28「斜め28°にこだわる必要はもう全くない」。以前は長辺から28°)。
       // 2026-11-28 本人「図形が中心を軸にぐるぐる回るだけは微妙」: なぞって紙を回すのをやめ、なぞる = 鳴り方の調律にした。
       // なぞった量だけ、模様が隣の(一段 細かい/粗い)模様へ連続して移り、砂が流れて集まり直す。離すと、いちばん近い模様へ落ち着く
       chlR = 0; chlW = 0;
@@ -5216,7 +5240,7 @@ export function mountMorph(root: HTMLElement) {
         if (Math.abs(tgt - tuneMu) < 0.01) { tuneOn = false; chlA = chlB = TUNE[tgt]; chlX = 1; chlAt = now; }
         else { const i0 = Math.min(TUNE.length - 2, Math.floor(tuneMu)); chlA = TUNE[i0]; chlB = TUNE[i0 + 1]; chlX = tuneMu - i0; }
       }
-      gl!.uniform1f(u.chlR, -0.4887 + chlR);
+      gl!.uniform1f(u.chlR, chlR);
       gl!.uniform1f(u.flat, FLAT ? 1 : 0);
       const ex = chlX * chlX * (3 - 2 * chlX);
       gl!.uniform4f(u.chl, chlA[0], chlA[1], chlB[0], chlB[1]);
