@@ -377,3 +377,121 @@ html.band-wiping::view-transition-new(*) {
   font-size: 0.9rem;
   letter-spacing: 0.08em;
 }
+
+/* ===== 枠の文法(黒地に紙色の細い線。トップの情報の面と各ページで共通) =====
+   枠と枠の間は 1px あけ、それぞれの枠の外側 1px に線を引く(となりの線と ぴったり重なる)。
+   列の段が欠けても、そこに色の塊ができない。線の色は不透明(重なっても明るさが変わらない)。 */
+:root {
+  --ln: #afada8; /* 紙色 72% を黒に重ねた色。トップで粒が組み上がる線と同じ */
+}
+.fr {
+  --cols: 2;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: 1px;
+  padding: 1px;
+}
+.fr > * {
+  position: relative;
+  min-width: 0;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--ln);
+}
+.fr > .full {
+  grid-column: 1 / -1;
+}
+@media (min-width: 720px) {
+  .fr {
+    --cols: 3;
+  }
+}
+@media (min-width: 1100px) {
+  .fr {
+    --cols: 4;
+  }
+}
+@media (min-width: 1500px) {
+  .fr {
+    --cols: 5;
+  }
+}
+.fr-row {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 14px;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+}
+.fr-lab {
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+}
+.fr-n {
+  font-size: 0.66rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.fr-link {
+  color: var(--fg);
+  transition: background 0.25s;
+}
+.fr-link:hover {
+  background: #111;
+}
+.fr-w {
+  display: block;
+  padding: 10px 10px 12px;
+  color: var(--fg);
+}
+.fr-w .ph {
+  aspect-ratio: 1 / 1.25;
+  overflow: hidden;
+  background: #0d0d0d;
+}
+.fr-w img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.fr-w .t {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.fr-w .d {
+  margin: 4px 0 0;
+  font-size: 8.5px;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+@media (min-width: 720px) {
+  .fr-w .t {
+    font-size: 12px;
+  }
+  .fr-w .d {
+    font-size: 9px;
+  }
+}
+.fr-body {
+  padding: 16px 14px 20px;
+}
+.fr-body > :first-child {
+  margin-top: 0;
+}
+.fr-body > :last-child {
+  margin-bottom: 0;
+}
+/* 枠の文法のページ(Works・作品・About・Contact・404)。上のメニューの下から始める */
+.page-fr {
+  padding: 78px 12px 40px;
+}
+@media (min-width: 720px) {
+  .page-fr {
+    padding: 86px var(--pad) 64px;
+  }
+}

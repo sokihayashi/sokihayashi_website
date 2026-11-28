@@ -3,74 +3,134 @@ import Base from '../layouts/Base.astro';
 ---
 
 <Base title="About — Soki Hayashi">
-  <section class="page wrap">
-    <p class="eyebrow" data-reveal>Approach</p>
-    <h1 class="page-title" data-reveal>形を、あたえる。</h1>
-
-    <p class="approach-lead" data-reveal>
-      価値は、はじめ液体のように形がない。<br />
-      それを<em>掬い</em>、<em>象り</em>、あらゆる接点へ<em>流し込む</em>。
-    </p>
-
-    <ol class="phases">
-      <li class="phase" data-reveal>
-        <span class="phase-no">01</span>
-        <h3 class="phase-title">掬う <span>Distill</span></h3>
-        <p>
-          リサーチとヒアリングで、まだ言葉になっていない「らしさ」を掬い上げ、
-          ブランドの核を定義する。
+  <!-- 枠の文法(黒地に紙色の細い線)。文面は、これまでのものをそのまま枠に入れ替えただけ(言葉は本人が直す) -->
+  <section class="page-fr" data-frames>
+    <div class="fr">
+      <div class="full fr-row" data-frame>
+        <span class="fr-lab">About</span>
+        <span class="fr-n">林 宋其 / Soki Hayashi</span>
+      </div>
+      <div class="full fr-body ab-lead" data-frame>
+        <h1 class="ab-title">形を、あたえる。</h1>
+        <p class="ab-copy">
+          価値は、はじめ液体のように形がない。<br />
+          それを<em>掬い</em>、<em>象り</em>、あらゆる接点へ<em>流し込む</em>。
         </p>
-      </li>
-      <li class="phase" data-reveal>
-        <span class="phase-no">02</span>
-        <h3 class="phase-title">象る <span>Form</span></h3>
+      </div>
+      <div class="full ab-phases" data-frame>
+        <ol class="fr ab-ph">
+          <li class="fr-body" data-frame>
+            <span class="ab-no">01</span>
+            <h2 class="ab-h">掬う <span>Distill</span></h2>
+            <p>リサーチとヒアリングで、まだ言葉になっていない「らしさ」を掬い上げ、ブランドの核を定義する。</p>
+          </li>
+          <li class="fr-body" data-frame>
+            <span class="ab-no">02</span>
+            <h2 class="ab-h">象る <span>Form</span></h2>
+            <p>核に視覚的な原型を与える。ロゴ・タイポグラフィ・色・質感。平面にも立体にも展開できる形をつくる。</p>
+          </li>
+          <li class="fr-body" data-frame>
+            <span class="ab-no">03</span>
+            <h2 class="ab-h">満たす <span>Flow</span></h2>
+            <p>その形を、グラフィック・空間・3D・映像・Webへ流し込み、媒体を越えて一貫させる。</p>
+          </li>
+        </ol>
+      </div>
+      <div class="full fr-body ab-prose" data-frame>
         <p>
-          核に視覚的な原型を与える。ロゴ・タイポグラフィ・色・質感。
-          平面にも立体にも展開できる形をつくる。
+          ブランドの価値は、最初は液体のように形がない。感じられるのに、掴めない。
+          放っておけば蒸発してしまう。デザインは、その核に“器”をあたえる仕事だ。
+          形になってはじめて、価値は人を動かし、市場で働きはじめる。
         </p>
-      </li>
-      <li class="phase" data-reveal>
-        <span class="phase-no">03</span>
-        <h3 class="phase-title">満たす <span>Flow</span></h3>
         <p>
-          その形を、グラフィック・空間・3D・映像・Webへ流し込み、
-          媒体を越えて一貫させる。
+          私は平面から立体まで、媒体を選ばずにその形を立ち上げる。
+          <!-- 本人が書くまで出さない(公開の画面に仮の文言を置かない) -->
+          <span hidden>（※ここに経歴・取引先・受賞などのクレデンシャルを入れる。）</span>
         </p>
-      </li>
-    </ol>
-
-    <div style="margin-top: clamp(3rem, 8vh, 6rem)">
-      <h2 class="section-label" data-reveal>About</h2>
-      <p class="prose" data-reveal>
-        ブランドの価値は、最初は液体のように形がない。感じられるのに、掴めない。
-        放っておけば蒸発してしまう。デザインは、その核に“器”をあたえる仕事だ。
-        形になってはじめて、価値は人を動かし、市場で働きはじめる。
-      </p>
-      <p class="prose" data-reveal>
-        私は平面から立体まで、媒体を選ばずにその形を立ち上げる。
-        （※ここに経歴・取引先・受賞などのクレデンシャルを入れる。）
-      </p>
+      </div>
+      <!-- 立体の作者表示(CC BY 4.0 の条件)。本人の指定(2026-11-26): About の下の方に、英語で、ごく小さく。 -->
+      <div class="full fr-body" data-frame id="credits">
+        <p class="credits-3d" lang="en">
+          3D models used in the top page, via Sketchfab, licensed under
+          <a href="https://creativecommons.org/licenses/by/4.0/" rel="license noopener" target="_blank">CC BY 4.0</a>
+          and simplified for this site:
+          <a href="https://sketchfab.com/3d-models/e1127f2c8d4d4d65b9608ff3714890bc" target="_blank" rel="noopener">RED Digital Cinema Weapon Dragon 8K Camera</a> by Christopher Holloway;
+          <a href="https://sketchfab.com/3d-models/93fb2cac30e741f580faf022795f7d50" target="_blank" rel="noopener">SONY A7M4 with GM1635 f2.8</a> by Metazeon;
+          <a href="https://sketchfab.com/3d-models/8e34fc2b303144f78490007d91ff57c4" target="_blank" rel="noopener">macbook pro M3 16 inch 2024</a> by jackbaeten;
+          <a href="https://sketchfab.com/3d-models/bc7308bf9af34d0bbf520ab5d86bec61" target="_blank" rel="noopener">Rolad VR-50HD Multi-Format AV Mixer</a> by JohnnyP;
+          <a href="https://sketchfab.com/3d-models/ce1bff22430e45bf8e3cc2e4f353f4d9" target="_blank" rel="noopener">Genelec 8340A RAW</a> by holofichesystems;
+          <a href="https://sketchfab.com/3d-models/74cd3a7c7df84091b226efd30766c157" target="_blank" rel="noopener">Panton Chair</a> by Geof;
+          <a href="https://sketchfab.com/3d-models/0a45955e2328459d95f403cb00c08b3a" target="_blank" rel="noopener">Vitra Eames Plastic Chair</a> by furnny.
+        </p>
+      </div>
     </div>
-
-    <!-- 立体の作者表示(CC BY 4.0 の条件)。本人の指定(2026-11-26): About の下の方に、英語で、ごく小さく。 -->
-    <p class="credits-3d" lang="en">
-      3D models used in the top page, via Sketchfab, licensed under
-      <a href="https://creativecommons.org/licenses/by/4.0/" rel="license noopener" target="_blank">CC BY 4.0</a>
-      and simplified for this site:
-      <a href="https://sketchfab.com/3d-models/e1127f2c8d4d4d65b9608ff3714890bc" target="_blank" rel="noopener">RED Digital Cinema Weapon Dragon 8K Camera</a> by Christopher Holloway;
-      <a href="https://sketchfab.com/3d-models/93fb2cac30e741f580faf022795f7d50" target="_blank" rel="noopener">SONY A7M4 with GM1635 f2.8</a> by Metazeon;
-      <a href="https://sketchfab.com/3d-models/8e34fc2b303144f78490007d91ff57c4" target="_blank" rel="noopener">macbook pro M3 16 inch 2024</a> by jackbaeten;
-      <a href="https://sketchfab.com/3d-models/bc7308bf9af34d0bbf520ab5d86bec61" target="_blank" rel="noopener">Rolad VR-50HD Multi-Format AV Mixer</a> by JohnnyP;
-      <a href="https://sketchfab.com/3d-models/ce1bff22430e45bf8e3cc2e4f353f4d9" target="_blank" rel="noopener">Genelec 8340A RAW</a> by holofichesystems;
-      <a href="https://sketchfab.com/3d-models/74cd3a7c7df84091b226efd30766c157" target="_blank" rel="noopener">Panton Chair</a> by Geof;
-      <a href="https://sketchfab.com/3d-models/0a45955e2328459d95f403cb00c08b3a" target="_blank" rel="noopener">Vitra Eames Plastic Chair</a> by furnny.
-    </p>
   </section>
 </Base>
 
 <style>
+  .ab-title {
+    margin: 0;
+    font-size: clamp(1.5rem, 6vw, 2.6rem);
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0.04em;
+  }
+  .ab-copy {
+    margin: 1.2rem 0 0;
+    font-size: clamp(0.95rem, 3.4vw, 1.15rem);
+    line-height: 1.9;
+  }
+  .ab-copy em {
+    font-style: normal;
+    border-bottom: 1px solid var(--ln);
+  }
+  .ab-phases {
+    background: transparent;
+    box-shadow: none;
+  }
+  .ab-ph {
+    --cols: 1;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    gap: 1px;
+  }
+  @media (min-width: 720px) {
+    .ab-ph {
+      --cols: 3;
+    }
+  }
+  .ab-ph p {
+    margin: 0.6rem 0 0;
+    font-size: 0.82rem;
+    line-height: 1.8;
+    color: rgba(244, 241, 234, 0.8);
+  }
+  .ab-no {
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ab-h {
+    margin: 0.5rem 0 0;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+  .ab-h span {
+    margin-left: 0.5rem;
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+  }
+  .ab-prose p {
+    margin: 0 0 1rem;
+    font-size: 0.88rem;
+    line-height: 1.95;
+    max-width: 40em;
+  }
   .credits-3d {
-    margin-top: clamp(4rem, 12vh, 8rem);
+    margin: 0;
     max-width: 60ch;
     font-size: 9px;
     line-height: 1.5;

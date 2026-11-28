@@ -13,119 +13,91 @@ const usedDomains = (Object.keys(DOMAINS) as (keyof typeof DOMAINS)[]).filter((k
 );
 ---
 
-<Base title="Works — Soki Hayashi" description="Soki Hayashi(林 宋其)の制作実績。領域と立場のタグで絞り込めます。">
-  <section class="page wrap">
-    <p class="eyebrow" data-reveal>Works</p>
-    <h1 class="page-title" data-reveal>Works</h1>
-
-    <div class="list-filters" data-list-filters>
-      <div class="chips" role="group" aria-label="領域">
-        <button class="chip" type="button" data-d="all" aria-pressed="true">All</button>
-        {
-          usedDomains.map((k) => (
-            <button class="chip" type="button" data-d={k} aria-pressed="false">
-              {DOMAINS[k]}
-            </button>
-          ))
-        }
+<Base title="Works — Soki Hayashi" description="Soki Hayashi(林 宋其)の制作実績。">
+  <!-- 枠の文法(黒地に紙色の細い線)。分類はドロップダウン(本人: 分類は必要、ドロップダウンでよい / 立場と並び替えは要らない) -->
+  <section class="page-fr" data-frames>
+    <div class="fr" data-list>
+      <div class="full fr-row" data-frame>
+        <span class="fr-lab">Works</span>
+        <span class="wk-tools">
+          <span class="fr-n" data-count>{works.length}</span>
+          <select class="wk-sel" data-domain-select aria-label="分類">
+            <option value="all">すべて</option>
+            {usedDomains.map((k) => <option value={k}>{DOMAINS[k]}</option>)}
+          </select>
+        </span>
       </div>
-      <div class="chips" role="group" aria-label="立場">
-        <button class="chip" type="button" data-s="all" aria-pressed="true">Client + Original</button>
-        {
-          (Object.keys(STANCES) as (keyof typeof STANCES)[]).map((k) => (
-            <button class="chip" type="button" data-s={k} aria-pressed="false">
-              {STANCES[k]}
-            </button>
-          ))
-        }
-      </div>
-    </div>
-
-    <ul class="grid" data-list>
       {
         works.map((w) => (
-          <li class="card" data-domain={w.data.domain.join(' ')} data-stance={w.data.stance}>
-            <a href={`${base}/works/${w.id}/`} class="card-link">
-              <div class="thumb" style={`--accent:${w.data.accent}`} aria-hidden="true">
-                {w.data.images[0] && (
-                  <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />
-                )}
-              </div>
-              <div class="meta">
-                <h2 class="card-title">{w.data.title}</h2>
-                <p class="card-sub">
-                  {w.data.domain.map((k) => DOMAINS[k]).join(' / ')} — {STANCES[w.data.stance]}
-                  {w.data.year ? ` — ${w.data.year}` : ''}
-                </p>
-                <p class="card-summary">{w.data.summary}</p>
-              </div>
-            </a>
-          </li>
+          <a class="fr-w" data-frame data-domain={w.data.domain.join(' ')} data-stance={w.data.stance} href={`${base}/works/${w.id}/`}>
+            <div class="ph">
+              {w.data.images[0] && <img src={wallSrc(w.data.images[0], 560)} alt="" loading="lazy" decoding="async" />}
+            </div>
+            <p class="t">{w.data.title}</p>
+            <p class="d">
+              {w.data.domain.map((k) => DOMAINS[k]).join(' / ')}
+              {w.data.year ? ` — ${w.data.year}` : ''}
+            </p>
+          </a>
         ))
       }
-    </ul>
-    <p class="list-empty" data-empty hidden>この組み合わせの作品はまだありません。</p>
+    </div>
+    <!-- 立場(Client / Original)の括りは、本人の判断で外した。消さずに隠してある -->
+    <div hidden data-stance-chips>
+      {(Object.keys(STANCES) as (keyof typeof STANCES)[]).map((k) => <span>{STANCES[k]}</span>)}
+    </div>
   </section>
 
   <script>
     function initList() {
-      const box = document.querySelector<HTMLElement>('[data-list-filters]');
       const list = document.querySelector<HTMLElement>('[data-list]');
-      const empty = document.querySelector<HTMLElement>('[data-empty]');
-      if (!box || !list || box.dataset.bound) return;
-      box.dataset.bound = '1';
-      let d = 'all';
-      let s = 'all';
+      const sel = document.querySelector<HTMLSelectElement>('[data-domain-select]');
+      const count = document.querySelector<HTMLElement>('[data-count]');
+      if (!list || !sel || sel.dataset.bound) return;
+      sel.dataset.bound = '1';
       const apply = () => {
+        const d = sel.value;
         let n = 0;
-        list.querySelectorAll<HTMLElement>('li').forEach((li) => {
-          const ok =
-            (d === 'all' || (li.dataset.domain || '').split(' ').includes(d)) &&
-            (s === 'all' || li.dataset.stance === s);
-          li.hidden = !ok;
+        list.querySelectorAll<HTMLElement>('[data-domain]').forEach((el) => {
+          const ok = d === 'all' || (el.dataset.domain || '').split(' ').includes(d);
+          el.hidden = !ok;
           if (ok) n++;
         });
-        if (empty) empty.hidden = n > 0;
-        box.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) =>
-          b.setAttribute('aria-pressed', String(b.dataset.d === d))
-        );
-        box.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) =>
-          b.setAttribute('aria-pressed', String(b.dataset.s === s))
-        );
+        if (count) count.textContent = String(n);
       };
-      box.addEventListener('click', (e) => {
-        const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
-        if (!b) return;
-        if (b.dataset.d !== undefined) d = b.dataset.d;
-        if (b.dataset.s !== undefined) s = b.dataset.s;
-        apply();
-      });
+      sel.addEventListener('change', apply);
     }
     document.addEventListener('astro:page-load', initList);
   </script>
 </Base>
 
 <style>
-  .list-filters {
-    display: grid;
-    gap: 0.5rem;
-    margin-bottom: clamp(2rem, 5vh, 3.5rem);
+  .wk-tools {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
-  .card-summary {
-    margin: 0.6rem 0 0;
-    font-size: 0.86rem;
-    line-height: 1.75;
-    color: rgba(244, 241, 234, 0.75);
+  .wk-sel {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    padding: 6px 16px 6px 0;
+    background-image: linear-gradient(45deg, transparent 50%, var(--fg) 50%), linear-gradient(135deg, var(--fg) 50%, transparent 50%);
+    background-position: right 4px center, right 0 center;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+    cursor: pointer;
   }
-  .list-empty {
-    color: var(--muted);
+  .wk-sel option {
+    color: #000;
   }
-  .thumb {
-    overflow: hidden;
-  }
-  .thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .fr-w[hidden] {
+    display: none;
   }
 </style>

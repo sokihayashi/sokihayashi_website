@@ -7,6 +7,7 @@ import Base from '../../layouts/Base.astro';
 import { getCollection } from 'astro:content';
 import { wallSrc } from '../../data/wall';
 import depthMeta from '../../../public/img/depth/meta.json';
+import { DOMAINS } from '../../content.config';
 const idOf = (n: number) => String(n).padStart(3, '0');
 const isFlat = (n: number) => !!(depthMeta as Record<string, { flat: boolean }>)[idOf(n)]?.flat;
 
@@ -14,6 +15,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const works = (await getCollection('works', ({ data }) => !data.draft && data.images.length > 0)).sort(
   (a, b) => a.data.order - b.data.order
 );
+// LP(ヒーローの下の情報の面): 代表の作品。並びは いまの順(order)のまま。列の数に合わせて 8〜10件を出す
+const featured = works.slice(0, 10);
+const allCount = (await getCollection('works', ({ data }) => !data.draft)).length;
 ---
 
 <Base title="Soki Hayashi — morph 3d (試作)">
@@ -33,6 +37,43 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
       }
     </ul>
   </div>
+  <!-- LP: 縦に送ると、ヒーローの粒がこの面の枠線に組み直る(送りの間 = すきまの高さ)。文の欄(肩書き・人物・SNS)は本人が書くまで出さない -->
+  <div class="lp-gap" data-lp-gap aria-hidden="true"></div>
+  <section class="lp" data-lp aria-label="林 宋其の仕事">
+    <div class="fr">
+      <div class="full lp-name" data-frame>
+        <p class="jp">林 宋其</p>
+        <p class="en">Soki Hayashi</p>
+      </div>
+      <div class="full fr-row" data-frame>
+        <span class="fr-lab">Works</span><span class="fr-n">{allCount}</span>
+      </div>
+      {
+        featured.map((w, i) => (
+          <a class:list={['fr-w', 'lp-w', i === 8 && 'k9', i === 9 && 'k10']} data-frame href={`${base}/works/${w.id}/`}>
+            <div class="ph">
+              <img src={wallSrc(w.data.images[0], 560)} alt="" loading={i < 6 ? 'eager' : 'lazy'} decoding="async" />
+            </div>
+            <p class="t">{w.data.title}</p>
+            <p class="d">{w.data.domain.map((k) => DOMAINS[k]).join(' / ')}</p>
+          </a>
+        ))
+      }
+      <a class="full fr-row fr-link" data-frame href={`${base}/works/`}>
+        <span>すべての作品</span><span>{allCount} →</span>
+      </a>
+      <div class="full lp-contact" data-frame>
+        <span class="fr-lab">Contact</span>
+        <a class="lp-mail" href="mailto:soki.haya@gmail.com">soki.haya@gmail.com</a>
+      </div>
+      <a class="full fr-row fr-link" data-frame href={`${base}/about/`}>
+        <span class="fr-lab">About</span><span>→</span>
+      </a>
+      <div class="full fr-row lp-foot" data-frame>
+        <span>© 2026 Soki Hayashi</span><a href={`${base}/about/#credits`} lang="en">Credits</a>
+      </div>
+    </div>
+  </section>
 
   <script>
     import { mountMorph } from '../../scripts/morph';
@@ -81,22 +122,24 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     gap: 0.7rem;
     font-size: 1.1rem;
   }
-  html.morph-on,
-  html.morph-on body {
-    height: 100%;
-    overflow: hidden;
-    overscroll-behavior: none;
+  /* LP: ページは縦に送れる(ヒーローは画面に固定)。上下の引っぱりは止める */
+  html.morph-on {
+    overscroll-behavior-y: none;
   }
   html.morph-on .site-foot {
     display: none;
   }
   .morph.is-live {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100vh;
+    height: 100lvh; /* iPhone で上下のバーが出入りしても、絵の大きさを変えない */
     padding: 0;
     overflow: hidden;
     background: #000;
-    touch-action: none;
+    touch-action: pan-y; /* 縦の指は、ページを送る(送った指の跡も線として描く)。横・斜めの指は描く */
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
@@ -119,10 +162,104 @@ const works = (await getCollection('works', ({ data }) => !data.draft && data.im
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  /* ---------- LP: ヒーローの下の情報の面 */
+  .lp-gap {
+    height: 0;
+  }
+  html.morph-on .lp-gap {
+    height: clamp(200px, 30svh, 320px); /* この分だけ送ると、粒が枠に組み上がる */
+  }
+  .lp {
+    position: relative;
+    z-index: 2;
+    padding: 78px 12px 28px;
+  }
+  @media (min-width: 720px) {
+    .lp {
+      padding: 86px var(--pad) 40px;
+    }
+  }
+  /* 列の数で、代表の作品の数を変える(段が欠けないように): 2列 8件 / 3列 9件 / 4列 8件 / 5列 10件 */
+  .lp .k9,
+  .lp .k10 {
+    display: none;
+  }
+  @media (min-width: 720px) and (max-width: 1099px) {
+    .lp .k9 {
+      display: block;
+    }
+  }
+  @media (min-width: 1500px) {
+    .lp .k9,
+    .lp .k10 {
+      display: block;
+    }
+  }
+  .lp-name {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-height: 56px;
+    padding: 18px 14px 14px;
+  }
+  .lp-name p {
+    margin: 0;
+  }
+  .lp-name .jp {
+    font-size: 15px;
+    letter-spacing: 0.08em;
+  }
+  .lp-name .en {
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .lp-contact {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 14px 18px;
+  }
+  .lp-mail {
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: var(--fg);
+  }
+  .lp-foot {
+    font-size: 9.5px;
+    color: var(--muted);
+  }
+  .lp-foot a {
+    color: var(--muted);
+  }
+  /* 送っている間: 枠は、粒が組み上がるのに合わせて出る。中身(写真・文字)は、組み上がってから入る */
+  html.morph-pre .lp,
+  html.morph-on .lp {
+    opacity: clamp(0, calc((var(--lp, 0) - 0.82) * 5.6), 1);
+    pointer-events: none;
+  }
+  html.morph-on .lp.is-in {
+    pointer-events: auto;
+  }
+  html.morph-on .lp .fr > * > * {
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  html.morph-on .lp.is-in .fr > * > * {
+    opacity: 1;
+    transition: opacity 0.45s 0.05s;
+  }
+  html:not(.morph-on):not(.morph-pre) .morph-list {
+    display: none; /* 動かない環境では、下の情報の面が一覧を兼ねる */
+  }
+  .morph.lp-covered .morph-canvas {
+    opacity: 0;
+  }
   /* ---------- 曲の区間ごとの、画面の振る舞い */
   .morph.is-live .morph-canvas {
     clip-path: inset(0);
-    transition: clip-path 1.1s cubic-bezier(0.7, 0, 0.2, 1);
+    transition: clip-path 1.1s cubic-bezier(0.7, 0, 0.2, 1), opacity 0.2s;
   }
   /* Cメロで画面を四角く切り抜く「窓」は、この版では出さない(上が切れて見える、との指摘。/lab/morph/ には残してある)。
   html[data-sec='C'] .morph.is-live .morph-canvas {

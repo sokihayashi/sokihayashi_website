@@ -201,8 +201,9 @@ if (typeof window !== 'undefined' && !(window as any).__band) {
       return;
     }
     const load = e.loader;
-    // 試作: /lab/morph-sharp/ から出るときだけ、帯の代わりに ガウシアンの粒でほどけて移る。
-    if (document.querySelector('[data-morph-root][data-set="sharp"]')) {
+    // 試作: /lab/morph-sharp/ から出るとき、トップの試作(/lab/morph-3d/)と枠の文法のページから出るときは、
+    // 帯の代わりに、いまある粒がほどけて、次のページ(の枠)に組み直る。上のメニューは動かさない。
+    if (document.querySelector('[data-morph-root][data-set="sharp"], [data-morph-root][data-set="3d"], [data-frames]')) {
       const o = origin && performance.now() - origin.at < 1500 ? origin : null;
       lock(); // ここから着くまで、押しても何も起きない
       e.loader = async () => {

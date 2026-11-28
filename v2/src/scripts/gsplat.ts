@@ -368,6 +368,12 @@ async function snap(): Promise<{ c: HTMLCanvasElement; bg: number[] }> {
     const r = el.getBoundingClientRect();
     if (!inView(r) || !seen(el)) continue;
     const cs = getComputedStyle(el);
+    // 枠の文法の線(枠の外側 1px の線)も、粒にする(次のページの枠に、粒が組み直る)
+    if (el.hasAttribute('data-frame')) {
+      g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--ln').trim() || '#afada8';
+      g.lineWidth = 1;
+      g.strokeRect(r.left - 0.5, r.top - 0.5, r.width + 1, r.height + 1);
+    }
     if (solid(cs.backgroundColor)) {
       g.fillStyle = cs.backgroundColor;
       g.fillRect(r.left, r.top, r.width, r.height);

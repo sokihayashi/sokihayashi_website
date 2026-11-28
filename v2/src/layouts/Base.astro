@@ -48,6 +48,8 @@ const personLd = {
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta property="og:image" content={new URL(`${base}/og.jpg`, Astro.site).href} />
+    <meta name="twitter:image" content={new URL(`${base}/og.jpg`, Astro.site).href} />
 
     <script type="application/ld+json" set:html={JSON.stringify(personLd)} />
 

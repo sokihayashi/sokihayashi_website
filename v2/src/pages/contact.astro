@@ -3,21 +3,34 @@ import Base from '../layouts/Base.astro';
 ---
 
 <Base title="Contact — Soki Hayashi">
-  <section class="page wrap">
-    <p class="eyebrow" data-reveal>Get in touch</p>
-    <h1 class="page-title" data-reveal>Contact</h1>
-
-    <p class="prose" data-reveal>
-      お仕事のご相談・お見積もり、お気軽にどうぞ。<br />
-      （フォームはこの後に実装します。名前 / 会社名 / メール / ご相談内容 など。）
-    </p>
-
-    <p class="prose" data-reveal style="margin-top:2rem">
-      <a
-        href="mailto:soki.haya@gmail.com"
-        style="color:var(--accent); border-bottom:1px solid var(--accent)"
-        >soki.haya@gmail.com →</a
-      >
-    </p>
+  <!-- 枠の文法(黒地に紙色の細い線)。文面は、これまでのものをそのまま枠に入れ替えただけ -->
+  <section class="page-fr" data-frames>
+    <div class="fr">
+      <div class="full fr-row" data-frame>
+        <span class="fr-lab">Contact</span>
+      </div>
+      <div class="full fr-body ct-body" data-frame>
+        <p>お仕事のご相談・お見積もり、お気軽にどうぞ。</p>
+        <!-- 本人が決めるまで出さない(公開の画面に仮の文言を置かない) -->
+        <p hidden>（フォームはこの後に実装します。名前 / 会社名 / メール / ご相談内容 など。）</p>
+        <a class="ct-mail" href="mailto:soki.haya@gmail.com">soki.haya@gmail.com</a>
+      </div>
+    </div>
   </section>
 </Base>
+
+<style>
+  .ct-body p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.9;
+  }
+  .ct-mail {
+    display: inline-block;
+    margin-top: 1.4rem;
+    font-size: clamp(1.1rem, 5vw, 1.6rem);
+    letter-spacing: 0.02em;
+    color: var(--fg);
+    border-bottom: 1px solid var(--ln);
+  }
+</style>

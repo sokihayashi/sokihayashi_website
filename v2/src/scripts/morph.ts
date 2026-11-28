@@ -75,6 +75,8 @@ uniform vec4 uKf;            // 48: 生成元 a の吸い込む不動点(xy)と�
 uniform vec3 uKl;            // 48: a の倍率の対数(大きさ, 角度)と、流れの位相(0〜1で一巡)
 uniform highp sampler2D uGask; // 48: アポロニウスの網の輪(毎コマ JS が作る)。輪ごとに2画素: (中心 x, y, 半径, 半分の太さ) と (弧の始まり, 弧の長さ(角度), 受け持つ粒の始まり, 粒の数)
 uniform vec4 uGaskN;         // (輪の数, 粒の総数, -, -)
+uniform highp sampler2D uFrm; // LP: 情報の面の枠線。線分ごとに2画素: (x0, y0, x1, y1) と (受け持つ粒の始まり, 粒の数, -, -)。座標は送りきった時の画面
+uniform vec4 uFrmN;           // LP: (線分の数, 粒の総数, 送りの進み 0..1, まだ送っていない分の縦のずれ px)
 uniform float uObjOn;        // 48: 機材の立体のデータが届いているか
 uniform vec3 uPrint;         // 48: 綿毛が飛ぶ瞬間の太陽の位置と時刻(影が紙に焼きつく)
 uniform vec3 uSun;           // 48: 太陽の位置(画面の座標。触っている間は指、離すと空をめぐる)と、指で動かしている度合い
@@ -187,6 +189,60 @@ O base(){
   o.line = 0.0; o.lineCol = PAPER; o.ridge = 0.0;
   o.uv = gUVb; o.work = gR2.w; o.gate = -1.0; o.par = 0.0;
   o.nrm = vec3(0.0, 0.0, 1.0); o.glass = 0.0; o.clear = 0.0;
+  return o;
+}
+// ---- LP: 縦に送ると、いまの絵の粒が、そのまま下の情報の面の枠線に組み直る(戻せば、もとの絵へ戻る)。
+// 上の枠から先に組み上がる。粒ごとに出発を少しずらし、まっすぐではなく少し弧を描いて飛ぶ。
+const vec3 LPC = vec3(0.69, 0.68, 0.661); // 枠線の色(紙色 72% を黒に重ねた色。下の HTML の線と同じ)
+vec4 frT(int j){ return texelFetch(uFrm, ivec2(j % 256, j / 256), 0); }
+O lpMix(O o){
+  int ns = int(uFrmN.x), tot = int(uFrmN.y);
+  if (ns < 1 || tot < 1) return o;
+  if (gI >= ${NU} * NVi - 4096) {
+    // 紙の升目(白い紙・砂嵐の地): 飛ばさずに、その場で黒へ溶ける(升目のまま飛ぶと、白黒の市松になって散らかった)
+    float f = smoothstep(0.0, 0.25, uFrmN.z);
+    o.col *= 1.0 - f; o.tex *= 1.0 - f; o.tint *= 1.0 - f; o.lit *= 1.0 - f; o.alpha = 0.0;
+    if (f > 0.02) o.trans = 0.0;
+    if (f >= 1.0) o.corner = o.centre;
+    return o;
+  }
+  int k = gI % tot;
+  int lo = 0, hi = ns - 1;
+  for (int it = 0; it < 9; it++) { if (lo >= hi) break; int mid = (lo + hi + 1) / 2; if (int(frT(mid * 2 + 1).x + 0.5) <= k) lo = mid; else hi = mid - 1; }
+  vec4 S = frT(lo * 2), C = frT(lo * 2 + 1);
+  float cnt = max(C.y, 1.0);
+  float u = (float(k) - C.x + 0.5) / cnt;
+  vec2 dv = S.zw - S.xy; float L = length(dv); vec2 dir = L > 1e-3 ? dv / L : vec2(1.0, 0.0);
+  vec2 fy = vec2(0.0, uFrmN.w);
+  vec2 tp = S.xy + dv * u + fy;
+  float hr = hsh(uint(gI) * 13U + 5U);
+  float d0 = 0.5 * clamp((tp.y - fy.y - 60.0) / max(uView.y - 60.0, 1.0), 0.0, 1.0) + 0.12 * hr;
+  float x = clamp((uFrmN.z - d0) / 0.36, 0.0, 1.0);
+  float e = x * x * (3.0 - 2.0 * x);
+  // 送り始めの一瞬で、絵の全部が その場で細かい粒に砕ける。帯の切れ端(角丸の棒)や板のまま飛ばない(網 → 球と同じ決まり)
+  float cr = smoothstep(0.0, 0.1, uFrmN.z);
+  vec3 dust = vec3(aQ * 0.75, 0.0);
+  vec3 off0 = mix(o.corner - o.centre, dust, cr);
+  o.shape = mix(o.shape, vec2(0.75), cr); o.round = mix(o.round, 0.0, cr);
+  if (e <= 0.0) { o.corner = o.centre + off0; return o; }
+  vec3 cs = o.centre, ct = vec3(tp, 0.0);
+  vec2 dm = ct.xy - cs.xy; float dl = length(dm);
+  vec2 pr = dl > 1e-3 ? vec2(-dm.y, dm.x) / dl : vec2(0.0);
+  vec3 cm = mix(cs, ct, 0.5) + vec3(pr * (hsh(uint(gI) * 7U + 11U) - 0.5) * 0.45 * dl, 0.0);
+  float ie = 1.0 - e;
+  vec3 c = ie * ie * cs + 2.0 * ie * e * cm + e * e * ct;
+  float hl = max(0.9, L / cnt * 0.8);
+  vec3 kt = vec3(dir * hl * aQ.x + vec2(-dir.y, dir.x) * 0.5 * aQ.y, 0.0);
+  float es = smoothstep(0.0, 0.3, e); // 飛び立つとすぐに細い線の粒になる(紙の大きな升目のまま飛ばない)
+  o.corner = c + mix(off0, kt, es);
+  o.centre = c;
+  o.col = mix(o.col, LPC, e);
+  o.tex = mix(o.tex, 0.0, e); o.tint = mix(o.tint, vec3(1.0), e);
+  o.shape = mix(o.shape, vec2(hl, 0.5), es); o.round = mix(o.round, 0.0, es);
+  o.lit = mix(o.lit, 1.0, e); o.gloss = mix(o.gloss, 0.0, e); o.par = mix(o.par, 0.0, e);
+  o.glass = mix(o.glass, 0.0, e); o.clear = mix(o.clear, 0.0, e); o.line = mix(o.line, 0.0, e); o.ridge = mix(o.ridge, 0.0, e);
+  o.face = 1.0; o.trans = mix(o.trans, 0.0, step(0.02, e)); o.lineCol = LPC;
+  if (e > 0.5) { o.alpha = 1.0; o.gate = 1.0; }
   return o;
 }
 // 向きのある細長い面(線・糸・札)
@@ -2311,8 +2367,9 @@ DP dObj(float t, float kt, float th4){
   float cx = cos(th4), sx = sin(th4);
   float w4 = p.x * sx; p.x = p.x * cx; n.x = n.x * cx;
   float pr = 2.6 / (2.6 - w4);
-  float S = min(uView.x, uView.y) * 0.42;
-  vec3 w = vec3(p.x * pr * S, (p.y - uWrap.x) * pr * S + 3.0, p.z * pr * S);
+  // 2026-11-28: 真ん中に小さく浮く「点群のビューワー」に見える、との指摘(3つの AI)。大きく、少し外して置き、画面からはみ出させる(以前: min(画面) × 0.42、中央)
+  float S = max(uView.x, uView.y) * 0.32; // 0.5 では大きすぎて、何の機材か分からなくなった
+  vec3 w = vec3(p.x * pr * S + S * 0.22, (p.y - uWrap.x) * pr * S + 3.0 - S * 0.05, p.z * pr * S);
   // 白い立体: 太陽(指)に照らされ、床に白い影を落とす。床が落ちる(39.5秒〜)と、影の粒は立体へ戻る
   vec3 Ls = dSunP(kt);
   float lit = 0.35 + 0.7 * max(dot(normalize(n + vec3(1e-4)), normalize(Ls - w)), 0.0);
@@ -2613,6 +2670,8 @@ void main(){
   O B = A;
   if (w > 0.0) B = stateOf(idB);
   if (w >= 1.0) A = B;
+  // LP: 送っている間だけ、枠線へ組み直す(トップの立体の版だけが uFrmN を入れる)
+  if (uFrmN.z > 0.0) { A = lpMix(A); if (w > 0.0 && w < 1.0) B = lpMix(B); else B = A; }
 
   // 変わる途中は、まっすぐ飛ばずに、少し ふくらんで動く。
   float arc = sin(3.14159 * w);
@@ -2873,6 +2932,7 @@ uniform vec3 uBeat;  // 48: 拍(何拍目か、拍に入ってからの秒、割
 uniform float uDark;  // 48: いまの絵の地が黒か(立体・4次元)、白か(紙)
 uniform float uGlare; // 48: いちばん明るい所の、星形のきらめき(紙の白が出ている間は 0)
 uniform float uCine; // 48: 映画の見え方(本人の言葉: グレインの入ったモーショングラフィック的なシネマ表現、A24 の π のような)。最初の1カットの写真の色は残す
+uniform float uLPn;  // LP: 送っている間は、版や反転をかけず、そのままの絵へ寄せる(枠線を、下の HTML の線と同じ色で見せる)
 in vec2 vUv;
 out vec4 o;
 float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -3118,6 +3178,7 @@ void main(){
   // 場面の変わり目: 明るさの山(Marterium「Swirl」: 形が変わる所で光が強くなる)と、色を反転した1コマ(mnowakdesign)
   c *= 1.0 + uBoost;
   c = mix(c, vec3(1.0) - c, uInv);
+  if (uLPn > 0.0) c = mix(c, texture(uImg, vUv).rgb, uLPn);
   o = vec4(max(c, 0.0), 1.0);
 }`;
 
@@ -3158,7 +3219,7 @@ export function mountMorph(root: HTMLElement) {
   gl.uniform1i(gl.getUniformLocation(floor, 'uShadow'), 3);
   gl.useProgram(post);
   gl.uniform1i(gl.getUniformLocation(post, 'uImg'), 2);
-  const pu = { beat: gl.getUniformLocation(post, 'uBeat'), dark: gl.getUniformLocation(post, 'uDark'), glare: gl.getUniformLocation(post, 'uGlare'), cine: gl.getUniformLocation(post, 'uCine'), sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes') };
+  const pu = { beat: gl.getUniformLocation(post, 'uBeat'), dark: gl.getUniformLocation(post, 'uDark'), glare: gl.getUniformLocation(post, 'uGlare'), cine: gl.getUniformLocation(post, 'uCine'), sunG: gl.getUniformLocation(post, 'uSunG'), droste: gl.getUniformLocation(post, 'uDroste'), inv: gl.getUniformLocation(post, 'uInv'), boost: gl.getUniformLocation(post, 'uBoost'), dpr: gl.getUniformLocation(post, 'uDpr'), grade: gl.getUniformLocation(post, 'uGrade'), analog: gl.getUniformLocation(post, 'uAnalog'), time: gl.getUniformLocation(post, 'uTime'), res: gl.getUniformLocation(post, 'uRes'), lpn: gl.getUniformLocation(post, 'uLPn') };
   const fl = { view: gl.getUniformLocation(floor, 'uView'), light: gl.getUniformLocation(floor, 'uLight'), solid: gl.getUniformLocation(floor, 'uSolid') };
   gl.useProgram(fade);
   gl.uniform1i(gl.getUniformLocation(fade, 'uPrev'), 2);
@@ -3308,6 +3369,16 @@ export function mountMorph(root: HTMLElement) {
   for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
   gl.activeTexture(gl.TEXTURE0);
   gl.uniform1i(U('uGask'), 6);
+  // LP: 下の情報の面の枠線(線分の一覧)。送ると、粒がこの線に組み直る。
+  const FR_W = 256, FR_H = 1, frBuf = new Float32Array(FR_W * FR_H * 4);
+  const frmTex = gl.createTexture(), uFrmN = U('uFrmN');
+  gl.activeTexture(gl.TEXTURE16); gl.bindTexture(gl.TEXTURE_2D, frmTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, FR_W, FR_H, 0, gl.RGBA, gl.FLOAT, frBuf);
+  for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, p, gl.NEAREST);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, p, gl.CLAMP_TO_EDGE);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(U('uFrm'), 16);
+  gl.uniform4f(uFrmN, 0, 0, 0, 0);
   // 2本の平行線(Re w = ±1)の間に、互いに接する円を詰める(デカルトの円定理。周期 2 の1区画ぶん、半径 0.0012 まで)。大きい順に並べる
   const gkCell: number[] = [];
   if (three) {
@@ -3950,7 +4021,15 @@ export function mountMorph(root: HTMLElement) {
   let penVX = 0, penVY = 0, penV = 0, lastPX = 0, lastPY = 0, sndV = 0;
   const sndKind = (d: number) => (d < 2.2 || d >= 99 ? 1 : d < 9.5 ? 2 : d < 17.5 ? 3 : 0); // なぞりの音の種類(1 ペン / 2 墨 / 3 板 / 0 なし)
   // 場面の変わり目(反転と明るさの山)
-  const DEV_CUTS = [17.5, 34.5, 39.5, 60, 72, 84, 96];
+  // 場面の変わり目の反転は、次元の境目の3回だけ(2026-11-28 本人「反映して」。3つの AI: 同じ強さの反転が多すぎる)。以前: [17.5, 34.5, 39.5, 60, 72, 84, 96]
+  const DEV_CUTS = [17.5, 39.5, 72];
+  // 1周の配分(同じ日): 長く同じに見える区間だけ、時刻を速く進める(場面の中身・順番は そのまま)。約103.5秒 → 約85秒。
+  // [始まり, 終わり, 速さ]。出入りの0.6秒で、速さを なめらかに変える。?long=1 で、もとの配分。
+  const DEV_SPEED: [number, number, number][] = new URLSearchParams(location.search).get('long') === '1' ? [] : [[11.5, 17.0, 1.25], [21.5, 26.5, 2.5], [38.0, 42.0, 2.5], [63.5, 71.5, 2.0], [87.5, 98.5, 4.0]];
+  const devSpeed = (t: number) => {
+    for (const [a, b, k] of DEV_SPEED) if (t >= a && t < b) return 1 + (k - 1) * Math.min(1, (t - a) / 0.6, (b - t) / 0.6);
+    return 1;
+  };
   // ---- クライン群(4次元の先)。複素数は [実部, 虚部]
   type Cx = [number, number];
   const cA = (a: Cx, b: Cx): Cx => [a[0] + b[0], a[1] + b[1]];
@@ -4278,6 +4357,15 @@ export function mountMorph(root: HTMLElement) {
   root.append(typeL);
   const navA = [...document.querySelectorAll<HTMLElement>('.site-bar .mainnav a, .site-bar .logo')];
   if (three) { const bar = document.querySelector<HTMLElement>('.site-bar'); if (bar) ruleEls.push(bar); ruleEls.push(snd); root.appendChild(finderEl); }
+  if (three) {
+    // 機能の層: メニューと音のボタンは、最初から差の合成で、どの絵の上でも読める。音のボタンは枠を外す
+    for (const el of ruleEls) el.style.mixBlendMode = 'difference';
+    ruleInk = true;
+    snd.style.border = '0';
+    snd.style.background = 'transparent';
+    snd.style.paddingRight = '0';
+    snd.style.transition = 'opacity .3s';
+  }
   const html = document.documentElement;
   const rnd = (a: number, b: number) => a + Math.random() * (b - a);
   secHook = (name, cut) => {
@@ -4396,6 +4484,7 @@ export function mountMorph(root: HTMLElement) {
   let waitMove = false;
   function onDown(e: PointerEvent) {
     if (isUI(e.target) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (three && e.pointerType === 'touch' && (e.clientX < 20 || e.clientX > window.innerWidth - 20)) return; // 画面の左右の端(戻る操作)は描かない
     if (panelOpen) { setPanel(false); return; }
     const r = root.getBoundingClientRect();
     ptX = penX = e.clientX - r.left;
@@ -4458,8 +4547,83 @@ export function mountMorph(root: HTMLElement) {
   root.addEventListener('pointerup', onUp);
   root.addEventListener('pointercancel', onUp);
   root.addEventListener('pointerleave', onLeave);
-  const onResize = () => size(false);
+
+  // ---------- LP(トップの立体の版だけ): ページを縦に送ると、いまの絵の粒が、下の情報の面の枠線に組み直る。
+  // 送りはブラウザのふつうの送りのまま(慣性も奪わない)。送る指の跡は、線として描く(スクロールしようとした指を最初の一筆に)。
+  // 送りきったら絵を止め(電池と熱)、上へ戻すと、枠がほどけて同じ秒から続く。
+  const lpSec = three ? document.querySelector<HTMLElement>('[data-lp]') : null;
+  const lpGap = lpSec ? document.querySelector<HTMLElement>('[data-lp-gap]') : null;
+  let lpZ = 1, lpNs = 0, lpP = -1, lpOff = 0, lpCovered = false, lpIn = false;
+  const lpLayout = () => {
+    if (!lpSec || !lpGap) return;
+    lpZ = Math.max(1, lpGap.offsetHeight);
+    const sy = window.scrollY;
+    const segs: number[][] = [];
+    for (const c of lpSec.querySelectorAll<HTMLElement>('[data-frame]')) {
+      if (!c.offsetWidth || !c.offsetHeight) continue;
+      const r = c.getBoundingClientRect();
+      const top = r.top + sy - lpZ; // 送りきった時の、画面の上からの位置
+      if (top > vh) continue;
+      const L = r.left - 0.5, R = r.right + 0.5, T = top - 0.5, Bt = top + r.height + 0.5, B = Math.min(Bt, vh + 4);
+      segs.push([L, T, R, T], [R, T, R, B], [L, B, L, T]);
+      if (Bt <= vh + 4) segs.push([R, Bt, L, Bt]);
+    }
+    lpNs = Math.min(segs.length, (FR_W * FR_H) / 2);
+    const lens = segs.slice(0, lpNs).map(([a, b, c, d]) => Math.max(1, Math.hypot(c - a, d - b)));
+    const sum = lens.reduce((a, b) => a + b, 0) || 1;
+    let start = 0;
+    const NP = TILES - 4096; // 紙の升目(最後の 4096 枚)は線にしない
+    for (let i = 0; i < lpNs; i++) {
+      const cnt = i === lpNs - 1 ? NP - start : Math.floor((NP * lens[i]) / sum);
+      frBuf.set(segs[i], i * 8);
+      frBuf[i * 8 + 4] = start; frBuf[i * 8 + 5] = Math.max(1, cnt); frBuf[i * 8 + 6] = 0; frBuf[i * 8 + 7] = 0;
+      start += cnt;
+    }
+    gl!.activeTexture(gl!.TEXTURE16); gl!.bindTexture(gl!.TEXTURE_2D, frmTex);
+    gl!.texSubImage2D(gl!.TEXTURE_2D, 0, 0, 0, FR_W, FR_H, gl!.RGBA, gl!.FLOAT, frBuf);
+    gl!.activeTexture(gl!.TEXTURE0);
+    lpP = -1; // 次のコマで、進みを入れ直す
+  };
+  // 指: 縦に送る指は、ブラウザが送りを始めると pointercancel になる。その先は touchmove で跡を拾い続ける。
+  let tId = -1;
+  const onTS = (e: TouchEvent) => {
+    const t = e.changedTouches[0];
+    if (!t || isUI(e.target) || t.clientX < 20 || t.clientX > window.innerWidth - 20) return; // 画面の左右の端(戻る操作)は描かない
+    tId = t.identifier;
+  };
+  const onTM = (e: TouchEvent) => {
+    if (tId < 0) return;
+    let t: Touch | null = null;
+    for (const x of Array.from(e.touches)) if (x.identifier === tId) t = x;
+    if (!t) return;
+    const r = root.getBoundingClientRect();
+    ptX = t.clientX - r.left;
+    ptY = t.clientY - r.top;
+    if (!drawing) {
+      drawing = true; auto = false; over = 1; waitMove = false; stroke = false;
+      penX = ptX; penY = ptY; downX = ptX; downY = ptY; downT = now; strayed = 9;
+    }
+  };
+  const onTE = (e: TouchEvent) => {
+    if (tId < 0) return;
+    for (const x of Array.from(e.changedTouches)) if (x.identifier === tId) { tId = -1; onUp(); }
+  };
+  if (lpSec) {
+    root.addEventListener('touchstart', onTS, { passive: true });
+    root.addEventListener('touchmove', onTM, { passive: true });
+    root.addEventListener('touchend', onTE, { passive: true });
+    root.addEventListener('touchcancel', onTE, { passive: true });
+  }
+  // 別のページから「戻る」で来たときに、離れた時の秒から続けるのは やめた: 最初の帯(線のもと)が描かれないまま途中から始まり、
+  // 帯の場面のあとで秒が跳ぶうえ、結末で描き直す線が空になる。戻ったときは、送りの位置だけ元に戻る(ブラウザの決まり)。
+
+  const onResize = () => { size(false); lpLayout(); };
   window.addEventListener('resize', onResize);
+  const onLoadLP = () => lpLayout();
+  if (lpSec) {
+    window.addEventListener('load', onLoadLP);
+    document.fonts?.ready.then(() => { if (!dead) lpLayout(); }).catch(() => {});
+  }
 
   // ひとりでに描くペンの通り道(なめらかに、画面の中を さまよう)。
   const autoAt = (t: number) => [
@@ -4478,6 +4642,24 @@ export function mountMorph(root: HTMLElement) {
     gDt = dt;
     last = t;
     now = (t - t0) / 1000;
+    // LP: 送りの進み。送りきったら絵を止める(上へ戻すと、同じ秒から続く)
+    if (lpSec) {
+      const sy = window.scrollY;
+      const p = Math.min(1, Math.max(0, sy / lpZ));
+      lpOff = Math.max(0, lpZ - sy);
+      if (p !== lpP) {
+        lpP = p;
+        lpSec.style.setProperty('--lp', p.toFixed(4));
+        const inn = p > 0.97;
+        if (inn !== lpIn) { lpIn = inn; lpSec.classList.toggle('is-in', inn); }
+        const sh = p > 0.2; // 音のボタンは、ヒーローの間だけ
+        snd.style.opacity = sh ? '0' : '';
+        snd.style.pointerEvents = sh ? 'none' : '';
+      }
+      const cov = sy >= lpZ - 0.5;
+      if (cov !== lpCovered) { lpCovered = cov; root.classList.toggle('lp-covered', cov); }
+      if (lpCovered) return;
+    }
     // 曲は時間でも進む(触らなくても動き続ける)。描くと、さらに速く進む。
     if (!panelOpen && !openOn && !frozen) {
       const n = Math.max(0, Math.floor(phase));
@@ -4487,7 +4669,7 @@ export function mountMorph(root: HTMLElement) {
       onPhase();
     }
     // 展開の時刻は、帯から展開へ移りはじめた所(帯の区間の後半)から数える。それまでは帯を描いている(ひとりでに描くのも、ここまで)。
-    if (devOn && (sFrom === 48 || (sTo === 48 && phase - Math.floor(phase) > HOLD)) && !frozen && !devHold && !panelOpen && !openOn) devT += dt;
+    if (devOn && (sFrom === 48 || (sTo === 48 && phase - Math.floor(phase) > HOLD)) && !frozen && !devHold && !panelOpen && !openOn) devT += dt * devSpeed(devLoop(devT)[0]);
     if (drawing) {
       const k = 1 - Math.exp(-dt / 0.03);
       penX += (ptX - penX) * k;
@@ -4716,9 +4898,9 @@ export function mountMorph(root: HTMLElement) {
       // 画面のきまり: 紙の間は、上の文字が墨で刷られる / 立体の間は、画面がカメラのファインダーになる /
       // 4次元で半回転した後は、画面の文字も鏡になる / 無限の流れの間は、画面が自分自身を中に含む
       if (devOn) {
-        const paperRule = dtl < 17.5 || dtl >= 99.5;
+        const paperRule = true; // メニューは、いつも差の合成で読める(機能の層。2026-11-28 本人「反映して」。以前は紙の間だけ: dtl < 17.5 || dtl >= 99.5)
         const finder = false && dtl >= 34.5 && dtl < 42.5; // ファインダーの枠は隠す(2026-11-28: 3つの AI がそろって、物を真ん中に置いて見せる「ビューワー」に見せる原因と指摘。参照に無い計測のグラフィック)
-        const mirror = dtl >= 41 && dtl < 100.5;
+        const mirror = false && dtl >= 41 && dtl < 100.5; // 鏡文字は止めた(3つの AI がそろって反対。2026-11-28 本人「反映して」)
         if (paperRule !== ruleInk) { ruleInk = paperRule; for (const el of ruleEls) el.style.mixBlendMode = paperRule ? 'difference' : ''; }
         if (mirror !== ruleMirror) { ruleMirror = mirror; for (const el of ruleEls) { el.style.transition = 'transform .7s cubic-bezier(.7,0,.3,1)'; el.style.transform = mirror ? 'scaleX(-1)' : ''; } }
         finderEl.style.opacity = finder ? '1' : '0';
@@ -4780,7 +4962,8 @@ export function mountMorph(root: HTMLElement) {
     gl!.viewport(0, 0, cv.width, cv.height);
     gl!.disable(gl!.DEPTH_TEST);
     gl!.disable(gl!.BLEND);
-    const keep = trail * Math.pow(0.9, dt * 60);
+    const lpN = lpSec && lpP > 0 ? Math.min(1, lpP / 0.08) : 0; // 送り始めたら、版・反転・残像を外して、そのままの絵へ(混ぜると灰色の濁りになるので、ほぼ一瞬で切り替える)
+    const keep = trail * Math.pow(0.9, dt * 60) * (1 - lpN);
     if (keep > 0.01) {
       gl!.useProgram(fade);
       gl!.uniform1f(uKeep, keep);
@@ -4805,6 +4988,7 @@ export function mountMorph(root: HTMLElement) {
       }
     }
     // 2) 面を描く
+    gl!.uniform4f(uFrmN, lpSec ? lpNs : 0, TILES - 4096, lpSec && lpP > 0 ? lpP : 0, lpOff);
     if (K > 0) {
       gl!.enable(gl!.DEPTH_TEST);
       gl!.enable(gl!.BLEND);
@@ -4832,9 +5016,10 @@ export function mountMorph(root: HTMLElement) {
     gl!.uniform1f(pu.dark, darkV);
     gl!.uniform1f(pu.glare, glareV);
     { const dpv = cv.width / Math.max(1, vw); gl!.uniform3f(pu.sunG, sunX * dpv, (vh - sunY) * dpv, glareK); }
-    gl!.uniform1f(pu.inv, inv > 0 ? 1 : 0);
+    gl!.uniform1f(pu.inv, inv > 0 && lpN <= 0 ? 1 : 0);
+    gl!.uniform1f(pu.lpn, lpN * lpN * (3 - 2 * lpN));
     if (inv > 0) inv--;
-    gl!.uniform1f(pu.boost, boost);
+    gl!.uniform1f(pu.boost, boost * (1 - lpN));
     boost *= Math.exp(-gDt / (cine > 0.5 ? 0.11 : 0.25));
     gl!.uniform1f(pu.time, now);
     gl!.uniform2f(pu.res, cv.width, cv.height);
@@ -4852,6 +5037,7 @@ export function mountMorph(root: HTMLElement) {
     shotFn = fn;
   };
   size(true);
+  lpLayout();
   raf = requestAnimationFrame(tick);
 
   (window as unknown as Record<string, unknown>).__morph = {
@@ -4913,6 +5099,14 @@ export function mountMorph(root: HTMLElement) {
   return () => {
     dead = true;
     cancelAnimationFrame(raf);
+    if (lpSec) {
+      root.removeEventListener('touchstart', onTS);
+      root.removeEventListener('touchmove', onTM);
+      root.removeEventListener('touchend', onTE);
+      root.removeEventListener('touchcancel', onTE);
+      window.removeEventListener('load', onLoadLP);
+      root.classList.remove('lp-covered');
+    }
     for (const el of ruleEls) { el.style.mixBlendMode = ''; el.style.transform = ''; el.style.transition = ''; } // 画面のきまりを、ほかのページへ持ち越さない(上の帯は、ページをまたいで残る)
     finderEl.remove();
     root.removeEventListener('pointerdown', onDown);

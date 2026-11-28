@@ -1,0 +1,109 @@
+---
+import Base from '../layouts/Base.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+// 404 を、枠の升目で組んだ絵にする(本人 2026-11-28:「404を使ったグラフィックにして、ちょっと遊び心を」)。
+// なぞると、触れた升目が塗られたり抜けたりする。指を離すと、少しして 404 に戻る。
+const FONT: Record<string, string[]> = {
+  '4': ['...X.', '..XX.', '.X.X.', 'X..X.', 'XXXXX', '...X.', '...X.'],
+  '0': ['.XXX.', 'X...X', 'X...X', 'X...X', 'X...X', 'X...X', '.XXX.'],
+};
+const COLS = 19, ROWS = 9; // 字(5×7)を3つ、字の間に1升、まわりに1升(左右は2升)
+const on = new Set<number>();
+['4', '0', '4'].forEach((ch, k) => {
+  FONT[ch].forEach((row, y) => [...row].forEach((c, x) => { if (c === 'X') on.add((y + 1) * COLS + 2 + k * 6 + x); }));
+});
+const cells = Array.from({ length: COLS * ROWS }, (_, i) => on.has(i));
+---
+
+<Base title="404 — Soki Hayashi">
+  <section class="page-fr" data-frames>
+    <div class="fr">
+      <div class="full nf-box" data-frame>
+        <div class="nf" data-nf style={`--c:${COLS}`} role="img" aria-label="404 — ページが見つかりません">
+          {cells.map((v) => <i class:list={[v && 'on']} data-on={v ? '1' : '0'} />)}
+        </div>
+      </div>
+      <a class="full fr-row fr-link" data-frame href={`${base}/`}>
+        <span>トップへ</span><span>→</span>
+      </a>
+    </div>
+  </section>
+
+  <script>
+    function initNF() {
+      const g = document.querySelector<HTMLElement>('[data-nf]');
+      if (!g || g.dataset.bound) return;
+      g.dataset.bound = '1';
+      const cs = [...g.querySelectorAll<HTMLElement>('i')];
+      const cols = parseInt(getComputedStyle(g).getPropertyValue('--c')) || 19;
+      let last: HTMLElement | null = null;
+      let down = false;
+      let timer = 0;
+      const flip = (el: HTMLElement | null) => {
+        if (!el || el === last || el.parentElement !== g) return;
+        last = el;
+        el.style.transitionDelay = '0s';
+        el.classList.toggle('on');
+      };
+      const at = (x: number, y: number) => document.elementFromPoint(x, y) as HTMLElement | null;
+      // 離して少しすると、升目が 404 に戻る(最後に触れた所から、波のように)
+      const restore = (ox: number, oy: number) => {
+        cs.forEach((el, i) => {
+          const want = el.dataset.on === '1';
+          if (el.classList.contains('on') === want) return;
+          const d = Math.hypot((i % cols) - ox, Math.floor(i / cols) - oy);
+          el.style.transitionDelay = `${(d * 0.035).toFixed(3)}s`;
+          el.classList.toggle('on', want);
+        });
+      };
+      let lx = 0, ly = 0;
+      const pos = (el: HTMLElement | null) => {
+        const i = el ? cs.indexOf(el) : -1;
+        if (i >= 0) { lx = i % cols; ly = Math.floor(i / cols); }
+      };
+      g.addEventListener('pointerdown', (e) => {
+        down = true; last = null; clearTimeout(timer);
+        g.setPointerCapture?.(e.pointerId);
+        const el = at(e.clientX, e.clientY); flip(el); pos(el);
+      });
+      g.addEventListener('pointermove', (e) => {
+        if (!down && e.pointerType !== 'mouse') return;
+        const el = at(e.clientX, e.clientY);
+        if (el?.parentElement === g) { flip(el); pos(el); clearTimeout(timer); timer = window.setTimeout(() => restore(lx, ly), 1600); }
+      });
+      const up = () => { if (!down) return; down = false; last = null; clearTimeout(timer); timer = window.setTimeout(() => restore(lx, ly), 1200); };
+      g.addEventListener('pointerup', up);
+      g.addEventListener('pointercancel', up);
+      g.addEventListener('pointerleave', () => { last = null; });
+    }
+    document.addEventListener('astro:page-load', initNF);
+  </script>
+</Base>
+
+<style>
+  .nf-box {
+    padding: 22px 14px;
+  }
+  .nf {
+    display: grid;
+    grid-template-columns: repeat(var(--c), minmax(0, 1fr));
+    gap: 1px;
+    padding: 1px;
+    max-width: 760px;
+    margin: 0 auto;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: crosshair;
+  }
+  .nf i {
+    display: block;
+    aspect-ratio: 1;
+    background: #000;
+    box-shadow: 0 0 0 1px var(--ln);
+    transition: background-color 0.22s;
+  }
+  .nf i.on {
+    background: var(--fg);
+  }
+</style>
