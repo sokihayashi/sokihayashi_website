@@ -1933,7 +1933,7 @@ DP dGrass(float t, float kt){
     float ta = ag - dd / 560.0;
     if (ta < 0.0) continue;
     float A = uShk[i].w * exp(-ta * 2.1) * exp(-dd / 1100.0);
-    lean += (dd > 1e-3 ? dv / dd : vec2(0.0)) * A * 1.5 * cos(ta * 10.0);
+    lean += (dd > 1e-3 ? dv / dd : vec2(0.0)) * A * 2.3 * cos(ta * 10.0); // 2026-11-29: 衝撃の輪で芽が倒れる量 1.5 → 2.3(応答が小さいとの監査)
     H *= 1.0 + 0.35 * A * max(cos(ta * 10.0), 0.0);
     shf += A * exp(-ta * 7.0); // 輪が通る所の芽が、ひととき光る(輪そのものが見える)
   }
@@ -2007,7 +2007,7 @@ DP dPlant(float t, float kt){
     if (burn || uShk[i].w <= 0.0 || ag < 0.0 || ag > 6.0) continue;
     vec2 q = sTop - uShk[i].xy, q2 = sMid - uShk[i].xy;
     float dq = min(length(q), length(q2));
-    if (length(q) < 0.18 * max(uView.x, uView.y)) burst = burst < 0.0 ? ag : min(burst, ag); // 綿毛の頭の近くを押すと(指先は大きめに見込む)
+    if (length(q) < 0.42 * max(uView.x, uView.y)) burst = burst < 0.0 ? ag : min(burst, ag); // 綿毛の近くを押すと(2026-11-29 3つの AI の監査: 頭の小さな当たりは見つからない。画面のどこを押しても、近い綿毛が飛ぶ)
     vec2 aw = q2 / max(length(q2), 1.0);
     bend += vec2(aw.x, aw.y * 0.6) * 0.9 * exp(-ag * 2.3) * cos(ag * 9.0) * exp(-dq / 420.0);
   }
@@ -2252,7 +2252,7 @@ DP d4DTiger(float t){
   float tl = max(t - 34.5, 0.0);
   mat4 Rm = r4(uRot4.x * 0.6 + 0.4 + tl * 0.2, 0, 3) * r4(uRot4.y * 0.6 + 0.35 * sin(tl * 0.21), 1, 3) * r4(uRot4.z * 0.8 + tl * 0.08, 2, 3) * r4(tl * 0.05, 0, 1);
   vec2 tapS; float tag = dTapAge(tapS);
-  float w0 = 0.22 * sin(tl * 0.27) + (tag < 4.0 ? 0.8 * exp(-tag * 2.2) * sin(tag * 7.0) : 0.0); // タップすると、切る面が4つめの軸の向きに揺れる
+  float w0 = 0.22 * sin(tl * 0.27) + (tag < 4.0 ? 1.3 * exp(-tag * 2.0) * sin(tag * 7.0) : 0.0); // タップすると、切る面が4つめの軸の向きに揺れる(2026-11-29: 応答が小さく見えないとの監査 → 0.8 → 1.3)
   vec4 e1 = Rm * vec4(1.0, 0.0, 0.0, 0.0), e2 = Rm * vec4(0.0, 1.0, 0.0, 0.0), e3 = Rm * vec4(0.0, 0.0, 1.0, 0.0), e4 = Rm * vec4(0.0, 0.0, 0.0, 1.0);
   vec4 O = e4 * w0;
   float u1 = hsh(uint(gI) * 3U + 1U), u2 = hsh(uint(gI) * 7U + 5U), u3 = hsh(uint(gI) * 11U + 9U);
@@ -2572,7 +2572,7 @@ DP dBalance(float t){
   float trc = dTrace(a, 60.0);
   float core = exp(-ra / 0.2);
   float rw = tag * 1.25;
-  float fl = pulse * (2.2 * exp(-(ra - rw) * (ra - rw) / 0.025) + 2.5 * core * exp(-tag * 2.2)); // 押すと、芯から光の輪が広がる
+  float fl = pulse * (4.0 * exp(-(ra - rw) * (ra - rw) / 0.05) + 2.5 * core * exp(-tag * 2.2)); // 押すと、芯から光の輪が広がる(2026-11-29: 光の柱に呑まれて見えなかった → 強く・太く)
   float br = ((0.02 + 0.03 * dvA1) + am * (0.085 + 0.06 * dvA1) + core * 0.1) * clamp(pow(D / (D + sin(th) * ra), 1.3), 0.3, 1.0); // 遠い側は粒が重なって白い帯になるので、遠いほど暗く
   return dSeg(vec3(a, 0.0), vec3(b, 0.0), (0.3 + 0.2 * dvA1 + 0.15 * am) * o1 * o2, vec3(br * (1.0 + 2.5 * trc + fl)), 0.0);
 }
@@ -2669,7 +2669,7 @@ DP dKDive(float t){
   bool off = r > Rm + 30.0 || r < 0.3;
   float trc = dTrace(dScr(vec3(P, 0.0)), 70.0);
   float dep = smoothstep(0.0, 0.3 * Rm, r); // 中心ほど深い(小さく、暗く)
-  vec3 col = mix(vec3(0.62, 0.7, 1.0), vec3(1.0, 0.95, 0.86), dep) * (0.2 + 0.3 * dep) * (1.0 + 1.6 * trc) * dsm(76.0, 77.2, t); // 重なって白い塊にならないよう暗めに(形の中の穴が見えるように)
+  vec3 col = mix(vec3(0.62, 0.7, 1.0), vec3(1.0, 0.95, 0.86), dep) * (0.2 + 0.3 * dep) * (1.0 + 1.6 * trc) * dsm(76.0, 76.35, t); // 重なって白い塊にならないよう暗めに(形の中の穴が見えるように)。2026-11-29: 立ち上がりを 1.2 → 0.35秒(84秒が真っ黒、との監査)
   float ds = mix(0.45, 0.9, dep) * fade * (off ? 0.0 : 1.0);
   DP d = dDot(vec3(P, 0.0), vec2(ds), 1.0, col);
   d.a = 0.0;
@@ -2960,7 +2960,7 @@ O dPaper(float t, float first, int NG){
   float settle = smoothstep(0.0, 1.0, fr * 1.6 - 0.5); // 2026-11-28: 雲の形の しきい値(3段の島)は浮いて見えたので、線からの距離だけで一様に落ち着く。以前: fr * 1.6 - cl * 1.6
   vec3 paper = D_PAPER; // 砂嵐は、升目ごとの白黒ではなく、画素ごとの細かい粒(FS)。升目は、落ち着くまでの度合いだけを持つ(2026-11-28: 粗いモザイクに見えた)
   float kc = t < 42.5 ? dsm(17.5, 20.0, t) : 0.0;
-  float y = t < 42.5 ? -fall * uView.y * 1.5 : 0.0;
+  float y = t < 42.5 ? -fall * uView.y * 1.5 - 3.0 * first : 0.0; // 最初の周は 3px 奥へ(まだ黒い紙の升目が、帯の写真や線の前に出ないように)
   // 焼けた印画紙の黒: わずかな むら
   float ex = dExpo(cc, t);
   float bru = 0.5 + 0.5 * sin((cc.x * 0.8 + cc.y * 0.35) * 0.02 + sin(cc.y * 0.013 + cc.x * 0.004) * 2.2);
@@ -3046,7 +3046,7 @@ O sDev(){
   else if (tt < 64.0) { A = dBalance(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
   else if (tt < 67.0) { // 2026-11-28(監査: 束の線が円へ飛ぶ途中が、乱れた線の交差に見えた): 銀河 → 網は、刷りの反転(72秒)で切る。網は、大きな円から先に、その場に現れる(飛ばない)
     A = dGask(tt); B = A; float rk = sqrt(gkRank);
-    if (tt < 64.0 + rk * 2.2 + dvA2 * 0.25) { A.hs = vec2(0.0); B.hs = vec2(0.0); }
+    if (tt < 63.85 + rk * 1.5 + dvA2 * 0.15) { A.hs = vec2(0.0); B.hs = vec2(0.0); } // 2026-11-29: 大きな円は切った瞬間から出す(72秒が真っ白、との監査)。以前 64 + rk·2.2
     push = 0.0; wk = 0.0; wr = 130.0;
   }
   else if (tt < 76.0) { A = dGask(tt); B = A; push = 0.0; wk = 0.35; wr = 150.0; } // 指の跡では、輪が ゆるく曲がる(切れない程度)
@@ -3173,6 +3173,9 @@ void main(){
   float bulgeK = sty == 0 ? 1.0 : (sty == 3 ? 0.5 : (sty == 1 ? 0.25 : 0.0)); // 4 は 0(散らさない)
   // ガラスの立体(34)との行き来は、「変形」にする: 変わり具合を 面ごとではなく 四隅ごとに決め、帯に沿って なめらかに進める。
   // 面が ばらばらにならず、帯が ひと続きのまま 曲がって、立体になる(本人 2026-11-25:「帯から変形とかがいいな」)。
+  // 2026-11-29(本人「急に四角で帯と繋がりよくない」の本当の原因): 帯 → 展開の移りで、紙の升目(最後の 4096)も帯の形と混ぜていたので、
+  // 帯の形と升目の間の大きさの灰色の升目が画面いっぱいに並び、モザイクに見えた。紙の升目は混ぜずに、はじめから升目のまま(黒)で敷き、展開の時刻で一様に現像する
+  if (int(uTo + 0.5) == 48 && int(uFrom + 0.5) != 48 && gI >= ${NU} * NVi - 4096) { w = 1.0; bulgeK = 0.0; keep = 1.0; }
   if (uDeep > 0.5 && (int(uFrom + 0.5) == 34 || int(uTo + 0.5) == 34) && sty != 2) {
     float hc = clamp((gAge - (gFr - 0.5) - aQ.x * 0.25) / max(1.0, min(uK, Mf)), 0.0, 1.0); // 0 = ペン先、1 = いちばん古い所
     w = smoothstep(hc * 0.55, hc * 0.55 + 0.45, x);
@@ -5136,6 +5139,7 @@ export function mountMorph(root: HTMLElement) {
   function onDown(e: PointerEvent) {
     if (isUI(e.target) || (e.pointerType === 'mouse' && e.button !== 0)) return;
     if (three && e.pointerType === 'touch' && (e.clientX < 20 || e.clientX > window.innerWidth - 20)) return; // 画面の左右の端(戻る操作)は描かない
+    if (e.pointerType === 'touch' && inNav(e.clientY)) return; // 下端の帯は送り(描かない)
     if (panelOpen) { setPanel(false); return; }
     const r = root.getBoundingClientRect();
     ptX = penX = e.clientX - r.left;
@@ -5258,10 +5262,15 @@ export function mountMorph(root: HTMLElement) {
   let tId = -1;
   const onTS = (e: TouchEvent) => {
     const t = e.changedTouches[0];
+    if (t && navId < 0 && inNav(t.clientY)) { navId = t.identifier; navOn = true; navY0 = navLY = navPY = t.clientY; navLT = navPT = e.timeStamp; navS0 = window.scrollY; lpLock = null; lpPend = -1; return; } // 下端の帯: 送り(描かない)
     if (!t || isUI(e.target) || t.clientX < 20 || t.clientX > window.innerWidth - 20) return; // 画面の左右の端(戻る操作)は描かない
     tId = t.identifier;
   };
   const onTM = (e: TouchEvent) => {
+    if (navId >= 0) {
+      for (const x of Array.from(e.touches)) if (x.identifier === navId) { navPY = navLY; navPT = navLT; navLY = x.clientY; navLT = e.timeStamp; window.scrollTo(0, Math.max(0, Math.min(lpZ, navS0 + (navY0 - x.clientY)))); }
+      return;
+    }
     if (tId < 0) return;
     let t: Touch | null = null;
     for (const x of Array.from(e.touches)) if (x.identifier === tId) t = x;
@@ -5276,9 +5285,25 @@ export function mountMorph(root: HTMLElement) {
     }
   };
   const onTE = (e: TouchEvent) => {
+    if (navId >= 0) {
+      for (const x of Array.from(e.changedTouches)) if (x.identifier === navId) {
+        navId = -1; navOn = false;
+        const vy = (x.clientY - navPY) / Math.max(1, e.timeStamp - navPT); // 離す直前の速さ(px/ms)
+        const go = window.scrollY > lpZ * 0.2 || (vy < -0.5 && window.scrollY > lpZ * 0.08); // 2割を越えたか、ある程度 引いて上へ払った(わずかな動きでは送らない)
+        lpMode = go ? 1 : 0; lpGo(go ? lpZ : 0);
+      }
+      return;
+    }
     if (tId < 0) return;
     for (const x of Array.from(e.changedTouches)) if (x.identifier === tId) { tId = -1; onUp(); }
   };
+  // 2026-11-29(3つの AI の監査がそろって「上へ素早く払う」は不可。潜る指と取り合い、速さの境目は見えない): 送りは、指を置いた場所で分ける。
+  // 画面の下端の帯(下 8%、56px 以上)に置いた指だけが送り: ページが指について上がり(粒も枠へ組み上がっていく)、離した所で決まる(2割を越えたか、上へ払ったら情報の面へ。
+  // 足りなければ戻る)。帯の外に置いた指は、どの向きに動かしても描く・潜るだけ。印も矢印も置かない。以前の「素早く払う」は ?nav=flick
+  const NAV_FLICK = new URLSearchParams(location.search).get('nav') === 'flick';
+  const navZone = () => Math.max(56, window.innerHeight * 0.08);
+  let navId = -1, navY0 = 0, navS0 = 0, navOn = false, navLY = 0, navLT = 0, navPY = 0, navPT = 0;
+  const inNav = (y: number) => !NAV_FLICK && lpSec !== null && lpMode === 0 && y > window.innerHeight - navZone();
   // 2026-11-29 本人「まだ下にやると works に意図せず移ってしまう」: ヒーローの上では、指はページを送らない(touch-action: none。描くだけ)。
   // 情報の面へ進むのは、上へ素早く払ったときだけ(縦に 90px 以上・横の 2.2倍以上・0.32秒以内、または 離す直前の速さが 0.8px/ms 以上)。ゆっくりの線は、どの向きでも描くだけ
   let flX = 0, flY = 0, flT = 0, flId = -1, flLX = 0, flLY = 0, flLT = 0, flPX = 0, flPY = 0, flPT = 0;
@@ -5291,7 +5316,7 @@ export function mountMorph(root: HTMLElement) {
       flId = -1;
       const tn = e.timeStamp, dx = q.clientX - flX, dy = q.clientY - flY, dur = tn - flT;
       const vy = (q.clientY - flPY) / Math.max(1, tn - flPT); // 離す直前の縦の速さ(px/ms)
-      if (lpMode === 0 && dy < -90 && Math.abs(dy) > 2.2 * Math.abs(dx) && (dur < 320 || vy < -0.8)) { lpMode = 1; if (drawing) onUp(); lpGo(lpZ); }
+      if (NAV_FLICK && lpMode === 0 && dy < -90 && Math.abs(dy) > 2.2 * Math.abs(dx) && (dur < 320 || vy < -0.8)) { lpMode = 1; if (drawing) onUp(); lpGo(lpZ); }
     }
   };
   // 指が画面のどこかに触れている間(情報の面の上でも)は、自動の送りをしない。指で つかんだら、自動の送りは止める
@@ -5346,11 +5371,12 @@ export function mountMorph(root: HTMLElement) {
       if (lpLock && (Math.abs(sy - lpLock.to) < 2 || t > lpLock.until)) lpLock = null;
       if (lpHome < 0) { lpHome = sy > lpZ * 0.5 ? 1 : 0; lpMode = lpHome; lpA = lpMode; }
       if (sy <= 1) lpHome = 0; else if (sy >= lpZ - 1) lpHome = 1;
-      if (!lpLock) { // 行き先: ヒーローから少し下へ(16%)で情報の面へ、情報の面から少し上へ(16%)でヒーローへ。指を戻せば取り消せる(少しの遊び)
+      if (!lpLock && !navOn) { // 行き先: ヒーローから少し下へ(16%)で情報の面へ、情報の面から少し上へ(16%)でヒーローへ。指を戻せば取り消せる(少しの遊び)
         const want = lpHome === 0 ? (sy > lpZ * (lpMode === 1 ? 0.12 : 0.16) ? 1 : 0) : (sy < lpZ * (lpMode === 0 ? 0.88 : 0.84) ? 0 : 1);
         if (want !== lpMode) { lpMode = want; if (want === 1 && drawing) onUp(); lpGo(want ? lpZ : 0); }
       }
-      lpA = Math.min(1, Math.max(0, lpA + ((lpMode === 1 ? 1 : -1) * dt) / 0.85));
+      if (navOn) lpA = Math.min(1, Math.max(0, sy / lpZ)); // 下端の帯から引いている間は、粒も指について枠へ組み上がる
+      else lpA = Math.min(1, Math.max(0, lpA + ((lpMode === 1 ? 1 : -1) * dt) / 0.85));
       const p = lpA * lpA * (3 - 2 * lpA);
       lpOff = Math.max(0, lpZ - sy);
       if (p !== lpP) {
