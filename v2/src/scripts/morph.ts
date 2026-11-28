@@ -1645,13 +1645,15 @@ float dDropR(int k){
 float dTowerH(int k){ return uView.y * (0.3 + 0.22 * hsh(uint(k) * 13U + 3U)); }
 // 見る位置: kt = 0 で真上から(紙そのもの)、1 で斜め上から(床)。紙の座標(画面の座標)が、そのまま床の座標になる。
 float dvCamP = 1.2;
-float dPit(float kt){ return mix(1.5707963, dvCamP - uTilt.y * 0.15, kt); } // 紙を「板」にしない: 紙は画面からはみ出したまま。奥は闇に溶かす
-float dYaw(float kt){ return kt * (0.16 + 0.1 * sin(uTime * 0.06) + uTilt.x * 0.5); }
+float dvTiltK = 1.0; // 指を追う視点の傾き(見る角度・回り込み)の効き。縦長の画面の植物の場面では弱める(sDev で決める)
+float dPit(float kt){ return mix(1.5707963, dvCamP - uTilt.y * 0.15 * dvTiltK, kt); } // 紙を「板」にしない: 紙は画面からはみ出したまま。奥は闇に溶かす
+float dYaw(float kt){ return kt * (0.16 + 0.1 * sin(uTime * 0.06) + uTilt.x * 0.5 * dvTiltK); }
+float dvCamY = 0.0; // 見る位置を上下に動かす量(画面の画素)。縦長の画面の植物の場面だけ、床ごと絵を下へ(sDev で決める)
 vec3 dCam(vec3 p, float kt){
   vec2 c = uView * 0.5;
   float pit = dPit(kt), yaw = dYaw(kt);
   float zm = mix(1.0, uFlat > 0.5 ? 1.45 : 0.94, kt);
-  float Y0 = mix(0.0, uView.y * 0.03, kt);
+  float Y0 = mix(0.0, uView.y * 0.03, kt) + dvCamY * kt;
   float x1 = p.x * cos(yaw) + p.z * sin(yaw), z1 = -p.x * sin(yaw) + p.z * cos(yaw);
   float y2 = p.y * cos(pit) - z1 * sin(pit), z2 = p.y * sin(pit) + z1 * cos(pit);
   return vec3(c.x + x1 * zm, c.y + Y0 - y2 * zm, z2 * zm);
@@ -1660,7 +1662,7 @@ vec3 dCam(vec3 p, float kt){
 vec2 dFloorAt(vec2 s, float kt){
   vec2 c = uView * 0.5;
   float pit = dPit(kt), yaw = dYaw(kt);
-  float zm = mix(1.0, uFlat > 0.5 ? 1.45 : 0.94, kt), Y0 = mix(0.0, uView.y * 0.03, kt);
+  float zm = mix(1.0, uFlat > 0.5 ? 1.45 : 0.94, kt), Y0 = mix(0.0, uView.y * 0.03, kt) + dvCamY * kt;
   float x1 = (s.x - c.x) / zm, y2 = -(s.y - c.y - Y0) / zm;
   float z1 = -y2 / max(sin(pit), 0.2);
   return vec2(x1 * cos(yaw) - z1 * sin(yaw), x1 * sin(yaw) + z1 * cos(yaw));
@@ -1776,7 +1778,7 @@ DP dDrop(float kt){
 }
 // ---- 太陽(指)と、印画紙。紙は光で黒く焼け、光の届かなかった所(砂・影)は白く残る
 vec3 dSunAt(vec2 s, float kt){ vec2 f = dFloorAt(s, kt); return vec3(f.x, uView.y * 2.0, f.y); }
-vec3 dSunP(float kt){ return dSunAt(uSun.xy, kt); }
+vec3 dSunP(float kt){ return dSunAt(uSun.xy + vec2(0.0, dvCamY * kt * (1.0 - uSun.z)), kt); } // 見る位置を動かしても、触っていない間の太陽の巡り(床の上の位置)は これまでのまま。触っている間は指の下
 // カメラの方向(床の座標で)
 vec3 dCamDir(float kt){ float pit = dPit(kt), yaw = dYaw(kt); return vec3(-sin(yaw) * cos(pit), sin(pit), cos(yaw) * cos(pit)); }
 float dExpo(vec2 fp, float t){
@@ -1953,13 +1955,16 @@ vec3 dStemP(vec3 R, vec2 lv, float H, float Phi, float s){
   float x = H / Phi * (1.0 - cos(ph)), y = H / Phi * sin(ph);
   return R + vec3(lv.x * x, y, lv.y * x);
 }
+// 縦長の画面(2026-11-29 本人「草とか花をもうちょっとスマホに最適化」): 葉の大きさは株の高さに比例するので、縦長では葉が画面の幅の半分を越えて重なり、白い塊になっていた。
+// dvLs = 葉(しだの小葉・穂の葉・綿毛の葉)を株の高さに対して小さくする比。地面を下端へ下げるのは、見る位置(dvCamY)で
+float dvLs = 1.0;
 // しだの小葉: 茎の節から、茎と「見る向き」の両方に垂直な向きへ出す(茎がこちらを向いても、羽の形がつぶれない)。先へ向かって斜めに、少し垂れる
 vec3 dFrond(vec3 R, vec2 lv, float H, float Phi, float gs, float sn, float u, float side, float age, vec3 V){
   float lg = dsm(sn * 0.8, sn * 0.8 + 0.25, gs);
   vec3 nd = dStemP(R, lv, H, Phi, sn);
   vec3 T = vec3(lv.x * sin(Phi * sn), cos(Phi * sn), lv.y * sin(Phi * sn));
   vec3 pp = cross(T, V); pp = dot(pp, pp) > 1e-4 ? normalize(pp) : vec3(1.0, 0.0, 0.0);
-  float Ll = H * 0.2 * (1.0 - sn * 0.75) * lg;
+  float Ll = H * 0.2 * dvLs * (1.0 - sn * 0.75) * lg;
   return nd + pp * side * Ll * u * (1.0 - 0.15 * u) + T * Ll * 0.35 * u - vec3(0.0, Ll * (0.15 + 0.25 * age) * u * u, 0.0);
 }
 DP dPlant(float t, float kt){
@@ -1977,11 +1982,16 @@ DP dPlant(float t, float kt){
   vec2 spr = vec2(((float(k) + 0.5) / float(DK) - 0.5) * uView.x * mix(1.04, 1.75, por) + (hsh(uint(k) * 61U + 9U) - 0.5) * uView.x * 0.05, (hsh(uint(k) * 53U + 3U) - 0.5) * uView.y * mix(0.6, 0.75, por));
   vec3 R = vec3(mix(dvCk.x - c.x, spr.x, 0.82), 0.0, mix(dvCk.y - c.y, spr.y, 0.82));
   float H = uView.y * mix(0.26, 1.08, pow(hsh(uint(k) * 13U + 3U), 0.85)) * (ty == 1 ? 1.12 : ty == 2 ? 0.78 : 1.0);
+  float hsc = 1.0, psc = 1.0; dvLs = 1.0;
   if (por4) {
     ty = k == 1 ? 2 : k == 2 ? 1 : 0;
-    vec2 lp = k == 0 ? vec2(0.04, 0.02) : k == 1 ? vec2(-0.3, 0.2) : k == 2 ? vec2(0.31, 0.08) : vec2(-0.14, -0.2); // (横, 奥行き)。奥行きは 画面の上へ
+    // 2026-11-29 v2: 地面を画面の下端へ下げ(手前の株は下端から生える)、主役の綿毛の頭は上から3割ほど(見出しにかからない)、葉は小さく(重なって白い塊にしない)。
+    // 0 主役の綿毛(真ん中、手前。頭だけが上の3割に出る) / 1 しだ(左の手前、左と下の縁で切れる) / 2 穂(右の奥、中ほどの高さ) / 3 小さな綿毛(左の奥、低い)。以前: lp 0 (0.04, 0.02) 1 (-0.3, 0.2) 2 (0.31, 0.08) 3 (-0.14, -0.2)、H 0.92 / 0.62 / 0.8 / 0.46
+    vec2 lp = k == 0 ? vec2(-0.06, 0.2) : k == 1 ? vec2(-0.36, 0.3) : k == 2 ? vec2(0.4, -0.04) : vec2(-0.32, -0.16); // (横, 奥行き)。奥行きの + は手前(画面の下)
     R = vec3(lp.x * uView.x, 0.0, lp.y * uView.y);
-    H = uView.y * (k == 0 ? 0.92 : k == 1 ? 0.62 : k == 2 ? 0.8 : 0.46);
+    H = uView.y * (k == 0 ? 0.84 : k == 1 ? 0.62 : k == 2 ? 0.52 : 0.38); // 背丈は遠近で上ほど大きく伸びる(手前の高い所は 1.6倍ほど)
+    dvLs = k == 0 ? 0.45 : k == 1 ? 0.62 : k == 2 ? 0.38 : 0.5;
+    hsc = k == 0 ? 0.55 : 0.8; psc = 0.6; // 綿毛の頭と、穂の先の大きさ
   }
   // 影の粒: 綿毛が飛ぶ瞬間(34.4秒)の形と太陽で止まり、紙に焼きついて残る(日光写真)。紙が落ちると一緒に落ちる
   bool shd = dvA3 < 0.38;
@@ -1990,8 +2000,9 @@ DP dPlant(float t, float kt){
   float tm = burn ? uPrint.z : uTime;
   if (burn) t = 34.4;
   float gs = dsm(27.3 + hk * 0.9, 30.6 + hk * 0.9, t); // 早回しで伸びる
-  vec3 L = burn ? dSunAt(uPrint.xy, kt) : dSunP(kt);
-  vec2 dL = L.xz - R.xz; float dlen = length(dL);
+  vec3 L = burn ? dSunAt(uPrint.xy + vec2(0.0, dvCamY * kt), kt) : dSunP(kt); // 焼きつく影の太陽は、見る位置を動かしても床の上で動かない
+  vec2 dL = L.xz - R.xz; if (por4) dL.y *= 0.5; // 縦長: 光へ向かう曲がりは 横を主に(奥・手前へ倒れると、背丈が大きく伸び縮みして頭が見出しにかかった)
+  float dlen = length(dL);
   vec2 lv = dlen > 1e-3 ? dL / dlen : vec2(1.0, 0.0);
   float Phi = max(2.2 * atan(dlen, L.y) * (1.0 + 0.25 * uSun.z) * (ty == 2 ? 0.6 : 1.0) + (ty == 2 ? 0.45 : 0.0), 0.02);
   // 株ごとの揺れ(速さ・向きが株ごとに違う)と、指の跡の風(跡が近くを通ると しなり、跡が古くなるにつれて揺れ戻りながら収まる)
@@ -2037,7 +2048,7 @@ DP dPlant(float t, float kt){
       float lg = dsm(0.1 + n * 0.08, 0.5 + n * 0.08, gs);
       float th = n * 2.39996 + float(k) * 1.7;
       vec2 dO = normalize(vec2(cos(th), sin(th)) + lv * 0.3);
-      float Lb = H * (0.42 + 0.1 * n / 4.0) * lg;
+      float Lb = H * (0.42 + 0.1 * n / 4.0) * dvLs * lg;
       float sw = 0.06 * sin(tm * (1.4 + 0.3 * n) + n + float(k));
       vec3 q = R + vec3(dO.x + sw, 0.0, dO.y) * Lb * e1 * (0.55 + 0.25 * age) + vec3(0.0, Lb * e1 * (1.05 - (0.95 + 0.4 * age) * e1), 0.0);
       q += vec3(-dO.y, 0.0, dO.x) * (e2 - 0.5) * 3.0 * (1.0 - e1);
@@ -2055,7 +2066,7 @@ DP dPlant(float t, float kt){
       vec3 nd = dStemP(R, lv, H, Phi, sn);
       float th = n * 2.39996 + float(k) * 1.3;
       vec2 dO = normalize(vec2(cos(th), sin(th)) + lv * 0.45);
-      float Lf = H * (0.3 - 0.15 * sn) * lg;
+      float Lf = H * (0.3 - 0.15 * sn) * dvLs * lg;
       float al = 0.55 - 0.7 * age + 0.1 * sin(tm * 1.6 + n * 1.3 + float(k));
       float v = e2 < 0.46 ? (e3 < 0.5 ? -1.0 : 1.0) : (e2 < 0.68 ? 0.0 : e3 * 2.0 - 1.0);
       float wv = Lf * 0.21 * pow(sin(3.14159 * e1), 0.8);
@@ -2070,7 +2081,7 @@ DP dPlant(float t, float kt){
       // 穂: てっぺんから、細い穂が10本、しなった向きへ垂れる(風で なびく)
       float j = floor((r - 0.62) / 0.38 * 10.0);
       float a = j * 2.39996 + float(k);
-      float Lp = H * (0.2 + 0.08 * hsh(uint(k) * 7U + uint(j))) * open;
+      float Lp = H * (0.2 + 0.08 * hsh(uint(k) * 7U + uint(j))) * psc * open;
       vec3 sd = vec3(cos(a), 0.0, sin(a)) * 0.35 + vec3(lv.x, 0.0, lv.y) * 0.8;
       float u = e1;
       vec3 q = top + sd * Lp * u + tanT * Lp * 0.35 * u - vec3(0.0, Lp * 0.75 * u * u, 0.0);
@@ -2086,9 +2097,9 @@ DP dPlant(float t, float kt){
         float u = e1;
         float coil = mix(3.6, 1.2, open);
         float ang = u * coil * 6.2831853 * 0.5;
-        float rad = H * 0.06 * exp(-u * 2.0) * (0.6 + 0.4 * open);
+        float rad = H * 0.06 * dvLs * exp(-u * 2.0) * (0.6 + 0.4 * open);
         vec3 V = dCamDir(kt), pp = cross(tanT, V); pp = dot(pp, pp) > 1e-4 ? normalize(pp) : vec3(1.0, 0.0, 0.0);
-        P = top + (pp * cos(ang) + tanT * sin(ang)) * rad + (pp * 0.5 - vec3(0.0, 0.3, 0.0)) * H * 0.04 * u;
+        P = top + (pp * cos(ang) + tanT * sin(ang)) * rad + (pp * 0.5 - vec3(0.0, 0.3, 0.0)) * H * 0.04 * dvLs * u;
         P = mix(tip, P, max(open, 0.3)); col = D_PAPER * 0.85; sz = 0.95;
       }
     } else {
@@ -2096,14 +2107,14 @@ DP dPlant(float t, float kt){
       vec3 nh = normalize(mix(normalize(L - top), dCamDir(kt), 0.45)); // 光のほうを向く。ただし、こちらからも渦が見えるように
       vec3 ax = abs(nh.y) < 0.95 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
       vec3 b1 = normalize(cross(nh, ax)), b2 = cross(nh, b1);
-      float Rh = H * 0.1 * open;
+      float Rh = H * 0.1 * hsc * open;
       float i = floor((r - 0.62) / 0.38 * 233.0);
       float f = (i + 0.5) / 233.0;
       float a = i * 2.39996 + tm * 0.12;
       vec3 qd = top + (b1 * cos(a) + b2 * sin(a)) * Rh * sqrt(f) + nh * Rh * 0.12 * (1.0 - sqrt(f));
       float zz = 1.0 - 2.0 * f, rr = sqrt(max(1.0 - zz * zz, 0.0));
       vec3 dir = (b1 * cos(a) + b2 * sin(a)) * rr + nh * zz;
-      float Rs = H * 0.13;
+      float Rs = H * 0.13 * hsc;
       float uu = e2 < 0.45 ? 1.0 : 0.18 + 0.82 * e3;         // 綿毛の先(房)と、種から伸びる細い軸
       vec3 tuft = e2 < 0.45 ? (b1 * (e3 - 0.5) + b2 * (e1 - 0.5)) * Rs * 0.16 : vec3(0.0);
       vec3 qs = top + nh * Rs * 0.25 + dir * Rs * uu + tuft;
@@ -2987,6 +2998,11 @@ O sDev(){
   float first = 1.0 - step(0.5, uDev.y);
   int NG = ${NU} * NVi - 4096;
   dvCamP = dCamPath(t);
+  // 2026-11-29: 縦長の画面では、指を追う回り込み(±0.5 rad)で 奥と手前の株が画面の幅ほども動き、頭が見出しにかかった。植物の間だけ 4割に弱める
+  if (uView.y > uView.x * 1.3 && uFlat < 0.5) {
+    dvTiltK = 1.0 - 0.6 * dsm(26.0, 28.5, t) * (1.0 - dsm(34.4, 36.4, t));
+    dvCamY = uView.y * 0.3 * dsm(27.0, 29.5, t) * (1.0 - dsm(34.4, 36.0, t)); // 2026-11-29: 縦長では、植物が伸びる間 見る位置を上げて地面を下端へ(下の3割が空いていた)。綿毛が飛んで真上から見るまでに戻す
+  }
   if (gI >= NG) return dPaper(t, first, NG);
   float cnt = dCnt();
   dvValid = gR1.w > 0.5 && gAge < cnt;
