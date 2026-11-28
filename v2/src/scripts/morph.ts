@@ -76,6 +76,7 @@ uniform vec4 uObjM;          // 48: 機材の移り(A → B, 0..1)、分解(0..1
 uniform vec4 uObjM2;         // 48: 面の点の濃さ(0..1)、A の下端、B の下端(立体の単位。どちらも 真ん中からの高さ)
 uniform float uRing4;        // 1 で、4次元を以前のホップの輪に戻す(確認用 ?ring4=1)
 uniform float uLab4;          // 1 = 2026-11-28 の4次元の迷路(?lab4=1)
+uniform vec3 uHint;          // 送りの印(?hint=1): (出すか, 見えている画面の下端の y, 送りの帯の高さ)
 uniform vec4 uObjM3;         // 48: A・B を画面に置く大きさ(px / 立体の単位)
 uniform vec4 uKm[8];         // 48: クライン群の4つの生成元(a, b, A, B)。2行ずつ、複素数の行列
 uniform vec4 uKf;            // 48: 生成元 a の吸い込む不動点(xy)と、湧き出す不動点(zw)
@@ -3069,6 +3070,26 @@ O sDev(){
   o.shape = mix(dShape(A), dShape(B), bs);
   o.round = mix(A.rnd, B.rnd, b);
   o.gate = 1.0;
+  // 送りの印(?hint=1。2026-11-29 本人「たまに矢印出してもいいけど、最後まで見てほしい」): 1周の終わり(線が描き直されて紙に戻った後、101〜103.5秒)だけ、
+  // 描き直された線から粒(1%弱)が抜けて、送りの帯(画面の下端)に墨の短い上向きの印を書く。下から上へ書かれ、少し上へ息をして、周の始まりの前に線へ戻る
+  if (uHint.x > 0.5 && tt >= 92.9 && hsh(uint(gI) * 89U + 17U) < 0.006) {
+    float u = hsh(uint(gI) * 97U + 5U), sd = hsh(uint(gI) * 101U + 11U) - 0.5;
+    vec2 hc = vec2(uView.x * 0.5, uHint.y - uHint.z * 0.5 - 4.0 * (0.5 - 0.5 * cos(uTime * 3.2)));
+    vec2 hp; vec2 hn;
+    if (u < 0.5) { float k = u / 0.5; hp = hc + vec2(0.0, mix(16.0, -16.0, k)); hn = vec2(1.0, 0.0); }      // 軸: 下から上へ
+    else if (u < 0.75) { float k = (u - 0.5) / 0.25; hp = hc + mix(vec2(0.0, -16.0), vec2(-12.0, -4.0), k); hn = normalize(vec2(-12.0, -12.0)); } // 左の払い
+    else { float k = (u - 0.75) / 0.25; hp = hc + mix(vec2(0.0, -16.0), vec2(12.0, -4.0), k); hn = normalize(vec2(12.0, -12.0)); }           // 右の払い
+    hp += hn * sd * 3.2; // 筆の太さ
+    vec2 cc = uView * 0.5;
+    DP ar = dDot(dCam(vec3(hp.x - cc.x, 6.0, hp.y - cc.y), 0.0), vec2(1.3), 0.0, D_INK);
+    float ha = smoothstep(0.0, 0.35, tt - (93.0 + u * 0.8)) * (1.0 - smoothstep(95.0, 95.4, tt));
+    vec3 c2 = dCentre(ar), oc = o.corner - o.centre, ac = dCorner(ar) - c2;
+    o.centre = mix(o.centre, c2, ha);
+    o.corner = o.centre + mix(oc, ac, ha);
+    o.col = mix(o.col, ar.col, ha);
+    o.shape = mix(o.shape, dShape(ar), ha);
+    o.round = mix(o.round, ar.rnd, ha);
+  }
   vec2 wd = wk > 0.0 ? dWake(dScr(o.centre), wr) * wk : vec2(0.0);
   o.corner.xy += wd; o.centre.xy += wd;
   return dPush(o, push);
@@ -3796,7 +3817,7 @@ export function mountMorph(root: HTMLElement) {
   const u = {
     view: U('uView'), dp: U('uDp'), w: U('uW'), time: U('uTime'), phase: U('uPhase'), k: U('uK'), twK: U('uTwK'), zK: U('uZK'),
     pass: U('uPass'), asp: U('uAsp'), pitch: U('uPitch'), cols: U('uCols'), cells: U('uCells'), step: U('uStep'),
-    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), slc: U('uSlc'), chlR: U('uChlR'), shk: U('uShk'), chlFx: U('uChlFx'), objM: U('uObjM'), objM2: U('uObjM2'), objM3: U('uObjM3'), ring4: U('uRing4'), lab4: U('uLab4'), kOld: U('uKOld'), flat: U('uFlat'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
+    focus: U('uFocus'), focusAsp: U('uFocusAsp'), from: U('uFrom'), to: U('uTo'), openW: U('uOpenW'), sharp: U('uSharp'), twLim: U('uTwLim'), map: U('uMap'), fold: U('uFold'), pen: U('uPen'), light: U('uLight'), cam: U('uCam'), tilt: U('uTilt'), part: U('uPart'), partT: U('uPartT'), dev: U('uDev'), chl: U('uChl'), chl2: U('uChl2'), rot4: U('uRot4'), bun: U('uBun'), penV: U('uPenV'), tr: U('uTr'), trA: U('uTrA'), fing: U('uFing'), km: U('uKm'), kf: U('uKf'), kl: U('uKl'), objOn: U('uObjOn'), sun: U('uSun'), print: U('uPrint'), slc: U('uSlc'), chlR: U('uChlR'), shk: U('uShk'), chlFx: U('uChlFx'), objM: U('uObjM'), objM2: U('uObjM2'), objM3: U('uObjM3'), ring4: U('uRing4'), lab4: U('uLab4'), hint: U('uHint'), kOld: U('uKOld'), flat: U('uFlat'), sty: U('uSty'), sw: U('uSw'), nw: U('uNew'), old: U('uOld'), ret: U('uRet'),
   };
   gl.uniform1i(U('uPath'), 0);
   gl.uniform1i(U('uAtlas'), 1);
@@ -4689,6 +4710,7 @@ export function mountMorph(root: HTMLElement) {
   let devObjN = 0;
   const RING4 = new URLSearchParams(location.search).get('ring4') === '1'; // 確認用: 4次元を以前のホップの輪で見る
   const LAB4 = new URLSearchParams(location.search).get('lab4') === '1'; // 確認用: 4次元を 2026-11-28 の迷路で見る
+  const HINT = new URLSearchParams(location.search).get('hint') === '1'; // 試し: 1周の終わりだけ、送りの帯に墨の上向きの印を書く
   const DEV_OBJ_ORDER = [6, 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12]; // α7 IV から、並びの順に。MacBook(2)は外した(本人 2026-11-28「3Dオブジェクトの PC よくわからないかもね」)
   // 機材の場面(34.5〜39.6秒): 届いている立体を、並びの順に次々と移す(A の稜線 → B の稜線)。
   // なぞる = 回す(惰性) / タップ = 次へ / 長押し = 分解図。触っている間は、展開の時計を止める(遊べるように)
@@ -5691,6 +5713,7 @@ export function mountMorph(root: HTMLElement) {
       gl!.uniform1f(u.ring4, RING4 ? 1 : 0);
       gl!.uniform1f(u.kOld, KLEIN_OLD ? 1 : 0);
       gl!.uniform1f(u.lab4, LAB4 ? 1 : 0);
+      gl!.uniform3f(u.hint, HINT && lpSec ? 1 : 0, window.innerHeight, Math.max(56, window.innerHeight * 0.08)); // 見えている画面の下端(ヒーローは画面の上端に固定。iPhone の下のバーの分を除く)と、送りの帯の高さ
       // 機材の場面: 移り・回す・分解図
       if (devOn) {
         if (dtl < 33) { carMorph = false; carM = 0; carQ = 0; }
