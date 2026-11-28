@@ -139,7 +139,7 @@ const allCount = (await getCollection('works', ({ data }) => !data.draft)).lengt
     padding: 0;
     overflow: hidden;
     background: #000;
-    touch-action: pan-y; /* 縦の指は、ページを送る(送った指の跡も線として描く)。横・斜めの指は描く */
+    touch-action: none; /* 2026-11-29: ヒーローの上の指は、描くだけ(ページを送らない。以前は pan-y で、縦の指が送りになり、意図せず情報の面へ進んだ)。情報の面へは、上へ素早く払う */
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;

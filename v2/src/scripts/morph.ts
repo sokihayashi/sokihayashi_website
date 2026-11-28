@@ -2243,6 +2243,11 @@ float t4F(vec4 X, out vec4 G){
   return d - T4r;
 }
 DP d4DTiger(float t){
+  // 2026-11-29 本人「まだもうちょいルールしっかりしたい」: 決まりを3つに絞った。
+  //  1. 白と黒 = 4次元の物に塗った2色(2つめの円の、こちら側か向こう側か: cos θ2 の符号)。以前の「面が4つめの軸へ傾くかどうか」は、
+  //     切り口の向きによっては どこも 0 になり、粒ごとに白黒がばらついて、白い面に黒い点が散った。
+  //  2. 線 = 管の格子(輪に沿う θ1 = 一定 24本 と、管を巻く α = 一定 16本)。面と反対の色。以前の θ2 = 一定 の線は、切り口によっては面いっぱいに散った。
+  //  3. 輪郭 = 面の縁(横から見える所)を、線の色で なぞる。重なりは不透明。
   vec2 c = uView * 0.5;
   float tl = max(t - 34.5, 0.0);
   mat4 Rm = r4(uRot4.x * 0.6 + 0.4 + tl * 0.2, 0, 3) * r4(uRot4.y * 0.6 + 0.35 * sin(tl * 0.21), 1, 3) * r4(uRot4.z * 0.8 + tl * 0.08, 2, 3) * r4(tl * 0.05, 0, 1);
@@ -2250,23 +2255,24 @@ DP d4DTiger(float t){
   float w0 = 0.22 * sin(tl * 0.27) + (tag < 4.0 ? 0.8 * exp(-tag * 2.2) * sin(tag * 7.0) : 0.0); // タップすると、切る面が4つめの軸の向きに揺れる
   vec4 e1 = Rm * vec4(1.0, 0.0, 0.0, 0.0), e2 = Rm * vec4(0.0, 1.0, 0.0, 0.0), e3 = Rm * vec4(0.0, 0.0, 1.0, 0.0), e4 = Rm * vec4(0.0, 0.0, 0.0, 1.0);
   vec4 O = e4 * w0;
-  // 始めの点: 切り口の入る球(半径 2)の中に一様に
   float u1 = hsh(uint(gI) * 3U + 1U), u2 = hsh(uint(gI) * 7U + 5U), u3 = hsh(uint(gI) * 11U + 9U);
   float cz = 1.0 - 2.0 * u2, sz = sqrt(max(0.0, 1.0 - cz * cz)), ph = 6.2831853 * u3;
   vec3 p = vec3(sz * cos(ph), sz * sin(ph), cz) * 2.0 * pow(u1, 0.333);
-  bool isLine = dvA1 < 0.36;
-  bool fam1 = hsh(uint(gI) * 53U + 7U) < 0.5;
-  float ca = 3.14159265 * floor(hsh(uint(gI) * 61U + 3U) * 12.0) / 12.0; // 格子: 円ごとに 12 枚の面(1周で 24 本)
-  vec4 gh = fam1 ? vec4(-sin(ca), cos(ca), 0.0, 0.0) : vec4(0.0, 0.0, -sin(ca), cos(ca));
-  vec3 g2 = vec3(dot(gh, e1), dot(gh, e2), dot(gh, e3));
+  bool isLine = dvA1 < 0.34;
+  bool famT = hsh(uint(gI) * 53U + 7U) < 0.55; // θ1 の線(輪に沿う) / α の線(管を巻く)
+  float ca = famT ? 3.14159265 * floor(hsh(uint(gI) * 61U + 3U) * 12.0) / 12.0 : 3.14159265 * floor(hsh(uint(gI) * 61U + 3U) * 8.0) / 8.0;
   vec4 G;
   for (int k = 0; k < 9; k++) {
     vec4 X = O + p.x * e1 + p.y * e2 + p.z * e3;
     float f1 = t4F(X, G);
     vec3 gr = vec3(dot(G, e1), dot(G, e2), dot(G, e3));
     vec3 st;
-    if (isLine) { // 2つの拘束(面の上・格子の面の上)を同時に満たす、いちばん短い一歩
-      float f2 = dot(gh, X);
+    if (isLine) { // 2つの拘束(面の上・格子の線の上)を同時に満たす、いちばん短い一歩
+      float rho = max(length(X.xy), 1e-4), sig = max(length(X.zw), 1e-4);
+      float f2; vec4 g4;
+      if (famT) { vec4 gh = vec4(-sin(ca), cos(ca), 0.0, 0.0); f2 = dot(gh, X); g4 = gh; }
+      else { f2 = (sig - T4R2) * cos(ca) - (rho - T4R1) * sin(ca); g4 = vec4(-sin(ca) * X.xy / rho, cos(ca) * X.zw / sig); }
+      vec3 g2 = vec3(dot(g4, e1), dot(g4, e2), dot(g4, e3));
       float a11 = dot(gr, gr), a12 = dot(gr, g2), a22 = dot(g2, g2), det = a11 * a22 - a12 * a12;
       if (det < 1e-5) st = f1 * gr / max(a11, 0.08);
       else { float l1 = (a22 * f1 - a12 * f2) / det, l2 = (-a12 * f1 + a11 * f2) / det; st = l1 * gr + l2 * g2; }
@@ -2278,25 +2284,41 @@ DP d4DTiger(float t){
   float f = t4F(X, G);
   vec3 gr3 = vec3(dot(G, e1), dot(G, e2), dot(G, e3));
   bool lost = abs(f) / max(length(gr3), 0.2) > 0.02;
-  if (isLine) lost = lost || abs(dot(gh, X)) / max(length(g2), 0.05) > 0.02 || dot(g2, g2) < 0.01;
-  float gw = dot(G, e4);
+  float rho = max(length(X.xy), 1e-4), sig = max(length(X.zw), 1e-4);
+  vec3 g2L = vec3(0.0);
+  if (isLine) {
+    vec4 g4 = famT ? vec4(-sin(ca), cos(ca), 0.0, 0.0) : vec4(-sin(ca) * X.xy / rho, cos(ca) * X.zw / sig);
+    float f2 = famT ? dot(g4, X) : (sig - T4R2) * cos(ca) - (rho - T4R1) * sin(ca);
+    g2L = vec3(dot(g4, e1), dot(g4, e2), dot(g4, e3));
+    lost = lost || abs(f2) / max(length(g2L), 0.05) > 0.02 || dot(g2L, g2L) < 0.01;
+  }
   // 見る向き: 少し上から、斜めに(2つの輪が重なって1本の線に見えないように)
   float vp = 0.5, vy = -0.35;
   vec3 q = vec3(p.x * cos(vy) + p.z * sin(vy), p.y, -p.x * sin(vy) + p.z * cos(vy));
   q = vec3(q.x, q.y * cos(vp) - q.z * sin(vp), q.y * sin(vp) + q.z * cos(vp));
+  vec3 n3 = normalize(gr3 + 1e-5);
+  vec3 nv = vec3(n3.x * cos(vy) + n3.z * sin(vy), n3.y, -n3.x * sin(vy) + n3.z * cos(vy));
+  nv = vec3(nv.x, nv.y * cos(vp) - nv.z * sin(vp), nv.y * sin(vp) + nv.z * cos(vp));
   float Sg = min(uView.x, uView.y) * 0.21;
   vec3 P = vec3(c + vec2(q.x, -q.y) * Sg, q.z * Sg);
   float trc = dTrace(dScr(P), 50.0);
-  bool wht = (gw > 0.0) != (trc > 0.35 + 0.2 * dvA2); // なぞった所は、白黒が入れ替わる
+  bool wht = (X.z > 0.0) != (trc > 0.35 + 0.2 * dvA2); // 白黒 = 2つめの円の こちら側 / 向こう側(なぞった所は入れ替わる)
+  vec3 fillC = wht ? D_PAPER : D_INK, lineC = wht ? D_INK : D_PAPER;
   if (isLine) {
-    vec3 n3 = normalize(gr3 + 1e-5), tg = cross(n3, g2); tg = dot(tg, tg) > 1e-8 ? normalize(tg) : vec3(1.0, 0.0, 0.0);
+    vec3 tg = cross(n3, g2L); tg = dot(tg, tg) > 1e-8 ? normalize(tg) : vec3(1.0, 0.0, 0.0);
     vec3 tv = vec3(tg.x * cos(vy) + tg.z * sin(vy), tg.y, -tg.x * sin(vy) + tg.z * cos(vy));
     tv = vec3(tv.x, tv.y * cos(vp) - tv.z * sin(vp), tv.y * sin(vp) + tv.z * cos(vp));
     vec3 tq = vec3(tv.x, -tv.y, tv.z) * 3.2;
-    return dSeg(P - tq + vec3(0.0, 0.0, 3.0), P + tq + vec3(0.0, 0.0, 3.0), lost ? 0.0 : 1.0, wht ? D_INK : D_PAPER, 1.0);
+    return dSeg(P - tq + vec3(0.0, 0.0, 3.0), P + tq + vec3(0.0, 0.0, 3.0), lost ? 0.0 : 0.8, lineC, 1.0);
+  }
+  // 面の縁(横から見える所): 縁に沿う短い線で なぞる(四角の段々の縁にしない)
+  if (abs(nv.z) < 0.2) {
+    vec3 rt = normalize(cross(nv, vec3(0.0, 0.0, 1.0)) + vec3(1e-5, 0.0, 0.0));
+    vec3 rq = vec3(rt.x, -rt.y, 0.0) * 3.0;
+    return dSeg(P - rq + vec3(0.0, 0.0, 2.0), P + rq + vec3(0.0, 0.0, 2.0), lost ? 0.0 : 0.85, lineC, 1.0);
   }
   float qs = 0.022 * Sg; // 面は隙間なく(1粒の受け持つ面積の 2倍ほどを覆う)
-  return dDot(P, vec2(lost ? 0.0 : qs * (wht ? 1.0 : 1.25)), 0.0, wht ? D_PAPER : D_INK);
+  return dDot(P, vec2(lost ? 0.0 : qs * (wht ? 1.0 : 1.2)), 0.0, fillC);
 }
 DP d4D(float t){ if (uRing4 > 0.5) return d4DRing(t); if (uLab4 > 0.5) return d4DLab(t); return d4DTiger(t); } // (構造体の三項演算子は使えない)
 // ---- 4次元の輪を、管として描く(本人の参照: 格子の線を引いた管の結び目。黒い管に白い格子、白い管に黒い格子、模様の入った管)。
@@ -2748,8 +2770,11 @@ DP dGaskDive(float t){
   float Z = min(uView.x, uView.y) / 0.62 * exp(GKLN * uGaskN.z);
   float ang = uView.x > uView.y ? 1.5708 : 0.0; // 28°の傾きは やめた(本人 2026-11-28)。横長の画面では、網の すき間が長い辺に沿うよう 90°
   vec2 ro = vec2(cos(ang), sin(ang));
-  float life = 2.4, cyc = uTime / life + hsh(uint(gI) * 13U + 5U), k = floor(cyc), a = fract(cyc);
-  float grow = exp(uGaskN.w * a * life);
+  // 2026-11-29 本人「拡大する時、急に動きが変わる」: 粒の一生を時間で数え、生まれた所からの広がりを「いまの速さ × 年齢」で出していたので、
+  // 速さが変わった瞬間(潜りはじめ・指で払った時)に、全部の粒が網の上で いっせいに ずれた。一生を潜った深さで数え、広がりは潜った分そのもの(網に貼りついて動く)
+  float hz = hsh(uint(gI) * 13U + 5U), mG = 2.9;
+  float cyc = uGaskN.y * mG + hz, k = floor(cyc), a = fract(cyc);
+  float grow = exp(GKLN * (uGaskN.y - (k - hz) / mG));
   // 置く場所を選ぶ: 画面に一様に置くと、粒の大半が大きな円(穴)に入って帯ばかり濃くなり、小さな円が欠けた。
   // 生まれた時の円の大きさが大きいほど、別の場所に置き直す(3回まで)。生まれた時で決めるので、一生のあいだ同じ場所に留まる(ちらつかない)
   vec2 nf, nrm, S0, tg; float Ln, Rs = -1.0; vec4 M0, M1; bool f;
@@ -2873,9 +2898,13 @@ DP dObj(float t, float kt, float th4){
   // 移るとき、稜線は縮んで丸い粒になり、立体の軸のまわりを少し巡りながら、近いところへ飛んで、B の稜線に伸びて組み直る。粒ごとに少しずつずれて、全体が いっしょに動く。
   float spA = max(-2.0 * uObjM2.y, 0.2), spB = max(-2.0 * uObjM2.z, 0.2);
   vec3 ma = (a0 + a1) * 0.5, mb = (b0 + b1) * 0.5;
-  // 全部が同時に飛ぶと、途中が白い雲の塊になった(2026-11-29 確認)。ヒルベルト曲線の順に、かたまりごとに少しずつ ほどけて飛ぶ(1粒の飛ぶ間は全体の 35%)
-  float rk = float(j) / float(${NU} * NVi);
-  float m = clamp((uObjM.x - 0.58 * rk - 0.07 * hsh(uint(gI) * 29U + 7U)) / 0.35, 0.0, 1.0);
+  // 飛ぶ順番: 起点(タップした所。ひとりでに移るときは機材の真ん中)から広がる波。全部が同時に飛ぶと途中が白い雲の塊に、
+  // 番号の順(ヒルベルト曲線)では 4つの かたまりに見えた。波の縁は、ゆるい ゆらぎで ぎざぎざにする(輪が きれいな円にならないように)
+  float pr9; vec3 sA9 = dObjS(dObjT(ma, clamp((ma.y - uObjM2.y) / spA, 0.0, 1.0), th4, pr9), pr9, uObjM3.x);
+  float wd = length(sA9.xy - uObjM3.zw) / max(uView.x, uView.y);
+  float nz = 0.5 + 0.25 * sin(ma.x * 7.1 + ma.y * 3.3) + 0.25 * sin(ma.z * 6.3 - ma.y * 5.7 + 1.3);
+  float st = 0.55 * smoothstep(0.0, 0.62, wd) + 0.1 * nz + 0.05 * hsh(uint(gI) * 29U + 7U); // 最大 0.7(+ 飛ぶ間 0.3 = 1)
+  float m = clamp((uObjM.x - st) / 0.3, 0.0, 1.0);
   m = m * m * (3.0 - 2.0 * m);
   float fl = sin(3.14159265 * m);                                              // 飛んでいる間 1(両端で 0)
   float sh = 1.0 - smoothstep(0.0, 0.3, m) * (1.0 - smoothstep(0.7, 1.0, m)); // 稜線の長さ(飛ぶ間は 粒)
@@ -3838,35 +3867,26 @@ export function mountMorph(root: HTMLElement) {
     sb.order.sort((a, bb) => key[a] - key[bb]);
     return sb;
   };
-  // 3次元のヒルベルト曲線の上の順番(各軸 b ビット。Skilling 2004 の、軸の値 → 転置 → 1本の数)
-  const hil3 = (x: number, y: number, z: number, b: number) => {
-    const X = [x, y, z];
-    for (let Q = 1 << (b - 1); Q > 1; Q >>= 1) {
-      const P = Q - 1;
-      for (let i = 0; i < 3; i++) { if (X[i] & Q) X[0] ^= P; else { const t = (X[0] ^ X[i]) & P; X[0] ^= t; X[i] ^= t; } }
-    }
-    for (let i = 1; i < 3; i++) X[i] ^= X[i - 1];
-    let t = 0;
-    for (let Q = 1 << (b - 1); Q > 1; Q >>= 1) if (X[2] & Q) t ^= Q - 1;
-    for (let i = 0; i < 3; i++) X[i] ^= t;
-    let h = 0;
-    for (let j = b - 1; j >= 0; j--) for (let i = 0; i < 3; i++) h = h * 2 + ((X[i] >> j) & 1);
-    return h;
-  };
-  // 2026-11-29 本人「3Dのやつ上から雑なトランジションのように変わる。せっかく粒子使ってるのに上手く機能してない」:
-  // 稜線を、立体ごとの箱(上下・左右・前後をそろえた 0〜1)の中の、ヒルベルト曲線の順に並べ替える。どの立体も同じ順なので、
-  // 粒の番号が同じ稜線どうしは、同じあたり(上は上へ、左は左へ)にある。移るときは、粒が近いところへ飛んで組み直る。
+  // 2026-11-29 本人「3Dの遷移やっぱり違和感ある、なんで1/4づつなんだ」: ヒルベルト曲線の順に飛ばすと、曲線の大きな曲がり目で画面が 4つの かたまりに分かれて見えた。
+  // 稜線の並びは「高さ → 軸のまわりの向き → 軸からの遠さ」の分位にした(どの機材も同じ並べ方)。粒の番号が同じ稜線どうしは、
+  // 上は上、正面は正面、外側は外側にある(高さ 40段 × 向き 25区 × 遠さの順)。飛ぶ順番は番号ではなく、波で決める(シェーダー)。
   const sortEdges = (sb: Subj, ef: Float32Array) => {
-    const NE = ef.length / 6, key = new Float64Array(NE), ix = new Uint32Array(NE), B = 10, S = (1 << B) - 1;
-    const hx = Math.max(sb.hx, 1e-3), hz = Math.max(sb.hz, 1e-3), lo = sb.lo, sy = Math.max(sb.hi - sb.lo, 1e-3);
-    const q = (v: number) => Math.max(0, Math.min(S, Math.floor(v * S)));
-    for (let i = 0; i < NE; i++) {
-      const o = i * 6, mx = (ef[o] + ef[o + 3]) * 0.5, my = (ef[o + 1] + ef[o + 4]) * 0.5, mz = (ef[o + 2] + ef[o + 5]) * 0.5;
-      key[i] = hil3(q(mx / hx * 0.5 + 0.5), q((my - lo) / sy), q(mz / hz * 0.5 + 0.5), B); ix[i] = i;
-    }
-    ix.sort((a, b) => key[a] - key[b]);
+    const NE = ef.length / 6, NB = 40, NA = 25;
+    const mx = new Float32Array(NE), my = new Float32Array(NE), mz = new Float32Array(NE);
+    for (let i = 0; i < NE; i++) { const o = i * 6; mx[i] = (ef[o] + ef[o + 3]) * 0.5; my[i] = (ef[o + 1] + ef[o + 4]) * 0.5; mz[i] = (ef[o + 2] + ef[o + 5]) * 0.5; }
+    const ix = Array.from({ length: NE }, (_, i) => i);
+    ix.sort((a, b) => my[a] - my[b]);
     const out = new Float32Array(ef.length);
-    for (let i = 0; i < NE; i++) out.set(ef.subarray(ix[i] * 6, ix[i] * 6 + 6), i * 6);
+    let w = 0;
+    for (let bnd = 0; bnd < NB; bnd++) {
+      const b0 = Math.floor((bnd * NE) / NB), b1 = Math.floor(((bnd + 1) * NE) / NB);
+      const band = ix.slice(b0, b1).sort((a, b) => Math.atan2(mz[a], mx[a]) - Math.atan2(mz[b], mx[b]));
+      for (let k = 0; k < NA; k++) {
+        const c0 = Math.floor((k * band.length) / NA), c1 = Math.floor(((k + 1) * band.length) / NA);
+        const cell = band.slice(c0, c1).sort((a, b) => Math.hypot(mx[a], mz[a]) - Math.hypot(mx[b], mz[b]));
+        for (const e of cell) out.set(ef.subarray(e * 6, e * 6 + 6), (w++) * 6);
+      }
+    }
     return out;
   };
   const getEdges = (sb: Subj, name: string) => fetch(`${objBase}${name}.edges.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null).then((eb) => {
@@ -3974,7 +3994,7 @@ export function mountMorph(root: HTMLElement) {
   }
   let gkTau = -0.6, gkTauV = 0.1333, gkKey = '', gkRes: [number, number] = [0, 0];
   const GASK_OLD = new URLSearchParams(location.search).get('gask') === 'old', GKLN_JS = Math.log(321.9968943799899);
-  let gkPh = 0, gkSpd = GKLN_JS / 7.0;
+  let gkPh = 0, gkD = 0, gkSpd = GKLN_JS / 7.0;
   // 網を見る位置(z = 1/w の平面): 75〜84秒で、網の中ほどから、2つの大きな円の接点(0)へ寄る。前後は止める(粒の受け持ちを変えない)
   function gaskFrame(tv: number, ngr: number): [number, number] {
     const m = Math.min(vw, vh), u0 = Math.min(1, Math.max(0, (tv - 75) / 9)), u = u0 * u0 * (3 - 2 * u0);
@@ -4679,10 +4699,11 @@ export function mountMorph(root: HTMLElement) {
     return sb;
   };
   const carSet = (a: Subj) => { carA = a; carB = carNext(a); applySubject(carA, carB); carM = 0; carMorph = false; carLast = now; carSwapAt = now - 9; objYaw = 0.55; objYawV = 0; objPit = 0; };
-  const carGo = () => {
+  let carOX = -1, carOY = -1; // 移る波の起点(画面の座標)。タップした所。ひとりでに移るときは、機材の真ん中
+  const carGo = (ox = -1, oy = -1) => {
     if (carMorph) { carQ = 1; return; }
     if (!carA || !carB || carB === carA) return;
-    carMorph = true; carM = 0;
+    carMorph = true; carM = 0; carOX = ox; carOY = oy;
   };
   // 画面のきまりを当てる要素(上の帯の文字・ロゴと、音のボタン)と、ファインダー(四隅の括弧・ピントの枠・録画の赤い点。字は使わない)
   let ruleInk = false, ruleMirror = false;
@@ -5164,7 +5185,7 @@ export function mountMorph(root: HTMLElement) {
     if (!drawing) return;
     drawing = false;
     // 機材の場面: 押してすぐ離した(タップ)なら、次の機材へ(長押しは分解図、なぞるは回す。押した瞬間に替えると、長押しでも替わってしまう)
-    if (devOn && e?.type === 'pointerup' && strayed < 8 && now - downT < 0.35) { const dl = devLoop(devT)[0]; if (dl >= 34.5 && dl < 39.6) carGo(); }
+    if (devOn && e?.type === 'pointerup' && strayed < 8 && now - downT < 0.35) { const dl = devLoop(devT)[0]; if (dl >= 34.5 && dl < 39.6) carGo(ptX, ptY); }
     stroke = false;
     idle = 0.9;
     // 描かずに押しただけなら、そこの作品をひらく。
@@ -5195,10 +5216,10 @@ export function mountMorph(root: HTMLElement) {
   let lpMode = -1, lpHome = -1, lpA = 0, lpTouch = false, lpPend = -1, lpSy = -1, lpSyT = 0; // lpHome: 最後に着いた所(0 = ヒーロー、1 = 情報の面)
   let lpLock: { to: number; until: number } | null = null;
   const lpGo = (to: number) => {
+    lpLock = { to, until: performance.now() + 1600 }; // 送り終わるまで(指が触れている間も)、行き先を決め直さない
     if (lpTouch) { lpPend = to; return; } // 指が触れている間は、離してから送る(指と取り合わない)
     const sy0 = window.scrollY;
     if ((to > 0 && sy0 >= to - 1) || (to === 0 && sy0 <= 1)) return; // もう着いている(強く払って、情報の面の先まで進んだときは、戻さない)
-    lpLock = { to, until: performance.now() + 1400 };
     const ln = (window as any).__lenis;
     if (ln) ln.scrollTo(to, { duration: 0.8 }); // ふつうのページの なめらかな送り(Lenis)が動いているときは、それで送る(取り合わない)
     else window.scrollTo({ top: to, behavior: 'smooth' });
@@ -5258,6 +5279,21 @@ export function mountMorph(root: HTMLElement) {
     if (tId < 0) return;
     for (const x of Array.from(e.changedTouches)) if (x.identifier === tId) { tId = -1; onUp(); }
   };
+  // 2026-11-29 本人「まだ下にやると works に意図せず移ってしまう」: ヒーローの上では、指はページを送らない(touch-action: none。描くだけ)。
+  // 情報の面へ進むのは、上へ素早く払ったときだけ(縦に 90px 以上・横の 2.2倍以上・0.32秒以内、または 離す直前の速さが 0.8px/ms 以上)。ゆっくりの線は、どの向きでも描くだけ
+  let flX = 0, flY = 0, flT = 0, flId = -1, flLX = 0, flLY = 0, flLT = 0, flPX = 0, flPY = 0, flPT = 0;
+  // 時刻は、出来事の起きた時刻(e.timeStamp)で測る(描画が重くて、処理が遅れても、払った速さを取り違えない)
+  const onFS = (e: TouchEvent) => { const q = e.changedTouches[0]; if (!q || flId >= 0) return; flId = q.identifier; flX = flLX = flPX = q.clientX; flY = flLY = flPY = q.clientY; flT = flLT = flPT = e.timeStamp; };
+  const onFM = (e: TouchEvent) => { for (const q of Array.from(e.touches)) if (q.identifier === flId) { flPX = flLX; flPY = flLY; flPT = flLT; flLX = q.clientX; flLY = q.clientY; flLT = e.timeStamp; } };
+  const onFE = (e: TouchEvent) => {
+    for (const q of Array.from(e.changedTouches)) {
+      if (q.identifier !== flId) continue;
+      flId = -1;
+      const tn = e.timeStamp, dx = q.clientX - flX, dy = q.clientY - flY, dur = tn - flT;
+      const vy = (q.clientY - flPY) / Math.max(1, tn - flPT); // 離す直前の縦の速さ(px/ms)
+      if (lpMode === 0 && dy < -90 && Math.abs(dy) > 2.2 * Math.abs(dx) && (dur < 320 || vy < -0.8)) { lpMode = 1; if (drawing) onUp(); lpGo(lpZ); }
+    }
+  };
   // 指が画面のどこかに触れている間(情報の面の上でも)は、自動の送りをしない。指で つかんだら、自動の送りは止める
   const onWTS = () => { lpTouch = true; lpLock = null; };
   const onWTE = (e: TouchEvent) => { if (e.touches.length === 0) lpTouch = false; }; // 離したあと、慣性の送りが止まってから送る(下の 毎コマ)
@@ -5266,6 +5302,9 @@ export function mountMorph(root: HTMLElement) {
     window.addEventListener('touchend', onWTE, { passive: true });
     window.addEventListener('touchcancel', onWTE, { passive: true });
     root.addEventListener('touchstart', onTS, { passive: true });
+    root.addEventListener('touchstart', onFS, { passive: true });
+    root.addEventListener('touchmove', onFM, { passive: true });
+    root.addEventListener('touchend', onFE, { passive: true });
     root.addEventListener('touchmove', onTM, { passive: true });
     root.addEventListener('touchend', onTE, { passive: true });
     root.addEventListener('touchcancel', onTE, { passive: true });
@@ -5303,6 +5342,7 @@ export function mountMorph(root: HTMLElement) {
       const sy = window.scrollY;
       if (Math.abs(sy - lpSy) > 0.5) { lpSy = sy; lpSyT = t; }
       if (lpPend >= 0 && !lpTouch && t - lpSyT > 120) { const to = lpPend; lpPend = -1; lpGo(to); } // 指を離して、慣性が止まってから(iPhone の慣性と取り合わない)
+      if (lpLock && lpPend >= 0) lpLock.until = Math.max(lpLock.until, t + 400); // 送りを待っている間は、決め直さない
       if (lpLock && (Math.abs(sy - lpLock.to) < 2 || t > lpLock.until)) lpLock = null;
       if (lpHome < 0) { lpHome = sy > lpZ * 0.5 ? 1 : 0; lpMode = lpHome; lpA = lpMode; }
       if (sy <= 1) lpHome = 0; else if (sy >= lpZ - 1) lpHome = 1;
@@ -5582,8 +5622,11 @@ export function mountMorph(root: HTMLElement) {
         // 流れ: 縦に払うと速さが変わる(上へ払うと速く潜り、下へ払うと逆に湧き出す)。2026-11-29: 潜る絵は、切った 84秒から潜りはじめ、深さは積み重ねる(0〜1 で回さない)
         const k0 = KLEIN_OLD ? 87 : 84, kv0 = KLEIN_OLD ? 0.16 : 0.32;
         if (dtl >= k0) {
-          if (drawing) kFlowV = Math.max(-1.2, Math.min(1.6, kFlowV - penVY * 0.004));
-          else kFlowV += (kv0 + (KLEIN_OLD ? 0.5 : 0.7) * Math.min(1, Math.max(0, (dtl - 95) / 3)) - kFlowV) * (1 - Math.exp(-dt / 1.5)); // 終わりの3秒は、吸い込まれる流れが速まる
+          // 2026-11-29 本人「操作可能範囲がよくわからない」: 払うと速さだけが変わる(間接)のをやめ、指に合わせて潜る/戻るようにした(画面の高さ分なぞると 3倍)。離すと惰性で、いつもの速さへ
+          const Lr = Math.max(0.02, -Math.log(Math.max(1e-6, Math.hypot(lm[0], lm[1]))));
+          if (drawing && !KLEIN_OLD) { const v = Math.max(-6, Math.min(6, ((-penVY / Math.max(dt, 1e-3)) * (Math.log(3) / vh)) / Lr)); kFlowV += (v - kFlowV) * (1 - Math.exp(-dt / 0.05)); }
+          else if (drawing) kFlowV = Math.max(-1.2, Math.min(1.6, kFlowV - penVY * 0.004));
+          else kFlowV += (kv0 + (KLEIN_OLD ? 0.5 : 0.7) * Math.min(1, Math.max(0, (dtl - 95) / 3)) - kFlowV) * (1 - Math.exp(-dt / (KLEIN_OLD ? 1.5 : 1.2))); // 終わりの3秒は、吸い込まれる流れが速まる
           kFlowS += kFlowV * dt;
           if (KLEIN_OLD) { kFlowS %= 1; if (kFlowS < 0) kFlowS += 1; }
         } else { kFlowS = 0; kFlowV = kv0; }
@@ -5592,10 +5635,15 @@ export function mountMorph(root: HTMLElement) {
       // アポロニウスの網(72〜87秒)。2026-11-28 から: 無限へ潜りつづける(縦に払うと、潜る速さが変わる。逆にも)。以前の流れ込む網は ?gask=old
       if (devOn && three && !GASK_OLD && dtl >= 71 && dtl < 88) {
         const base = GKLN_JS / 7.0; // 7秒で λ 倍(≈ 322倍)
-        if (drawing && dtl >= 75 && dtl < 84) gkSpd = Math.max(-0.8, Math.min(2.6, gkSpd - penVY * 0.012));
-        else gkSpd += (base - gkSpd) * (1 - Math.exp(-dt / 1.5));
-        if (dtl >= 74) { gkPh = (gkPh + (gkSpd * dt) / GKLN_JS) % 1; if (gkPh < 0) gkPh += 1; }
-        gl!.uniform4f(uGaskN, -1, 0, gkPh, gkSpd);
+        // 指で縦に なぞると、指に合わせて潜る/戻る(画面の高さ分なぞると 3倍)。離すと、その速さから ゆっくり いつもの速さへ(惰性)。
+        // 以前は、払うと速さだけが変わった(どこを どう触ると何が起きるのか分かりにくい)
+        if (drawing && dtl >= 75 && dtl < 84) { const v = Math.max(-3, Math.min(3, (-penVY / Math.max(dt, 1e-3)) * (Math.log(3) / vh))); gkSpd += (v - gkSpd) * (1 - Math.exp(-dt / 0.05)); }
+        else gkSpd += (base - gkSpd) * (1 - Math.exp(-dt / 1.2));
+        const ease = Math.min(1, Math.max(0, (dtl - 73.5) / 2.5)), gkE = ease * ease * (3 - 2 * ease); // 潜りはじめは ゆっくり(以前は 74秒で いきなり全速)
+        if (dtl < 72) gkD = 0;
+        gkD += (gkSpd * gkE * dt) / GKLN_JS;
+        gkPh = gkD % 1; if (gkPh < 0) gkPh += 1;
+        gl!.uniform4f(uGaskN, -1, gkD, gkPh, gkSpd * gkE);
       } else if (devOn && three && dtl >= 71 && dtl < 88) {
         if (dtl >= 75 && dtl < 84) {
           if (drawing) gkTauV = Math.max(-0.6, Math.min(0.9, gkTauV - penVY * 0.0025));
@@ -5646,7 +5694,7 @@ export function mountMorph(root: HTMLElement) {
         gl!.uniform4f(u.objM, carM, objEx, objYaw, objPit);
         const drawP = dtl < 36.0 ? 0 : Math.min(1, Math.max(0, (now - objDrawT) / 2.2)); // 描き上がり(0..1)
         gl!.uniform4f(u.objM2, sA, carA ? baseOf(carA) : wrap[0], carB ? baseOf(carB) : wrap[0], dtl >= 39.6 ? 1 : drawP);
-        gl!.uniform4f(u.objM3, carA ? sizeOf(carA) : 300, carB ? sizeOf(carB) : 300, 0, 0);
+        gl!.uniform4f(u.objM3, carA ? sizeOf(carA) : 300, carB ? sizeOf(carB) : 300, carOX >= 0 ? carOX : vw * 0.5, carOY >= 0 ? carOY : vh * 0.5);
       }
       // 画面のきまり: 紙の間は、上の文字が墨で刷られる / 立体の間は、画面がカメラのファインダーになる /
       // 4次元で半回転した後は、画面の文字も鏡になる / 無限の流れの間は、画面が自分自身を中に含む
@@ -5856,6 +5904,9 @@ export function mountMorph(root: HTMLElement) {
     cancelAnimationFrame(raf);
     if (lpSec) {
       root.removeEventListener('touchstart', onTS);
+      root.removeEventListener('touchstart', onFS);
+      root.removeEventListener('touchmove', onFM);
+      root.removeEventListener('touchend', onFE);
       window.removeEventListener('touchstart', onWTS);
       window.removeEventListener('touchend', onWTE);
       window.removeEventListener('touchcancel', onWTE);
