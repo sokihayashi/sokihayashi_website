@@ -1979,7 +1979,7 @@ DP dPlant(float t, float kt){
   bend += vec2(sin(tm * (0.8 + 0.9 * hk) + float(k) * 2.1), cos(tm * (0.6 + 0.7 * hk) + float(k) * 1.3) * 0.5) * (0.05 + 0.07 * hs);
   if (!burn) { vec2 w = dWind(sMid); bend += vec2(w.x, w.y * 0.7) * (0.75 + 0.6 * hs); } // 指の風(ばね): 背の高い株ほど大きく しなる
   // タップ: 押した株は大きく しなって揺れ戻り、綿毛の株は綿毛が飛ぶ(5秒ほどで元に戻る)
-  float burst = -1.0;
+  float burst = t > 34.4 && !burn ? (t - 34.4) * 1.3 : -1.0; // 切る前に、綿毛が飛んでいく
   for (int i = 0; i < 4; i++) {
     float ag = uTime - uShk[i].z;
     if (burn || uShk[i].w <= 0.0 || ag < 0.0 || ag > 6.0) continue;
@@ -2506,36 +2506,46 @@ DP dKSphereOld(float t){ // (使っていない: 画面の中央に浮かぶ小�
 }
 // 球(84〜99秒。参照 REF 3 の点の膜): 画面より大きな球の、手前の半球だけ。縁(ふち)が画面を斜めに横切り、上は闇。
 // 球の面には一様な点(面の明暗は点の密度で: 縁ほど点が重なって明るい)。その上を、クライン群の極限集合の点が、吸い込む点へ流れつづける。
+// 2026-11-28 本人「点々感ちょっと微妙」「回るだけは弱い」「無限の図形なら、無限に近づくような表現」:
+// 球の面も、極限集合も、点ではなく「流れの向きの短い画」で描く。流れ(ロクソドローム)は、吸い込む点へ渦を巻いて入っていく。
+// 面の粒は、それぞれ一生(2秒)のあいだ流れに乗って進み、生まれ直す(面が渦の流れそのものになる)。球は自転しない(なぞると回る)。
+// 場面のあいだ、吸い込む点へ向かって寄りつづける(終わりに近いほど速く)。
 DP dKSphere(float t){
   float Rs = max(uView.x, uView.y) * 0.75;
   vec2 C = uView * vec2(0.95, 1.0); // 球の中心は右下の外。縁が、左から右上へ画面を斜めに横切る
   bool surf = dvA1 < 0.5;
-  vec3 P;
-  if (surf) { // 面の点: フィボナッチの格子(一様)
-    float i = float(gI), n = float(${NU} * NVi - 4096);
-    float y = 1.0 - 2.0 * (i + 0.5) / n, rr = sqrt(max(1.0 - y * y, 0.0)), ph = i * 2.3999632;
-    P = vec3(rr * cos(ph), y, rr * sin(ph));
-  } else P = kSphere(kFlow(kPoint(), uKl.z));
-  // 向き: 吸い込む点(生成元 a の不動点)が、見えている面の左上に来るように回す。そのまわりを ゆっくり回り、なぞると回る
+  vec2 z; float fade = 1.0;
+  if (surf) { // 面の粒: 球の上に一様に生まれ、流れに乗って吸い込む点へ進む
+    float life = 2.0, cyc = uTime / life + hsh(uint(gI) * 17U + 3U), k = floor(cyc), a = fract(cyc);
+    float y = 1.0 - 2.0 * hsh(uint(gI) * 7U + uint(k) * 101U), rr = sqrt(max(1.0 - y * y, 0.0)), ph = 6.2831853 * hsh(uint(gI) * 11U + uint(k) * 59U);
+    vec3 S = vec3(rr * cos(ph), rr * sin(ph), y);
+    z = 1.6 * S.xy / max(1.0 - S.z, 1e-3);
+    z = kFlow(z, a * 0.35);
+    fade = smoothstep(0.0, 0.15, a) * (1.0 - smoothstep(0.8, 1.0, a));
+  } else z = kFlow(kPoint(), uKl.z);
+  vec3 P = kSphere(z), P1 = kSphere(kFlow(z, 0.025)); // 流れの向きに、少し先の点
+  // 向き: 吸い込む点(生成元 a の不動点)が、見えている面の左上に来るように回す。なぞると、吸い込む点を軸に回る(ひとりでには回らない)
   vec3 Ps = kSphere(uKf.xy), T = normalize(vec3(-0.42, 0.48, 0.77));
   vec3 ax = cross(Ps, T); float sa = length(ax), ca = dot(Ps, T);
-  if (sa > 1e-4) { ax /= sa; P = P * ca + cross(ax, P) * sa + ax * dot(ax, P) * (1.0 - ca); }
-  float sp = t * 0.05 + uRot4.x * 0.35; // 吸い込む点を軸に回る
+  if (sa > 1e-4) { ax /= sa; P = P * ca + cross(ax, P) * sa + ax * dot(ax, P) * (1.0 - ca); P1 = P1 * ca + cross(ax, P1) * sa + ax * dot(ax, P1) * (1.0 - ca); }
+  float sp = uRot4.x * 0.35;
   P = P * cos(sp) + cross(T, P) * sin(sp) + T * dot(T, P) * (1.0 - cos(sp));
-  float dv = dsm(88.0, 91.0, t), zd = 1.0 + 0.3 * dv; // 終わりの3秒は、吸い込む点の方へ少し寄る
+  P1 = P1 * cos(sp) + cross(T, P1) * sin(sp) + T * dot(T, P1) * (1.0 - cos(sp));
+  float zd = exp(0.12 * max(t - 79.0, 0.0) + 0.25 * dsm(88.0, 91.0, t)); // 吸い込む点へ、寄りつづける
   vec2 sk = C + T.xy * vec2(1.0, -1.0) * Rs;
-  vec2 xy = C + vec2(P.x, -P.y) * Rs;
-  xy = sk + (xy - sk) * zd;
-  vec3 Pk = vec3(xy, P.z * Rs * 0.5);
+  vec2 xy = sk + (C + vec2(P.x, -P.y) * Rs - sk) * zd, xy1 = sk + (C + vec2(P1.x, -P1.y) * Rs - sk) * zd;
+  vec3 Pk = vec3(xy, P.z * Rs * 0.5), Pk1 = vec3(xy1, P1.z * Rs * 0.5);
   float front = P.z;
-  float vis = smoothstep(-0.05, 0.1, front); // 奥の半球は見せない
+  float vis = smoothstep(-0.05, 0.1, front) * fade; // 奥の半球は見せない
   float trc = dTrace(dScr(Pk), 70.0);
-  float lit = max(dot(P, normalize(vec3(-0.5, 0.55, 0.67))), 0.0); // 左上の手前から照らす(点の大きさと明るさで丸みを出す)
-  vec3 col; float sz;
-  if (surf) { col = vec3(0.93, 0.89, 0.8) * (0.16 + 0.8 * lit * lit) * vis; sz = (0.75 + 1.0 * lit) * (1.0 + 0.6 * trc); } // 光の当たる所ほど、点が大きく明るい(REF 3 の点の膜)
-  else { col = mix(vec3(0.7, 0.76, 1.0) * 0.3, vec3(1.0, 0.95, 0.86) * 0.6, max(front, 0.0)) * vis * (1.0 + 1.2 * trc) * mix(0.3, 1.0, dsm(77.6, 79.2, t)); sz = mix(1.0, 1.6, max(front, 0.0)) * (1.0 + 1.0 * trc); } // 組み上がる間は控えめ(点が重なって白く飽和しない)
-  DP d = dDot(Pk, vec2(sz * vis), 1.0, col);
-  d.a = 0.0;
+  float lit = max(dot(P, normalize(vec3(-0.5, 0.55, 0.67))), 0.0);
+  vec2 dv = Pk1.xy - Pk.xy; float L = length(dv);
+  vec2 dir = L > 1e-4 ? dv / L : vec2(1.0, 0.0);
+  float hl = surf ? clamp(L * 2.2, 1.0, 15.0) : clamp(L * 0.5, 0.6, 3.5); // 面は長めの流線(点々に見えないよう)
+  vec3 col; float wd;
+  if (surf) { col = vec3(0.93, 0.89, 0.8) * (0.14 + 0.75 * lit * lit) * vis * (1.0 + 0.8 * trc); wd = 0.5 + 0.35 * lit; }
+  else { col = mix(vec3(0.7, 0.76, 1.0) * 0.3, vec3(1.0, 0.95, 0.86) * 0.6, max(front, 0.0)) * 0.55 * vis * (1.0 + 1.2 * trc) * mix(0.3, 1.0, dsm(77.6, 79.2, t)); wd = mix(0.45, 0.7, max(front, 0.0)); } // 重なって白い塊に飽和しないよう、明るさを抑えた
+  DP d = dSeg(vec3(Pk.xy - dir * hl, Pk.z), vec3(Pk.xy + dir * hl, Pk.z), wd * step(0.01, vis), col, 0.0);
   return d;
 }
 // ---- 4次元の先(2): アポロニウスの網を、円の輪で描く(72〜87秒。REF 12 の強さ: 画面から はみ出す巨大な弧、太い帯から細い線、粒の4段階)。
@@ -2543,7 +2553,81 @@ DP dKSphere(float t){
 // 輪の太さは、半径に比例(大きな円ほど太い帯。小さな円は細い線、さらに小さな円は粒)。輪の一覧は毎コマ JS が作り、粒は自分の番号で、どの輪の、どの小片かを引く。
 vec4 gkT(int j){ return texelFetch(uGask, ivec2(j % 1024, j / 1024), 0); }
 float gkRank = 0.0; // この粒の輪の大きさの順(0 = いちばん大きい輪 … 1 = 粒)
+// ---- 無限へ潜る網(2026-11-28 本人「無限の図形なら、無限に近づくような表現が必要」「最小単位が単純な円や四角なのは良くない」)。
+// アポロニウスの網(帯 |Re w| ≤ 1 に並べた形)を、自分自身へ写す変換 h(双対の円 (1, 1) と (−1, 5) での反転の合成。倍率 λ ≈ 322)の
+// 不動点 p へ、終わりなく寄りつづける。ζ = (w − p)/(w − q) では h は ζ → λζ(ただの拡大)なので、λ 倍まで寄ると絵はぴったり元に戻る(つなぎ目なし)。
+// 粒は、画面の上の自分の場所から、その場所を含む円(穴)の縁へ移り、縁に沿った短い弧の画になる(点にしない)。大きな円ほど、縁の内側に太い帯を、同心の画で刷る。
+// 自分の場所は、寄る速さと同じ速さで外へ流れる(= 網の上の同じ所に留まる)。2.4秒ごとに生まれ直す。
+const vec2 GKP = vec2(-0.894427191, 4.788854382), GKQ = vec2(0.894427191, 1.211145618);
+const float GKLN = 5.774542;
+vec2 gcm(vec2 a, vec2 b){ return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 gcd(vec2 a, vec2 b){ return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / max(dot(b, b), 1e-30); }
+vec2 gcj(vec2 a){ return vec2(a.x, -a.y); }
+void gkPush(vec2 na, vec2 nb, vec2 nc, vec2 nd, bool e, inout vec4 M0, inout vec4 M1, inout bool f){ // いまの写像を、N で後ろから包む
+  vec2 a = M0.xy, b = M0.zw, c = M1.xy, d = M1.zw;
+  if (e) { a = gcj(a); b = gcj(b); c = gcj(c); d = gcj(d); }
+  M0 = vec4(gcm(na, a) + gcm(nb, c), gcm(na, b) + gcm(nb, d));
+  M1 = vec4(gcm(nc, a) + gcm(nd, c), gcm(nc, b) + gcm(nd, d));
+  f = f != e;
+}
+vec2 gkInv(vec4 M0, vec4 M1, bool f, vec2 u){ vec2 z = gcd(gcm(M1.zw, u) - M0.zw, M0.xy - gcm(M1.xy, u)); return f ? gcj(z) : z; }
+vec2 gkScr(vec2 w, float Z, vec2 ro){ vec2 zt = gcm(gcd(w - GKP, w - GKQ), ro) * Z; return uView * 0.5 + vec2(zt.x, -zt.y); }
+vec2 gkW(vec2 s, float Z, vec2 ro){ vec2 zt = gcd(vec2(s.x - uView.x * 0.5, uView.y * 0.5 - s.y) / Z, ro); return gcd(GKP - gcm(zt, GKQ), vec2(1.0, 0.0) - zt); }
+// 1つの場所を折りたたみ、その場所を含む穴の縁(画面の上の点・縁の向き・円の大きさ・内への尺度)を返す
+float gkHole(vec2 s, float Z, vec2 ro, out vec2 nf, out vec2 nrm, out vec2 S0, out vec2 tg, out float Ln, out vec4 M0, out vec4 M1, out bool f){
+  vec2 w = gkW(s, Z, ro);
+  M0 = vec4(1.0, 0.0, 0.0, 0.0); M1 = vec4(0.0, 0.0, 1.0, 0.0); f = false; int kind = 2;
+  for (int i = 0; i < 30; i++) { // 折りたたむ(帯の繰り返し・左右と上下の鏡・双対の円の反転)。行き先は、円 |w| = 1 の内(穴)か、帯の外(直線の縁)
+    if (abs(w.x) > 1.0) { kind = 1; break; }
+    float n = floor((w.y + 1.0) * 0.5);
+    if (n != 0.0) { w.y -= 2.0 * n; gkPush(vec2(1.0, 0.0), vec2(0.0, -2.0 * n), vec2(0.0), vec2(1.0, 0.0), false, M0, M1, f); }
+    if (w.x < 0.0) { w.x = -w.x; gkPush(vec2(-1.0, 0.0), vec2(0.0), vec2(0.0), vec2(1.0, 0.0), true, M0, M1, f); }
+    if (w.y < 0.0) { w.y = -w.y; gkPush(vec2(1.0, 0.0), vec2(0.0), vec2(0.0), vec2(1.0, 0.0), true, M0, M1, f); }
+    vec2 dv = w - vec2(1.0); float r2 = dot(dv, dv);
+    if (r2 < 1.0) { w = vec2(1.0) + dv / r2; gkPush(vec2(1.0, 1.0), vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 1.0), true, M0, M1, f); continue; }
+    kind = 0; break;
+  }
+  if (kind == 2) { nf = w; nrm = vec2(1.0, 0.0); S0 = s; tg = vec2(1.0, 0.0); Ln = 1.0; return -1.0; }
+  float th = atan(w.y, w.x), sg = w.x < 0.0 ? -1.0 : 1.0;
+  nf = kind == 0 ? vec2(cos(th), sin(th)) : vec2(sg, w.y);
+  nrm = kind == 0 ? -nf : vec2(sg, 0.0); // 穴の内へ向く
+  vec2 qa = kind == 0 ? vec2(cos(th - 0.3), sin(th - 0.3)) : nf - vec2(0.0, 0.5), qb = kind == 0 ? vec2(cos(th + 0.3), sin(th + 0.3)) : nf + vec2(0.0, 0.5);
+  S0 = gkScr(gkInv(M0, M1, f, nf), Z, ro);
+  vec2 Sa = gkScr(gkInv(M0, M1, f, qa), Z, ro), Sb = gkScr(gkInv(M0, M1, f, qb), Z, ro);
+  float la = length(Sa - S0), lb = length(Sb - S0), lc = length(Sb - Sa);
+  float ar = abs((Sa.x - S0.x) * (Sb.y - S0.y) - (Sa.y - S0.y) * (Sb.x - S0.x));
+  tg = Sb - Sa; tg = dot(tg, tg) > 1e-8 ? normalize(tg) : vec2(1.0, 0.0);
+  Ln = length(gkScr(gkInv(M0, M1, f, nf + nrm * 0.01), Z, ro) - S0) / 0.01;
+  return ar > 1e-6 ? la * lb * lc / (2.0 * ar) : 1e5;
+}
+DP dGaskDive(float t){
+  float Z = min(uView.x, uView.y) / 0.62 * exp(GKLN * uGaskN.z);
+  float ang = 0.4887 + (uView.x > uView.y ? 1.5708 : 0.0);
+  vec2 ro = vec2(cos(ang), sin(ang));
+  float life = 2.4, cyc = uTime / life + hsh(uint(gI) * 13U + 5U), k = floor(cyc), a = fract(cyc);
+  float grow = exp(uGaskN.w * a * life);
+  // 置く場所を選ぶ: 画面に一様に置くと、粒の大半が大きな円(穴)に入って帯ばかり濃くなり、小さな円が欠けた。
+  // 生まれた時の円の大きさが大きいほど、別の場所に置き直す(3回まで)。生まれた時で決めるので、一生のあいだ同じ場所に留まる(ちらつかない)
+  vec2 nf, nrm, S0, tg; float Ln, Rs = -1.0; vec4 M0, M1; bool f;
+  for (int tr = 0; tr < 3; tr++) {
+    vec2 sb = (vec2(hsh(uint(gI) * 7U + uint(k) * 131U + uint(tr) * 977U), hsh(uint(gI) * 11U + uint(k) * 197U + uint(tr) * 613U)) * 1.1 - 0.05) * uView;
+    vec2 s = uView * 0.5 + (sb - uView * 0.5) * grow;
+    Rs = gkHole(s, Z, ro, nf, nrm, S0, tg, Ln, M0, M1, f);
+    float Rb = Rs / grow; // 生まれた時の大きさ
+    if (Rs > 0.0 && hsh(uint(gI) * 23U + uint(k) * 31U + uint(tr) * 7U) < min(1.0, 28.0 / max(Rb, 1.0))) break;
+  }
+  float band = min(0.045 * Rs, 0.03 * min(uView.x, uView.y)) * step(2.5, Rs);
+  float u = pow(hsh(uint(gI) * 29U + uint(k) * 7U), 1.7); // 縁ほど濃く
+  vec2 P = gkScr(gkInv(M0, M1, f, nf + nrm * (band * u / max(Ln, 1e-3))), Z, ro);
+  float fade = smoothstep(0.0, 0.12, a) * (1.0 - smoothstep(0.85, 1.0, a));
+  float hl = clamp(Rs * 0.22, 0.8, 6.0) * fade;
+  gkRank = clamp(1.0 - log(max(Rs, 1.0)) / log(500.0), 0.0, 1.0);
+  bool off = Rs < 1.5 || P.x < -40.0 || P.y < -40.0 || P.x > uView.x + 40.0 || P.y > uView.y + 40.0; // 画素より小さな円(縁が点の塵になる)は出さない
+  if (off) { DP d = dDot(vec3(uView * 0.5, 0.0), vec2(0.0), 0.0, D_PAPER); return d; }
+  return dSeg(vec3(P - tg * hl, 0.0), vec3(P + tg * hl, 0.0), 0.55 * fade, D_PAPER, 1.0);
+}
 DP dGask(float t){
+  if (uGaskN.x < -0.5) return dGaskDive(t); // 無限へ潜る網(?gask=old で以前の網)
   int nr = int(uGaskN.x), tot = int(uGaskN.y);
   if (nr < 1 || tot < 1) { DP d = dDot(vec3(uView * 0.5, 0.0), vec2(0.0), 1.0, D_PAPER); return d; }
   int k = gI % tot;
@@ -2639,7 +2723,8 @@ DP dObj(float t, float kt, float th4){
     vec3 p = texelFetch(uObjP, ivec2(ju, jv), 0).xyz;
     float hn = clamp((p.y - uWrap.x) / span, 0.0, 1.0);
     p = dObjT(p, hn, th4, pr0);
-    return dDot(dObjS(p, pr0, uObjM3.x), vec2(2.5 * uObjM2.x), 1.0, D_INK);
+    float key = 0.85 * float(j) / float(${NU} * NVi) + 0.1 * hsh(uint(gI) * 41U + 3U);
+    return dDot(dObjS(p, pr0, uObjM3.x), vec2(2.5 * uObjM2.x * step(key + 0.05, uObjM2.w)), 1.0, D_INK); // 黒い体は、稜線が引かれた所から
   }
   vec3 p0 = dObjMv(a0, b0, e, hs), p1 = dObjMv(a1, b1, e, hs);
   float hn = clamp(((p0.y + p1.y) * 0.5 - mix(uObjM2.y, uObjM2.z, e)) / span, 0.0, 1.0);
@@ -2648,7 +2733,11 @@ DP dObj(float t, float kt, float th4){
   float fr = smoothstep(-0.55, 0.45, (p0.z + p1.z) * 0.5); // 奥の稜線は淡く・細く(隠れ線のように)。手前の稜線だけが白く立つ
   vec3 cl = D_PAPER * (0.78 + 0.22 * dvA1) * mix(0.22, 1.0, fr) * (1.0 + 0.6 * fly);
   vec3 s0 = dObjS(p0, pr0, sc) + vec3(0.0, 0.0, 4.0), s1 = dObjS(p1, pr1, sc) + vec3(0.0, 0.0, 4.0); // 稜線は、体の面より少し手前へ
-  return dSeg(s0, s1, mix(0.35, 0.6, fr) * (1.0 - 0.3 * fly), cl, 1.0);
+  // 描き上がり(2026-11-28 本人「回るだけは弱い」): 稜線は、下の段から順に、1本ずつ引かれる(引く途中の線は、先が伸びていく)
+  float key = 0.85 * float(j) / float(${NU} * NVi) + 0.1 * hs;
+  float dk = clamp((uObjM2.w - key) / 0.06, 0.0, 1.0);
+  s1 = mix(s0, s1, dk);
+  return dSeg(s0, s1, mix(0.35, 0.6, fr) * (1.0 - 0.3 * fly) * step(0.001, dk), cl * (1.0 + 1.2 * (1.0 - dk) * step(0.001, dk)), 1.0);
 }
 // 指で押すと、その場所の粒が よける(墨が分かれる、塔の粒が割れる、光の線が曲がる)。指が磁石・つまみになる場面では、よけさせない
 O dPush(O o, float k){
@@ -2677,7 +2766,7 @@ O dPaper(float t, float first, int NG){
   float fr = t < 42.5 ? fr1 : (t < 99.5 ? -1.0 : fr2);
   float vis = step(0.0, fr);
   float cl = hsh(uint(qi) * 131U + 7U) * 0.45 + 0.35 * (0.5 + 0.5 * sin(cc.x * 0.013 + cc.y * 0.009 + 1.3) * sin(cc.y * 0.017 - cc.x * 0.006));
-  float settle = smoothstep(0.0, 1.0, fr * 1.6 - cl * 1.6);
+  float settle = smoothstep(0.0, 1.0, fr * 1.6 - 0.5); // 2026-11-28: 雲の形の しきい値(3段の島)は浮いて見えたので、線からの距離だけで一様に落ち着く。以前: fr * 1.6 - cl * 1.6
   vec3 paper = D_PAPER; // 砂嵐は、升目ごとの白黒ではなく、画素ごとの細かい粒(FS)。升目は、落ち着くまでの度合いだけを持つ(2026-11-28: 粗いモザイクに見えた)
   float kc = t < 42.5 ? dsm(17.5, 20.0, t) : 0.0;
   float y = t < 42.5 ? -fall * uView.y * 1.5 : 0.0;
@@ -2689,9 +2778,11 @@ O dPaper(float t, float first, int NG){
   cy += vec3(0.1, 0.098, 0.095) * uSun.z * exp(-dot(dsf, dsf) / (2.0 * 150.0 * 150.0)); // 指(太陽)の下の、光だまり
   vec3 Pc = dCam(vec3(cc.x, y, cc.y), kc);
   vec3 Pv = dCam(vec3(cv.x, y, cv.y), kc);
+  float gone = t < 42.5 ? dsm(35.75, 36.0, t) : 0.0; // 機材の場面(36秒〜)では床を消す。暗い中で、正方形の紙の縁が四角い光に見えた(本人 2026-11-28)
+  vis *= 1.0 - step(0.999, gone);
   O o = base();
   o.centre = Pc; o.corner = Pc + (Pv - Pc) * vis;
-  o.col = mix(paper, cy, ex) * (1.0 - fall * step(t, 42.5));
+  o.col = mix(paper, cy, ex) * (1.0 - fall * step(t, 42.5)) * (1.0 - gone);
   o.col *= mix(1.0, smoothstep(-520.0, -60.0, Pc.z), kc); // 奥の紙は闇に溶ける(縁を見せない)
   o.tex = 0.0; o.gate = 1.0; o.round = 0.0; o.shape = vec2(1.0);
   o.trans = -1.0 - (1.0 - settle) * (1.0 - ex) * vis; // 負 = 砂嵐の印(紙の質感 pw は、この場面では使わない)
@@ -2747,16 +2838,15 @@ O sDev(){
   else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.12; } // 2026-11-28: 歪ませる押しは弱く(以前 0.5)。芽は風の場(ばね)と、タップの衝撃の輪で動く
   else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 2.3, 28.1 + dvA2 * 2.3, t); push = 0.0; wk = 0.8; } // 1粒の移りは短く、粒ごとにずらす(途中の暗い粒ばかりの画面にしない)
   else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.1 + 0.3 * dvHy * dvHy; wr = 100.0; } // 2026-11-28: 茎は風の場で しなる(以前 0.3 + 1.2·dvHy²) // 上ほど、なぞった向きへ しなる(花の頭が ちぎれないよう、広く効かせる)
-  else if (dvA3 < 0.38 && t < 36.0) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影(フォトグラム)を、ひと息 見せる
-  else if (dvA3 < 0.38 && t < 38.2) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(36.0 + dvA2 * 0.8, 37.4 + dvA2 * 0.8, t); push = 0.0; wk = 0.0; } // 焼きついた影が立ち上がって、機材になる(像が実体になる)。影と機材を中途半端に重ねない(本人「草とカメラが中途半端にかぶるのも変」)
-  else if (t < 37.5) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(34.5 + dvA2 * 1.2, 36.3 + dvA2 * 1.2, t); push = 0.0; wk = 0.5; } // 塔の粒が、機材の立体に組み上がる
-  else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.6; }
+  else if (t < 36.0) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影(フォトグラム)と、綿毛が飛んでいくのを見せる
+  // 2026-11-28 本人「無理に繋がないほうがいい」: 植物 → 機材は切る(以前は、影が立ち上がって機材に組み上がった。もやの塊に見えた)。機材は稜線が引かれて描き上がる
+  else if (t < 39.5) { A = dObj(t, kt, 0.0); B = A; push = 0.0; wk = 0.0; }
   else if (t < 42.5) { A = dObj(t, kt, 3.14159 * dsm(39.5, 42.3, t)); B = A; push = 0.0; wk = 0.0; } // 4次元の向きへ半回転 → 鏡の形
-  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else if (dvA3 < 0.38) A = dPlant(t, kt); else A = dPlant(tt, kt); B = d4D(tt); b = dsm(34.5 + (1.0 - dvTt) * 1.6, 37.1 + (1.0 - dvTt) * 1.6, tt); push = 0.0; wk = 0.4 * b; } // 上の粒から先に、空へ
+  else if (tt < 39.0) { if (uObjOn > 0.5) A = dObj(t, kt, 3.14159); else if (dvA3 < 0.38) A = dPlant(t, kt); else A = dPlant(tt, kt); B = d4D(tt); b = step(35.0, tt); push = 0.0; wk = 0.0; } // 2026-11-28: 鏡になった機材を ひと息見せて、4次元の迷路へ切る(以前は、粒が飛んで移った)
   else if (tt < 45.5) { A = d4D(tt); B = A; push = 0.0; wk = 0.6; wr = 80.0; }
   else if (tt < 49.0) { A = d4D(tt); B = dTubes(tt); float gr = dsm(45.5, 48.4, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.5; wr = 80.0; } // 光の輪の粒が、輪に沿って順に、格子の管へ組み上がる(管が伸びていく)
   else if (tt < 52.0) { A = dTubes(tt); B = A; push = 0.0; wk = 0.5; wr = 80.0; }
-  else if (tt < 55.0) { A = dTubes(tt); B = dBalance(tt); float gr = dsm(52.0, 54.6, tt) * 1.15; b = smoothstep(dvTu - 0.12, dvTu, gr); push = 0.0; wk = 0.6; wr = 90.0; } // 管は、伸びた順に ほどけて、線の束になる
+  else if (tt < 55.0) { A = dTubes(tt); B = dBalance(tt); b = step(53.5, tt); push = 0.0; wk = 0.6 * b; wr = 90.0; } // 2026-11-28 本人「縄から宇宙につながる所が無理やり」: 管 → 銀河は、拍で切る(刷りの反転が戻る 61.5秒と同時)
   else if (tt < 64.0) { A = dBalance(tt); B = A; push = 0.0; wk = 0.7; wr = 100.0; }
   else if (tt < 67.0) { A = dBalance(tt); B = dGask(tt); float rk = sqrt(gkRank); b = dsm(64.0 + rk * 2.2 + dvA2 * 0.25, 64.55 + rk * 2.2 + dvA2 * 0.25, tt); push = 0.0; wk = 0.6 * (1.0 - b); wr = 130.0; } // 線の束が、無限の円に凝る(アポロニウスの網)。大きな円の帯から先に、小さな円へ、順に結晶する
   else if (tt < 76.0) { A = dGask(tt); B = A; push = 0.0; wk = 0.35; wr = 150.0; } // 指の跡では、輪が ゆるく曲がる(切れない程度)
@@ -3681,6 +3771,8 @@ export function mountMorph(root: HTMLElement) {
     const cp = gkCell.slice(); idx.forEach((i, k) => { gkCell[k * 3] = cp[i * 3]; gkCell[k * 3 + 1] = cp[i * 3 + 1]; gkCell[k * 3 + 2] = cp[i * 3 + 2]; });
   }
   let gkTau = -0.6, gkTauV = 0.1333, gkKey = '', gkRes: [number, number] = [0, 0];
+  const GASK_OLD = new URLSearchParams(location.search).get('gask') === 'old', GKLN_JS = Math.log(321.9968943799899);
+  let gkPh = 0, gkSpd = GKLN_JS / 7.0;
   // 網を見る位置(z = 1/w の平面): 75〜84秒で、網の中ほどから、2つの大きな円の接点(0)へ寄る。前後は止める(粒の受け持ちを変えない)
   function gaskFrame(tv: number, ngr: number): [number, number] {
     const m = Math.min(vw, vh), u0 = Math.min(1, Math.max(0, (tv - 75) / 9)), u = u0 * u0 * (3 - 2 * u0);
@@ -4292,6 +4384,8 @@ export function mountMorph(root: HTMLElement) {
   // 紙の鳴り方(クラドニ図形)。触らなければ、2.6秒ごとに次の鳴り方へ。触っている間は、指の所から輪が広がる(シェーダー側)。
   const CHL = [[1, 4, 1], [2, 5, -1], [3, 7, 1], [2, 3, 1], [4, 7, -1], [1, 6, 1], [3, 5, -1], [5, 8, 1], [2, 7, 1], [3, 4, -1]];
   let chlA = CHL[0], chlB = CHL[0], chlX = 1, chlI = 0, chlAt = 0, chlR = 0, chlW = 0;
+  const TUNE = CHL.slice().sort((a, b) => a[0] + a[1] - (b[0] + b[1])); // 調律の並び: 粗い模様 → 細かい模様
+  let tuneOn = false, tuneMu = 0;
   const FLAT = new URLSearchParams(location.search).get('flat') === '1'; // 確認用
   const chlTo = (m: number[]) => {
     if (m[0] === chlB[0] && m[1] === chlB[1] && m[2] === chlB[2]) return;
@@ -4356,14 +4450,14 @@ export function mountMorph(root: HTMLElement) {
   // 2026-11-28 本人「中途半端なベタ塗りのスレッショルドとか、モザイクっぽい2D表現とか弱いかな」: 1ビットの刷り(7)と、網点の格子(2)・画素の段の輪郭(3)を、展開の流れから外した(版の中身は残してある)。
   //   以前: しずく・砂 [7, 1] / クラドニ [2, 3] / 芽・植物 [7, 8, 9] / 紙に戻る [7, 1]
   //   機材 [10, 9] → [0, 9](走査線は、稜線で描いた機材を ざらつかせて読めなくした)
-  const PLATE_FAM = (d: number): number[] => (d < 4.8 ? [0] : d < 9.5 ? [0, 1] : d < 17.5 ? [0, 9] : d < 34.4 ? [0, 8, 9] : d < 42.5 ? [0, 9] : d < 56.5 ? [0] : d < 61.5 ? [9] : d < 72 ? [0] : d < 84 ? [9] : d < 99 ? [0] : [0, 1]); // 管の間(55.5〜61.5)は反転: 白い紙に、黒い管と白い管
+  const PLATE_FAM = (d: number): number[] => (d < 4.8 ? [0] : d < 9.5 ? [0] : d < 17.5 ? [0, 9] : d < 34.4 ? [0, 8, 9] : d < 42.5 ? [0, 9] : d < 56.5 ? [0] : d < 61.5 ? [9] : d < 72 ? [0] : d < 84 ? [9] : d < 99 ? [0] : [0]); // 管の間(55.5〜61.5)は反転: 白い紙に、黒い管と白い管
   let devObjN = 0;
   const RING4 = new URLSearchParams(location.search).get('ring4') === '1'; // 確認用: 4次元を以前のホップの輪で見る
   const DEV_OBJ_ORDER = [6, 0, 1, 3, 4, 5, 7, 8, 9, 10, 11, 12]; // α7 IV から、並びの順に。MacBook(2)は外した(本人 2026-11-28「3Dオブジェクトの PC よくわからないかもね」)
   // 機材の場面(34.5〜39.6秒): 届いている立体を、並びの順に次々と移す(A の稜線 → B の稜線)。
   // なぞる = 回す(惰性) / タップ = 次へ / 長押し = 分解図。触っている間は、展開の時計を止める(遊べるように)
   let carA: Subj | null = null, carB: Subj | null = null, carM = 0, carMorph = false, carLast = 0, carSwapAt = -9, carQ = 0;
-  let objYaw = 0, objYawV = 0.22, objPit = 0, objEx = 0;
+  let objYaw = 0.55, objYawV = 0, objPit = 0, objEx = 0, objDrawT = -99; // 自転はしない(本人「回るだけは弱い」)。斜め前から見る
   const baseOf = (sb: Subj) => sb.lo - (sb.lo + sb.hi) / 2;
   const sizeOf = (sb: Subj) => Math.min((vw * (vw < vh ? 0.42 : 0.3)) / (sb.hx * 0.92 + sb.hz * 0.39 + 0.1), (vh * 0.3) / ((sb.hi - sb.lo) / 2 + 0.05)); // 画面に読める大きさ(横・縦とも 6割ほどに収める。回したときの遠近と、分解図の開きの分を残す)
   const carNext = (sb: Subj) => {
@@ -4371,7 +4465,7 @@ export function mountMorph(root: HTMLElement) {
     for (let i = 1; i < DEV_OBJ_ORDER.length; i++) { const x = subs.find((q) => q.idx === DEV_OBJ_ORDER[(k + i) % DEV_OBJ_ORDER.length]); if (x) return x; }
     return sb;
   };
-  const carSet = (a: Subj) => { carA = a; carB = carNext(a); applySubject(carA, carB); carM = 0; carMorph = false; carLast = now; carSwapAt = now - 9; };
+  const carSet = (a: Subj) => { carA = a; carB = carNext(a); applySubject(carA, carB); carM = 0; carMorph = false; carLast = now; carSwapAt = now - 9; objYaw = 0.55; objYawV = 0; objPit = 0; };
   const carGo = () => {
     if (carMorph) { carQ = 1; return; }
     if (!carA || !carB || carB === carA) return;
@@ -5106,14 +5200,21 @@ export function mountMorph(root: HTMLElement) {
         }
       }
       chlX = Math.min(1, chlX + dt / 0.9);
-      // 鳴る紙の向き: サイトの斜め(長辺から28°)から始まる。砂の間になぞると、指の中心まわりの動きで ターンテーブルのように回り、惰性で回り続ける
-      if (!devOn || dtl < 7.5) { chlR = 0; chlW = 0; }
-      else if (dtl < 17.5) {
-        if (drawing) {
-          const rx = ptX - vw * 0.5, ry = ptY - vh * 0.5, r2 = Math.max(rx * rx + ry * ry, 3600);
-          chlW += ((rx * penVY - ry * penVX) / r2 / Math.max(dt, 1e-3) - chlW) * (1 - Math.exp(-dt / 0.08));
-        } else chlW *= Math.exp(-dt / 1.4);
-        chlR += chlW * dt;
+      // 鳴る紙の向きは、サイトの斜め(長辺から28°)のまま。
+      // 2026-11-28 本人「図形が中心を軸にぐるぐる回るだけは微妙」: なぞって紙を回すのをやめ、なぞる = 鳴り方の調律にした。
+      // なぞった量だけ、模様が隣の(一段 細かい/粗い)模様へ連続して移り、砂が流れて集まり直す。離すと、いちばん近い模様へ落ち着く
+      chlR = 0; chlW = 0;
+      const tuning = devOn && drawing && strayed >= 8 && dtl >= 9.5 && dtl < 17.5;
+      if (tuning) {
+        if (!tuneOn) { tuneOn = true; const i = TUNE.findIndex((m) => m[0] === chlB[0] && m[1] === chlB[1]); tuneMu = i >= 0 ? i : Math.min(TUNE.length - 1, Math.max(0, TUNE.findIndex((m) => m[0] + m[1] >= chlB[0] + chlB[1]))); }
+        tuneMu = Math.max(0, Math.min(TUNE.length - 1.001, tuneMu + (penVX - penVY * 0.5) / Math.max(120, vw * 0.16)));
+        const i0 = Math.floor(tuneMu);
+        chlA = TUNE[i0]; chlB = TUNE[Math.min(TUNE.length - 1, i0 + 1)]; chlX = tuneMu - i0; chlAt = now;
+      } else if (tuneOn) {
+        const tgt = Math.round(tuneMu);
+        tuneMu += (tgt - tuneMu) * (1 - Math.exp(-dt / 0.16));
+        if (Math.abs(tgt - tuneMu) < 0.01) { tuneOn = false; chlA = chlB = TUNE[tgt]; chlX = 1; chlAt = now; }
+        else { const i0 = Math.min(TUNE.length - 2, Math.floor(tuneMu)); chlA = TUNE[i0]; chlB = TUNE[i0 + 1]; chlX = tuneMu - i0; }
       }
       gl!.uniform1f(u.chlR, -0.4887 + chlR);
       gl!.uniform1f(u.flat, FLAT ? 1 : 0);
@@ -5241,8 +5342,14 @@ export function mountMorph(root: HTMLElement) {
         } else { kFlowS = 0; kFlowV = 0.16; }
         gl!.uniform3f(u.kl, Math.log(Math.max(1e-6, Math.hypot(lm[0], lm[1]))), Math.atan2(lm[1], lm[0]), kFlowS);
       }
-      // アポロニウスの網(72〜87秒): 75〜84秒の間、網が接点へ流れ込む(縦に払うと速さが変わる)。前後は止める(粒の受け持ちを変えない)
-      if (devOn && three && dtl >= 71 && dtl < 88) {
+      // アポロニウスの網(72〜87秒)。2026-11-28 から: 無限へ潜りつづける(縦に払うと、潜る速さが変わる。逆にも)。以前の流れ込む網は ?gask=old
+      if (devOn && three && !GASK_OLD && dtl >= 71 && dtl < 88) {
+        const base = GKLN_JS / 7.0; // 7秒で λ 倍(≈ 322倍)
+        if (drawing && dtl >= 75 && dtl < 84) gkSpd = Math.max(-0.8, Math.min(2.6, gkSpd - penVY * 0.012));
+        else gkSpd += (base - gkSpd) * (1 - Math.exp(-dt / 1.5));
+        if (dtl >= 74) { gkPh = (gkPh + (gkSpd * dt) / GKLN_JS) % 1; if (gkPh < 0) gkPh += 1; }
+        gl!.uniform4f(uGaskN, -1, 0, gkPh, gkSpd);
+      } else if (devOn && three && dtl >= 71 && dtl < 88) {
         if (dtl >= 75 && dtl < 84) {
           if (drawing) gkTauV = Math.max(-0.6, Math.min(0.9, gkTauV - penVY * 0.0025));
           else gkTauV += (0.1333 - gkTauV) * (1 - Math.exp(-dt / 1.5));
@@ -5272,14 +5379,15 @@ export function mountMorph(root: HTMLElement) {
             devObjN = DEV_OBJ_ORDER.indexOf(carA.idx) + 1; // 次の周は、続きの機材から
             if (carQ) { carQ = 0; carGo(); }
           }
-        } else if (!drawing && dtl >= 36.4 && dtl < 39.0 && now - carLast > 1.6) carGo();
+        } else if (!drawing && dtl >= 36.4 && dtl < 39.0 && now - objDrawT > 2.6 && now - carLast > 1.6) carGo();
+        if (lastDevT < 36.0 && dtl >= 36.0) { objDrawT = now; carLast = now; } // 切った瞬間から、稜線を引きはじめる
         const inCar = dtl >= 34.5 && dtl < 39.6;
         const turning = inCar && drawing && strayed >= 8, pressing = inCar && drawing && strayed < 8 && now - downT > 0.35;
         if (turning) {
           objYawV += ((penVX * 0.006) / Math.max(dt, 1e-3) - objYawV) * (1 - Math.exp(-dt / 0.06));
           objPit = Math.max(-0.55, Math.min(0.55, objPit + penVY * 0.004));
         } else {
-          objYawV += (0.22 - objYawV) * (1 - Math.exp(-dt / 1.4));
+          objYawV *= Math.exp(-dt / 0.9); // 離すと、惰性で少し回って止まる(ひとりでには回らない)
           objPit *= Math.exp(-dt / 2.2);
         }
         objYaw += objYawV * dt;
@@ -5287,7 +5395,8 @@ export function mountMorph(root: HTMLElement) {
         if (!inCar && dtl >= 39.6) objEx *= Math.exp(-dt / 0.2);
         const sA = carMorph ? 1 - Math.min(1, carM / 0.25) : Math.min(1, (now - carSwapAt) / 0.5);
         gl!.uniform4f(u.objM, carM, objEx, objYaw, objPit);
-        gl!.uniform4f(u.objM2, sA, carA ? baseOf(carA) : wrap[0], carB ? baseOf(carB) : wrap[0], 0);
+        const drawP = dtl < 36.0 ? 0 : Math.min(1, Math.max(0, (now - objDrawT) / 2.2)); // 描き上がり(0..1)
+        gl!.uniform4f(u.objM2, sA, carA ? baseOf(carA) : wrap[0], carB ? baseOf(carB) : wrap[0], dtl >= 39.6 ? 1 : drawP);
         gl!.uniform4f(u.objM3, carA ? sizeOf(carA) : 300, carB ? sizeOf(carB) : 300, 0, 0);
       }
       // 画面のきまり: 紙の間は、上の文字が墨で刷られる / 立体の間は、画面がカメラのファインダーになる /
@@ -5464,7 +5573,7 @@ export function mountMorph(root: HTMLElement) {
       devHold = hold;
     },
     get devT() { return devLoop(devT); },
-    get dbg() { return { chlB, chlX, drawing, chlHold, chlR, carM, carA: carA?.idx ?? -1, carB: carB?.idx ?? -1, objEx, subs: subs.map((x) => x.idx) }; }, // 確認用
+    get dbg() { return { chlB, chlX, drawing, chlHold, chlR, carM, carA: carA?.idx ?? -1, carB: carB?.idx ?? -1, objEx, drawT: now - objDrawT, tune: tuneMu, subs: subs.map((x) => x.idx) }; }, // 確認用
     auto(on: boolean) {
       autoOn = on;
       if (!on) {
