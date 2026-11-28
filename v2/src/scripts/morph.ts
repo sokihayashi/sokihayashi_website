@@ -2256,7 +2256,7 @@ DP dKSphere(float t){
   float trc = dTrace(dScr(Pk), 70.0);
   float lit = max(dot(P, normalize(vec3(-0.5, 0.55, 0.67))), 0.0); // 左上の手前から照らす(点の大きさと明るさで丸みを出す)
   vec3 col; float sz;
-  if (surf) { col = vec3(0.93, 0.89, 0.8) * (0.12 + 0.62 * lit * lit) * vis; sz = (0.7 + 0.75 * lit) * (1.0 + 0.6 * trc); }
+  if (surf) { col = vec3(0.93, 0.89, 0.8) * (0.16 + 0.8 * lit * lit) * vis; sz = (0.75 + 1.0 * lit) * (1.0 + 0.6 * trc); } // 光の当たる所ほど、点が大きく明るい(REF 3 の点の膜)
   else { col = mix(vec3(0.7, 0.76, 1.0) * 0.3, vec3(1.0, 0.95, 0.86) * 0.6, max(front, 0.0)) * vis * (1.0 + 1.2 * trc) * mix(0.3, 1.0, dsm(77.6, 79.2, t)); sz = mix(1.0, 1.6, max(front, 0.0)) * (1.0 + 1.0 * trc); } // 組み上がる間は控えめ(点が重なって白く飽和しない)
   DP d = dDot(Pk, vec2(sz * vis), 1.0, col);
   d.a = 0.0;
@@ -3338,7 +3338,7 @@ export function mountMorph(root: HTMLElement) {
   function gaskFrame(tv: number, ngr: number): [number, number] {
     const m = Math.min(vw, vh), u0 = Math.min(1, Math.max(0, (tv - 75) / 9)), u = u0 * u0 * (3 - 2 * u0);
     const S = m * 2.3 * Math.pow(6.2 / 2.3, u), zx = 0.18 + (0.01 - 0.18) * Math.pow(u, 0.7), zy = -0.18 + (-0.045 + 0.18) * Math.pow(u, 0.7); // 寄る速さは一定の比(指数)で
-    const ro = 0.4887, rc = Math.cos(ro), rs = Math.sin(ro), X0 = vw * 0.5, Y0 = vh * 0.5; // 28°(サイトの斜めの軸)
+    const ro = 0.4887 + (vw > vh ? Math.PI / 2 : 0), rc = Math.cos(ro), rs = Math.sin(ro), X0 = vw * 0.5, Y0 = vh * 0.5; // 28°(サイトの斜めの軸)。横長の画面では、すき間が長い辺に沿うよう 90° 回す
     const Rb = 0.5 * Math.hypot(vw, vh) + 40, cap = 0.1 * m;
     const out: number[] = []; // X, Y, R
     const put = (cx: number, cy: number, r: number) => {
