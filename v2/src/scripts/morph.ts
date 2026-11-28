@@ -2413,9 +2413,9 @@ O sDev(){
   else if (t < 9.5) { A = dDrop(0.0); B = dSand(); b = dsm(7.5 + dvA3 * 0.6, 8.9 + dvA3 * 0.6, t); } // しずくが崩れて、砂が紙いっぱいに眠る
   else if (t < 11.0) { A = dSand(); B = dChl(t, 0.0); b = dsm(9.5, 11.0, t); push = 0.0; wk = 0.5; } // 紙が鳴りはじめる
   else if (t < 17.5) { A = dChl(t, 0.0); B = A; push = 0.0; wk = 0.5; }
-  else if (t < 21.0) { A = dChl(t, kt); B = dGrass(t, kt); b = dsm(19.5, 21.0, t); push = 0.0; wk = 0.6; } // 紙が傾いて青く焼け、白く抜けた砂が芽になる
+  else if (t < 21.0) { A = dChl(t, kt); B = dGrass(t, kt); b = dsm(19.5 + dvA2 * 0.9, 20.1 + dvA2 * 0.9, t); push = 0.0; wk = 0.6; } // 粒ごとに少しずつ(全部が同時に飛ぶと、暗い途中の粒だけの空の画面になった) // 紙が傾いて青く焼け、白く抜けた砂が芽になる
   else if (t < 27.0) { A = dGrass(t, kt); B = A; push = 0.0; wk = 0.5; }
-  else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 1.0, 29.5 + dvA2 * 1.0, t); push = 0.0; wk = 0.8; }
+  else if (t < 30.5) { A = dGrass(t, kt); B = dPlant(t, kt); b = dsm(27.0 + dvA2 * 2.3, 28.1 + dvA2 * 2.3, t); push = 0.0; wk = 0.8; } // 1粒の移りは短く、粒ごとにずらす(途中の暗い粒ばかりの画面にしない)
   else if (t < 34.5 || (uObjOn < 0.5 && t < 42.5)) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.3 + 1.2 * dvHy * dvHy; wr = 100.0; } // 上ほど、なぞった向きへ しなる(花の頭が ちぎれないよう、広く効かせる)
   else if (dvA3 < 0.38 && t < 36.0) { A = dPlant(t, kt); B = A; push = 0.0; wk = 0.0; } // 焼きついた影(フォトグラム)を、ひと息 見せる
   else if (dvA3 < 0.38 && t < 38.2) { A = dPlant(t, kt); B = dObj(t, kt, 0.0); b = dsm(36.0 + dvA2 * 0.8, 37.4 + dvA2 * 0.8, t); push = 0.0; wk = 0.0; } // 焼きついた影が立ち上がって、機材になる(像が実体になる)。影と機材を中途半端に重ねない(本人「草とカメラが中途半端にかぶるのも変」)
@@ -2443,7 +2443,7 @@ O sDev(){
   // 重なる(不透明)⇔ 光として足す、が入れ替わる所では、明るさを いったん落としてから入れ替える
   if (A.a != B.a) o.col = b < 0.5 ? A.col * (1.0 - b * 1.6) : B.col * (0.2 + 1.6 * (b - 0.5));
   else o.col = mix(A.col, B.col, b);
-  if ((t >= 19.5 && t < 21.0) || (t >= 27.0 && t < 30.5)) o.col *= 1.0 - 0.85 * sin(3.14159 * b); // 移る途中の粒は暗く(白い雲にしない)
+  if ((t >= 19.5 && t < 21.0) || (t >= 27.0 && t < 30.5)) o.col *= 1.0 - 0.55 * sin(3.14159 * b); // 移る途中の粒は暗く(白い雲にしない)。粒ごとにずらしたので、暗くするのは控えめに(反転の版でも線が残る)
   o.alpha = b < 0.5 ? A.a : B.a;
   o.tex = 0.0;
   o.shape = mix(dShape(A), dShape(B), bs);
